@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, Link } from "@remix-run/react";
-import { authenticate } from "@shopify/shopify-app-remix/server";
+import { authenticate } from "~/shopify.server";
 import {
   Page,
   Layout,
@@ -14,7 +14,7 @@ import {
   Button,
   Thumbnail,
 } from "@shopify/polaris";
-import { MusicNoteIcon, PlusIcon } from "@shopify/polaris-icons";
+import { SoundIcon, PlusIcon } from "@shopify/polaris-icons";
 
 // Simplified loader - in production, fetch actual products from Shopify
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -74,7 +74,7 @@ export default function BeatsList() {
                   id={beat.id}
                   media={
                     <Thumbnail
-                      source={beat.coverArt || MusicNoteIcon}
+                      source={beat.coverArt || SoundIcon}
                       alt={beat.title}
                     />
                   }

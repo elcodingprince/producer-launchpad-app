@@ -1,0 +1,14 @@
+name = "Producer Launchpad Web"
+roles = ["frontend", "backend"]
+webhooks_path = "/webhooks"
+
+[commands]
+dev = "npm run dev:web"
+build = "npm run build"
+
+[hmr_server]
+http_paths = ["/vite/hmr"]
+
+[auth]
+path = "/auth"
+callback_path = "/auth/callback"

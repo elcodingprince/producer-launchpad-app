@@ -6,6 +6,7 @@
   "scripts": {
     "build": "remix build",
     "dev": "shopify app dev",
+    "dev:web": "sh -c 'remix vite:dev --host 0.0.0.0 --port ${PORT:-5173}'",
     "push": "shopify app push",
     "generate": "shopify app generate",
     "deploy": "shopify app deploy",
@@ -13,26 +14,27 @@
     "env": "shopify app env",
     "start": "remix-serve ./build/server/index.js",
     "docker-start": "npm run setup && npm run start",
-    "setup": "prisma generate && prisma migrate deploy",
+    "setup": "prisma generate && prisma db push",
     "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
     "shopify": "shopify"
   },
   "dependencies": {
-    "@prisma/client": "^5.11.0",
+    "@prisma/client": "^5.22.0",
     "@remix-run/dev": "^2.8.0",
     "@remix-run/node": "^2.8.0",
     "@remix-run/react": "^2.8.0",
     "@remix-run/serve": "^2.8.0",
     "@shopify/app": "^3.57.0",
-    "@shopify/cli": "^3.57.0",
+    "@shopify/app-bridge-react": "^4.2.10",
+    "@shopify/cli": "^3.84.1",
     "@shopify/polaris": "^12.20.0",
     "@shopify/polaris-icons": "^8.11.0",
-    "@shopify/shopify-api": "^9.5.0",
+    "@shopify/shopify-api": "^11.0.0",
     "@shopify/shopify-app-remix": "^2.6.0",
     "@shopify/shopify-app-session-storage-memory": "^4.0.5",
-    "@shopify/shopify-app-session-storage-prisma": "^4.0.5",
+    "@shopify/shopify-app-session-storage-prisma": "^5.2.3",
     "isbot": "^5.1.1",
-    "prisma": "^5.11.0",
+    "prisma": "^5.22.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "zod": "^3.22.4"
@@ -47,7 +49,8 @@
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.2.5",
-    "typescript": "^5.4.2"
+    "typescript": "^5.4.2",
+    "vite-plugin-tsconfig-paths": "^1.4.1"
   },
   "workspaces": [
     "extensions/*"
