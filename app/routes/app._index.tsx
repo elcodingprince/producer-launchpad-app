@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, useActionData, useSubmit } from "@remix-run/react";
-import { authenticate } from "@shopify/shopify-app-remix/server";
+import { authenticate } from "~/shopify.server";
 import {
   Page,
   Layout,
@@ -12,9 +12,9 @@ import {
   Button,
   DropZone,
   Banner,
-  Stack,
+  InlineStack,
+  BlockStack,
   Text,
-  Heading,
   FormLayout,
   Tag,
   List,
@@ -25,7 +25,7 @@ import {
   ResourceItem,
   Badge,
 } from "@shopify/polaris";
-import { MusicNoteIcon, ImageIcon, UploadIcon } from "@shopify/polaris-icons";
+import { SoundIcon, ImageIcon, UploadIcon } from "@shopify/polaris-icons";
 import { createMetafieldSetupService } from "../services/metafieldSetup";
 import { createProductCreatorService } from "../services/productCreator";
 import {
@@ -38,23 +38,44 @@ import {
 } from "../services/validation";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  const setupService = createMetafieldSetupService(session);
-  const productService = createProductCreatorService(session);
+  const { session, admin } = await authenticate.admin(request);
+  const setupService = createMetafieldSetupService(session, admin);
+  const productService = createProductCreatorService(session, admin);
 
   try {
-    const [setupStatus, licenses, genres, producers] = await Promise.all([
-      setupService.checkSetupStatus(),
-      productService.getLicenseMetaobjects(),
-      productService.getGenreMetaobjects(),
-      productService.getProducerMetaobjects(),
-    ]);
+    let setupStatus = await setupService.checkSetupStatus();
+    let onboarding: {
+      attemptedAutoSetup: boolean;
+      autoSetupSuccess: boolean;
+      errors: string[];
+    } = {
+      attemptedAutoSetup: false,
+      autoSetupSuccess: false,
+      errors: [],
+    };
+
+    if (!setupStatus.isComplete) {
+      onboarding.attemptedAutoSetup = true;
+      const setupResult = await setupService.runFullSetup();
+      onboarding.autoSetupSuccess = setupResult.success;
+      onboarding.errors = setupResult.errors;
+      setupStatus = await setupService.checkSetupStatus();
+    }
+
+    const [licenses, genres, producers] = setupStatus.isComplete
+      ? await Promise.all([
+          productService.getLicenseMetaobjects(),
+          productService.getGenreMetaobjects(),
+          productService.getProducerMetaobjects(),
+        ])
+      : [[], [], []];
 
     return json({
       setupStatus,
       licenses,
       genres,
       producers,
+      onboarding,
       error: null,
     });
   } catch (error) {
@@ -65,6 +86,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         licenses: [],
         genres: [],
         producers: [],
+        onboarding: null,
         error: error instanceof Error ? error.message : "Failed to load dashboard data",
       },
       { status: 500 }
@@ -73,7 +95,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const formData = await request.formData();
 
   const intent = formData.get("intent") as string;
@@ -81,7 +103,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (intent === "upload") {
     try {
       const bunnyService = createBunnyCdnService();
-      const productService = createProductCreatorService(session);
+      const productService = createProductCreatorService(session, admin);
 
       // Extract form data
       const title = formData.get("title") as string;
@@ -228,7 +250,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Dashboard() {
-  const { setupStatus, licenses, genres, producers, error: loaderError } =
+  const { setupStatus, licenses, genres, producers, onboarding, error: loaderError } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
@@ -364,6 +386,29 @@ export default function Dashboard() {
     return (
       <Page title="Producer Launchpad">
         <Layout>
+          {onboarding?.attemptedAutoSetup && onboarding.autoSetupSuccess && (
+            <Layout.Section>
+              <Banner title="Initial setup ran automatically" status="info">
+                <p>
+                  We set up as much as possible automatically. Finish the remaining
+                  steps in Setup if needed.
+                </p>
+              </Banner>
+            </Layout.Section>
+          )}
+          {onboarding?.attemptedAutoSetup &&
+            onboarding.errors &&
+            onboarding.errors.length > 0 && (
+              <Layout.Section>
+                <Banner title="Automatic setup hit issues" status="critical">
+                  <List type="bullet">
+                    {onboarding.errors.map((error) => (
+                      <List.Item key={error}>{error}</List.Item>
+                    ))}
+                  </List>
+                </Banner>
+              </Layout.Section>
+            )}
           <Layout.Section>
             <Banner
               title="Setup Required"
@@ -403,7 +448,7 @@ export default function Dashboard() {
         <Layout.Section>
           <Card>
             <FormLayout>
-              <Heading>Upload New Beat</Heading>
+              <Text variant="headingMd" as="h2">Upload New Beat</Text>
 
               <TextField
                 label="Beat Title"
@@ -465,7 +510,7 @@ export default function Dashboard() {
 
         <Layout.Section>
           <Card title="Audio Files" sectioned>
-            <Stack vertical spacing="loose">
+            <BlockStack gap="500">
               <div>
                 <Text variant="bodyMd" as="p" fontWeight="semibold">
                   Preview MP3 (Required)
@@ -481,14 +526,14 @@ export default function Dashboard() {
                   type="file"
                 >
                   {previewFile ? (
-                    <Stack alignment="center" spacing="tight">
+                    <InlineStack blockAlign="center" gap="200">
                       <Thumbnail
-                        source={MusicNoteIcon}
+                        source={SoundIcon}
                         alt={previewFile.name}
                         size="small"
                       />
                       <Text variant="bodyMd" as="p">{previewFile.name}</Text>
-                    </Stack>
+                    </InlineStack>
                   ) : (
                     <DropZone.FileUpload actionHint="Accepts .mp3 up to 100MB" />
                   )}
@@ -508,14 +553,14 @@ export default function Dashboard() {
                   type="file"
                 >
                   {mp3File ? (
-                    <Stack alignment="center" spacing="tight">
+                    <InlineStack blockAlign="center" gap="200">
                       <Thumbnail
-                        source={MusicNoteIcon}
+                        source={SoundIcon}
                         alt={mp3File.name}
                         size="small"
                       />
                       <Text variant="bodyMd" as="p">{mp3File.name}</Text>
-                    </Stack>
+                    </InlineStack>
                   ) : (
                     <DropZone.FileUpload actionHint="Accepts .mp3 up to 100MB" />
                   )}
@@ -537,20 +582,20 @@ export default function Dashboard() {
                   type="file"
                 >
                   {stemsFile ? (
-                    <Stack alignment="center" spacing="tight">
+                    <InlineStack blockAlign="center" gap="200">
                       <Thumbnail
-                        source={MusicNoteIcon}
+                        source={SoundIcon}
                         alt={stemsFile.name}
                         size="small"
                       />
                       <Text variant="bodyMd" as="p">{stemsFile.name}</Text>
-                    </Stack>
+                    </InlineStack>
                   ) : (
                     <DropZone.FileUpload actionHint="Accepts .zip up to 500MB" />
                   )}
                 </DropZone>
               </div>
-            </Stack>
+            </BlockStack>
           </Card>
         </Layout.Section>
 
@@ -567,14 +612,14 @@ export default function Dashboard() {
               type="image"
             >
               {coverArtFile ? (
-                <Stack alignment="center" spacing="tight">
+                <InlineStack blockAlign="center" gap="200">
                   <Thumbnail
                     source={ImageIcon}
                     alt={coverArtFile.name}
                     size="small"
                   />
                   <Text variant="bodyMd" as="p">{coverArtFile.name}</Text>
-                </Stack>
+                </InlineStack>
               ) : (
                 <DropZone.FileUpload actionHint="Accepts .jpg, .png up to 10MB" />
               )}
@@ -584,7 +629,7 @@ export default function Dashboard() {
 
         <Layout.Section>
           <Card title="License Pricing" sectioned>
-            <Stack vertical spacing="loose">
+            <BlockStack gap="500">
               {licensePrices.map((lp, index) => {
                 const license = licenses.find((l) => l.licenseId === lp.licenseId);
                 return (
@@ -605,17 +650,17 @@ export default function Dashboard() {
                   </FormLayout>
                 );
               })}
-            </Stack>
+            </BlockStack>
           </Card>
         </Layout.Section>
 
         <Layout.Section>
           {uploading && (
             <Card sectioned>
-              <Stack vertical spacing="tight">
+              <BlockStack gap="200">
                 <Text>Uploading your beat...</Text>
                 <ProgressBar progress={uploadProgress} />
-              </Stack>
+              </BlockStack>
             </Card>
           )}
 

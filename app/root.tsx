@@ -6,7 +6,6 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
-  Link,
   useLoaderData,
 } from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
@@ -34,7 +33,7 @@ export default function App() {
         <Links />
       </head>
       <body>
-        <AppProvider apiKey={apiKey} i18n={enTranslations} linkComponent={Link}>
+        <AppProvider apiKey={apiKey} i18n={enTranslations} isEmbeddedApp>
           <NavMenu>
             <a href="/app">Dashboard</a>
             <a href="/app/setup">Setup</a>

@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, useSubmit, useActionData } from "@remix-run/react";
-import { authenticate } from "@shopify/shopify-app-remix/server";
+import { authenticate } from "~/shopify.server";
 import {
   Page,
   Layout,
@@ -14,7 +14,8 @@ import {
   Modal,
   TextField,
   FormLayout,
-  Stack,
+  InlineStack,
+  BlockStack,
   Banner,
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
@@ -22,8 +23,8 @@ import { createProductCreatorService } from "../services/productCreator";
 import { createShopifyClient } from "../services/shopify";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  const productService = createProductCreatorService(session);
+  const { session, admin } = await authenticate.admin(request);
+  const productService = createProductCreatorService(session, admin);
 
   try {
     const licenses = await productService.getLicenseMetaobjects();
@@ -41,13 +42,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
   if (intent === "create") {
     try {
-      const client = createShopifyClient(session);
+      const client = createShopifyClient(session, admin);
       const handle = formData.get("handle") as string;
       const licenseId = formData.get("licenseId") as string;
       const licenseName = formData.get("licenseName") as string;
@@ -178,17 +179,17 @@ export default function LicensesPage() {
                   onClick={() => {}}
                   accessibilityLabel={`View details for ${license.displayName}`}
                 >
-                  <Stack distribution="equalSpacing" alignment="center">
-                    <Stack vertical spacing="extraTight">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
                       <Text variant="bodyMd" fontWeight="semibold" as="h3">
                         {license.displayName}
                       </Text>
                       <Text variant="bodySm" tone="subdued">
                         {license.licenseName}
                       </Text>
-                    </Stack>
+                    </BlockStack>
                     <Badge>{license.licenseId}</Badge>
-                  </Stack>
+                  </InlineStack>
                 </ResourceItem>
               )}
             />

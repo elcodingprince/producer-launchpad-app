@@ -203,8 +203,11 @@ export interface SetupStatus {
 export class MetafieldSetupService {
   private client: ShopifyClient;
 
-  constructor(session: any) {
-    this.client = createShopifyClient(session);
+  constructor(
+    session: any,
+    admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+  ) {
+    this.client = createShopifyClient(session, admin);
   }
 
   async checkSetupStatus(): Promise<SetupStatus> {
@@ -262,12 +265,16 @@ export class MetafieldSetupService {
     const created: string[] = [];
     const existing = await this.client.getMetafieldDefinitions("PRODUCT", "custom");
     const existingKeys = new Set(existing.map((e) => e.key));
-
-    // Get the metaobject definition IDs for references
     const metaobjectDefs = await this.client.getMetaobjectDefinitions();
-    const beatLicenseDef = metaobjectDefs.find((d) => d.type === "beat_license");
-    const producerDef = metaobjectDefs.find((d) => d.type === "producer");
-    const genreDef = metaobjectDefs.find((d) => d.type === "genre");
+    const metaobjectDefinitionIdsByType = new Map(
+      metaobjectDefs.map((definition) => [definition.type, definition.id])
+    );
+
+    const requiredMetaobjectTypeByMetafieldKey: Record<string, string> = {
+      genre: "genre",
+      producer: "producer",
+      beat_licenses: "beat_license",
+    };
 
     for (const metafield of REQUIRED_PRODUCT_METAFIELDS) {
       if (existingKeys.has(metafield.key)) continue;
@@ -281,13 +288,19 @@ export class MetafieldSetupService {
         description: metafield.description,
       };
 
-      // Add metaobject references where needed
-      if (metafield.key === "beat_licenses" && beatLicenseDef) {
-        input.metaobjectDefinition = { id: beatLicenseDef.id };
-      } else if (metafield.key === "producer" && producerDef) {
-        input.metaobjectDefinition = { id: producerDef.id };
-      } else if (metafield.key === "genre" && genreDef) {
-        input.metaobjectDefinition = { id: genreDef.id };
+      if (metafield.type.includes("metaobject_reference")) {
+        const requiredType = requiredMetaobjectTypeByMetafieldKey[metafield.key];
+        const definitionId = requiredType
+          ? metaobjectDefinitionIdsByType.get(requiredType)
+          : undefined;
+
+        if (!definitionId) {
+          throw new Error(
+            `Missing metaobject definition for ${requiredType || metafield.key}; cannot create ${metafield.key} metafield`
+          );
+        }
+
+        input.validations = [{ name: "metaobject_definition_id", value: definitionId }];
       }
 
       try {
@@ -306,9 +319,10 @@ export class MetafieldSetupService {
     const created: string[] = [];
     const existing = await this.client.getMetafieldDefinitions("PRODUCTVARIANT", "custom");
     const existingKeys = new Set(existing.map((e) => e.key));
-
     const metaobjectDefs = await this.client.getMetaobjectDefinitions();
-    const beatLicenseDef = metaobjectDefs.find((d) => d.type === "beat_license");
+    const beatLicenseDefinitionId = metaobjectDefs.find(
+      (definition) => definition.type === "beat_license"
+    )?.id;
 
     for (const metafield of REQUIRED_VARIANT_METAFIELDS) {
       if (existingKeys.has(metafield.key)) continue;
@@ -322,8 +336,15 @@ export class MetafieldSetupService {
         description: metafield.description,
       };
 
-      if (beatLicenseDef) {
-        input.metaobjectDefinition = { id: beatLicenseDef.id };
+      if (metafield.type.includes("metaobject_reference")) {
+        if (!beatLicenseDefinitionId) {
+          throw new Error(
+            "Missing beat_license metaobject definition; cannot create license_reference metafield"
+          );
+        }
+        input.validations = [
+          { name: "metaobject_definition_id", value: beatLicenseDefinitionId },
+        ];
       }
 
       try {
@@ -442,6 +463,9 @@ export class MetafieldSetupService {
   }
 }
 
-export function createMetafieldSetupService(session: any) {
-  return new MetafieldSetupService(session);
+export function createMetafieldSetupService(
+  session: any,
+  admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+) {
+  return new MetafieldSetupService(session, admin);
 }

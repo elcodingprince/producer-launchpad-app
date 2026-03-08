@@ -1,5 +1,3 @@
-import shopify from "../shopify.server";
-
 export interface GraphQLResponse<T> {
   data?: T;
   errors?: Array<{
@@ -10,15 +8,19 @@ export interface GraphQLResponse<T> {
 }
 
 export class ShopifyClient {
+  private admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> };
   private session: any;
 
-  constructor(session: any) {
+  constructor(
+    session: any,
+    admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+  ) {
     this.session = session;
+    this.admin = admin;
   }
 
   async query<T>(query: string, variables?: Record<string, any>): Promise<GraphQLResponse<T>> {
-    const client = new shopify.clients.Graphql({ session: this.session });
-    const response = (await client.request(query, { variables })) as GraphQLResponse<T>;
+    const response = (await this.admin.graphql(query, { variables }).then((r) => r.json())) as GraphQLResponse<T>;
 
     if (response.errors && response.errors.length > 0) {
       throw new Error(
@@ -47,10 +49,6 @@ export class ShopifyClient {
             type {
               name
             }
-            metaobjectDefinition {
-              id
-              name
-            }
           }
         }
       }
@@ -64,7 +62,6 @@ export class ShopifyClient {
           key: string;
           namespace: string;
           type: { name: string };
-          metaobjectDefinition?: { id: string; name: string };
         }>;
       };
     }>(query, { ownerType, namespace });
@@ -79,7 +76,7 @@ export class ShopifyClient {
     type: string;
     ownerType: "PRODUCT" | "PRODUCTVARIANT";
     description?: string;
-    metaobjectDefinition?: { id: string };
+    validations?: Array<{ name: string; value: string }>;
   }) {
     const mutation = `
       mutation CreateMetafieldDefinition($definition: MetafieldDefinitionInput!) {
@@ -110,8 +107,8 @@ export class ShopifyClient {
       definition.description = input.description;
     }
 
-    if (input.metaobjectDefinition) {
-      definition.metaobjectDefinition = input.metaobjectDefinition;
+    if (input.validations && input.validations.length > 0) {
+      definition.validations = input.validations;
     }
 
     const response = await this.query<{
@@ -359,6 +356,9 @@ export class ShopifyClient {
   }
 }
 
-export function createShopifyClient(session: any) {
-  return new ShopifyClient(session);
+export function createShopifyClient(
+  session: any,
+  admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+) {
+  return new ShopifyClient(session, admin);
 }

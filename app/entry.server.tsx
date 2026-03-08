@@ -1,6 +1,7 @@
 import type { EntryContext, AppLoadContext } from "@remix-run/node";
 import { RemixServer } from "@remix-run/react";
 import { renderToString } from "react-dom/server";
+import { addDocumentResponseHeaders } from "./shopify.server";
 
 const handleRequest = async (
   request: Request,
@@ -9,6 +10,8 @@ const handleRequest = async (
   remixContext: EntryContext,
   loadContext: AppLoadContext
 ) => {
+  addDocumentResponseHeaders(request, responseHeaders);
+
   const markup = renderToString(
     <RemixServer context={remixContext} url={request.url} />
   );

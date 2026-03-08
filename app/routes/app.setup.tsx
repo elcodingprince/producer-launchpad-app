@@ -1,27 +1,27 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, useActionData, useSubmit } from "@remix-run/react";
-import { authenticate } from "@shopify/shopify-app-remix/server";
+import { authenticate } from "~/shopify.server";
 import {
   Page,
   Layout,
   Card,
   Banner,
   Button,
-  Stack,
+  InlineStack,
+  BlockStack,
   Text,
-  Heading,
   List,
   Badge,
   ProgressBar,
   DescriptionList,
 } from "@shopify/polaris";
-import { CheckCircleIcon, CircleDashedIcon, RefreshIcon } from "@shopify/polaris-icons";
+import { CheckCircleIcon, RefreshIcon } from "@shopify/polaris-icons";
 import { createMetafieldSetupService } from "../services/metafieldSetup";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  const setupService = createMetafieldSetupService(session);
+  const { session, admin } = await authenticate.admin(request);
+  const setupService = createMetafieldSetupService(session, admin);
 
   try {
     const setupStatus = await setupService.checkSetupStatus();
@@ -39,8 +39,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  const setupService = createMetafieldSetupService(session);
+  const { session, admin } = await authenticate.admin(request);
+  const setupService = createMetafieldSetupService(session, admin);
 
   try {
     const result = await setupService.runFullSetup();
@@ -128,8 +128,8 @@ export default function SetupPage() {
 
         <Layout.Section>
           <Card sectioned>
-            <Stack vertical spacing="loose">
-              <Heading>Configuration Status</Heading>
+            <BlockStack gap="500">
+              <Text variant="headingMd" as="h2">Configuration Status</Text>
 
               {setupStatus.isComplete ? (
                 <Banner status="success" title="All set!">
@@ -159,7 +159,7 @@ export default function SetupPage() {
                   Run Setup Wizard
                 </Button>
               )}
-            </Stack>
+            </BlockStack>
           </Card>
         </Layout.Section>
 
@@ -169,10 +169,10 @@ export default function SetupPage() {
               <List type="bullet">
                 {setupStatus.productMetafields.missing.map((key) => (
                   <List.Item key={key}>
-                    <Stack spacing="tight" alignment="center">
+                    <InlineStack gap="200" blockAlign="center">
                       <Badge status="critical">Missing</Badge>
                       <Text>{key}</Text>
-                    </Stack>
+                    </InlineStack>
                   </List.Item>
                 ))}
               </List>
@@ -186,10 +186,10 @@ export default function SetupPage() {
               <List type="bullet">
                 {setupStatus.variantMetafields.missing.map((key) => (
                   <List.Item key={key}>
-                    <Stack spacing="tight" alignment="center">
+                    <InlineStack gap="200" blockAlign="center">
                       <Badge status="critical">Missing</Badge>
                       <Text>{key}</Text>
-                    </Stack>
+                    </InlineStack>
                   </List.Item>
                 ))}
               </List>
@@ -203,10 +203,10 @@ export default function SetupPage() {
               <List type="bullet">
                 {setupStatus.metaobjectDefinitions.missing.map((type) => (
                   <List.Item key={type}>
-                    <Stack spacing="tight" alignment="center">
+                    <InlineStack gap="200" blockAlign="center">
                       <Badge status="critical">Missing</Badge>
                       <Text>{type}</Text>
-                    </Stack>
+                    </InlineStack>
                   </List.Item>
                 ))}
               </List>
@@ -217,7 +217,7 @@ export default function SetupPage() {
         {actionData?.result && (
           <Layout.Section>
             <Card title="Setup Results" sectioned>
-              <Stack vertical spacing="loose">
+              <BlockStack gap="500">
                 {actionData.result.created.metaobjectDefinitions.length > 0 && (
                   <div>
                     <Text fontWeight="semibold">Created Metaobject Definitions:</Text>
@@ -267,7 +267,7 @@ export default function SetupPage() {
                     </List>
                   </div>
                 )}
-              </Stack>
+              </BlockStack>
             </Card>
           </Layout.Section>
         )}

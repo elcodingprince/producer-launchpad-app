@@ -29,8 +29,11 @@ export interface BeatProductData {
 export class ProductCreatorService {
   private client: ShopifyClient;
 
-  constructor(session: any) {
-    this.client = createShopifyClient(session);
+  constructor(
+    session: any,
+    admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+  ) {
+    this.client = createShopifyClient(session, admin);
   }
 
   async createBeatProduct(data: BeatProductData): Promise<{
@@ -288,6 +291,9 @@ export class ProductCreatorService {
   }
 }
 
-export function createProductCreatorService(session: any) {
-  return new ProductCreatorService(session);
+export function createProductCreatorService(
+  session: any,
+  admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+) {
+  return new ProductCreatorService(session, admin);
 }
