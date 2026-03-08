@@ -1,8 +1,9 @@
-import { shopifyApi, LATEST_API_VERSION } from "@shopify/shopify-api";
-import { restResources } from "@shopify/shopify-api/rest/admin/2024-10";
+import { shopifyApp, LATEST_API_VERSION } from "@shopify/shopify-app-remix/server";
 import { MemorySessionStorage } from "@shopify/shopify-app-session-storage-memory";
 
-export const shopify = shopifyApi({
+const sessionStorage = new MemorySessionStorage();
+
+const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY!,
   apiSecretKey: process.env.SHOPIFY_API_SECRET!,
   apiVersion: LATEST_API_VERSION,
@@ -13,13 +14,18 @@ export const shopify = shopifyApi({
     "write_metaobjects",
     "read_shop",
   ],
-  isCustomStoreApp: process.env.IS_CUSTOM_STORE_APP === "true",
-  isEmbeddedApp: true,
-  hostName: process.env.SHOPIFY_APP_URL?.replace(/https:\/\//, "") || "",
-  hostScheme: "https",
-  restResources,
+  appUrl: process.env.SHOPIFY_APP_URL!,
+  authPathPrefix: "/auth",
+  sessionStorage,
+  distribution: process.env.IS_CUSTOM_STORE_APP === "true" 
+    ? "singleMerchant" 
+    : "appStore",
+  future: {
+    v3_webhookAdminContext: true,
+    v3_authenticatePublic: true,
+  },
 });
 
-export const sessionStorage = new MemorySessionStorage();
-
 export default shopify;
+export const apiVersion = LATEST_API_VERSION;
+export const authenticate = shopify.authenticate;

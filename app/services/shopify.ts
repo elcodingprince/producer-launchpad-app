@@ -1,4 +1,4 @@
-import { shopify } from "./shopify.server";
+import shopify from "../shopify.server";
 
 export interface GraphQLResponse<T> {
   data?: T;

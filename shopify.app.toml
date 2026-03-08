@@ -3,7 +3,7 @@
 name = "Producer Launchpad"
 client_id = "YOUR_CLIENT_ID"
 application_url = "https://your-app-url.com"
-edembedded = true
+embedded = true
 
 [build]
 automatically_update_urls_on_dev = true
