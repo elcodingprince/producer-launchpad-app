@@ -22,9 +22,20 @@ import { createMetafieldSetupService } from "../services/metafieldSetup";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const setupService = createMetafieldSetupService(session);
-  const setupStatus = await setupService.checkSetupStatus();
 
-  return json({ setupStatus });
+  try {
+    const setupStatus = await setupService.checkSetupStatus();
+    return json({ setupStatus, error: null });
+  } catch (error) {
+    console.error("Setup loader error:", error);
+    return json(
+      {
+        setupStatus: null,
+        error: error instanceof Error ? error.message : "Failed to load setup status",
+      },
+      { status: 500 }
+    );
+  }
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -47,13 +58,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SetupPage() {
-  const { setupStatus } = useLoaderData<typeof loader>();
+  const { setupStatus, error: loaderError } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
 
   const handleRunSetup = () => {
     submit(null, { method: "post" });
   };
+
+  if (loaderError || !setupStatus) {
+    return (
+      <Page
+        title="Setup Wizard"
+        subtitle="Configure your store for beat uploads"
+        backAction={{ content: "Dashboard", url: "/app" }}
+      >
+        <Layout>
+          <Layout.Section>
+            <Banner title="Unable to load setup status" status="critical">
+              <p>{loaderError || "Failed to load setup status."}</p>
+            </Banner>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
+  }
 
   const items = [
     {

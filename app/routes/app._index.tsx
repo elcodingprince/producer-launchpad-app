@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useActionData, useSubmit, Form } from "@remix-run/react";
+import { useLoaderData, useActionData, useSubmit } from "@remix-run/react";
 import { authenticate } from "@shopify/shopify-app-remix/server";
 import {
   Page,
@@ -32,25 +32,44 @@ import {
   createBunnyCdnService,
   ALLOWED_FILE_TYPES,
 } from "../services/bunnyCdn";
+import {
+  beatUploadSchema,
+  fileUploadSchema,
+} from "../services/validation";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const setupService = createMetafieldSetupService(session);
   const productService = createProductCreatorService(session);
 
-  const [setupStatus, licenses, genres, producers] = await Promise.all([
-    setupService.checkSetupStatus(),
-    productService.getLicenseMetaobjects(),
-    productService.getGenreMetaobjects(),
-    productService.getProducerMetaobjects(),
-  ]);
+  try {
+    const [setupStatus, licenses, genres, producers] = await Promise.all([
+      setupService.checkSetupStatus(),
+      productService.getLicenseMetaobjects(),
+      productService.getGenreMetaobjects(),
+      productService.getProducerMetaobjects(),
+    ]);
 
-  return json({
-    setupStatus,
-    licenses,
-    genres,
-    producers,
-  });
+    return json({
+      setupStatus,
+      licenses,
+      genres,
+      producers,
+      error: null,
+    });
+  } catch (error) {
+    console.error("Dashboard loader error:", error);
+    return json(
+      {
+        setupStatus: null,
+        licenses: [],
+        genres: [],
+        producers: [],
+        error: error instanceof Error ? error.message : "Failed to load dashboard data",
+      },
+      { status: 500 }
+    );
+  }
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -71,15 +90,92 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const genreGid = formData.get("genre") as string;
       const producerGid = formData.get("producer") as string;
       const producerAlias = formData.get("producerAlias") as string;
-      const licensePrices = JSON.parse(
+      const licensePricesRaw = JSON.parse(
         (formData.get("licensePrices") as string) || "[]"
       );
+
+      const licensePrices = Array.isArray(licensePricesRaw)
+        ? licensePricesRaw.map((lp) => ({
+            licenseId: lp.licenseId,
+            licenseGid: lp.licenseGid,
+            price: Number(lp.price),
+          }))
+        : [];
 
       // Get files from form data
       const previewFile = formData.get("previewFile") as File | null;
       const mp3File = formData.get("mp3File") as File | null;
       const stemsFile = formData.get("stemsFile") as File | null;
       const coverArtFile = formData.get("coverArtFile") as File | null;
+
+      const payloadValidation = beatUploadSchema.safeParse({
+        title,
+        bpm,
+        key,
+        genreGid,
+        producerGid,
+        licensePrices,
+      });
+
+      if (!payloadValidation.success) {
+        return json(
+          {
+            success: false,
+            error: payloadValidation.error.issues
+              .map((issue) => issue.message)
+              .join(" "),
+          },
+          { status: 400 }
+        );
+      }
+
+      const fileValidation = fileUploadSchema.safeParse({
+        previewFile: previewFile ?? undefined,
+        mp3File: mp3File ?? undefined,
+        stemsFile: stemsFile ?? undefined,
+        coverArtFile: coverArtFile ?? undefined,
+      });
+
+      if (!fileValidation.success) {
+        return json(
+          {
+            success: false,
+            error: fileValidation.error.issues
+              .map((issue) => issue.message)
+              .join(" "),
+          },
+          { status: 400 }
+        );
+      }
+
+      const filesToValidate: Array<{ file: File; label: string }> = [];
+      if (previewFile) filesToValidate.push({ file: previewFile, label: "Preview file" });
+      if (mp3File) filesToValidate.push({ file: mp3File, label: "MP3 file" });
+      if (stemsFile) filesToValidate.push({ file: stemsFile, label: "Stems file" });
+      if (coverArtFile) filesToValidate.push({ file: coverArtFile, label: "Cover art" });
+
+      for (const { file, label } of filesToValidate) {
+        const validation = bunnyService.validateFile(file, ALLOWED_FILE_TYPES);
+        if (!validation.valid) {
+          return json(
+            {
+              success: false,
+              error: `${label} error: ${validation.error}`,
+            },
+            { status: 400 }
+          );
+        }
+      }
+
+      const producers = await productService.getProducerMetaobjects();
+      const producerName = producers.find((p) => p.id === producerGid)?.name;
+
+      if (!producerName) {
+        return json(
+          { success: false, error: "Selected producer could not be found." },
+          { status: 400 }
+        );
+      }
 
       // Generate beat slug
       const beatSlug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now()}`;
@@ -102,6 +198,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         key,
         genreGid,
         producerGid,
+        producerName,
         producerAlias: producerAlias || undefined,
         files: uploadedFiles,
         licenses: licensePrices,
@@ -131,7 +228,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Dashboard() {
-  const { setupStatus, licenses, genres, producers } =
+  const { setupStatus, licenses, genres, producers, error: loaderError } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
@@ -248,6 +345,20 @@ export default function Dashboard() {
     "B major",
     "B minor",
   ];
+
+  if (loaderError || !setupStatus) {
+    return (
+      <Page title="Producer Launchpad">
+        <Layout>
+          <Layout.Section>
+            <Banner title="Unable to load dashboard" status="critical">
+              <p>{loaderError || "Failed to load dashboard data."}</p>
+            </Banner>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
+  }
 
   if (!setupStatus.isComplete) {
     return (

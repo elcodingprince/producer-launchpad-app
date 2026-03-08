@@ -1,16 +1,32 @@
 import type { LinksFunction } from "@remix-run/node";
-import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "@remix-run/react";
+import { json } from "@remix-run/node";
+import {
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+  Link,
+  useLoaderData,
+} from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
+import enTranslations from "@shopify/polaris/locales/en.json";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: polarisStyles },
 ];
 
+export const loader = () => {
+  return json({ apiKey: process.env.SHOPIFY_API_KEY || "" });
+};
+
 export default function App() {
+  const { apiKey } = useLoaderData<typeof loader>();
+
   return (
-    <html>
+    <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -18,7 +34,7 @@ export default function App() {
         <Links />
       </head>
       <body>
-        <AppProvider>
+        <AppProvider apiKey={apiKey} i18n={enTranslations} linkComponent={Link}>
           <NavMenu>
             <a href="/app">Dashboard</a>
             <a href="/app/setup">Setup</a>

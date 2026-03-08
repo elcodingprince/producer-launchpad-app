@@ -18,8 +18,17 @@ export class ShopifyClient {
 
   async query<T>(query: string, variables?: Record<string, any>): Promise<GraphQLResponse<T>> {
     const client = new shopify.clients.Graphql({ session: this.session });
-    const response = await client.request(query, { variables });
-    return response as GraphQLResponse<T>;
+    const response = (await client.request(query, { variables })) as GraphQLResponse<T>;
+
+    if (response.errors && response.errors.length > 0) {
+      throw new Error(
+        `Shopify GraphQL error: ${response.errors
+          .map((error) => error.message)
+          .join("; ")}`
+      );
+    }
+
+    return response;
   }
 
   async getMetafieldDefinitions(ownerType: "PRODUCT" | "PRODUCTVARIANT", namespace?: string) {

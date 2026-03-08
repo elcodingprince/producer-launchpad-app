@@ -1,9 +1,6 @@
 import { shopifyApi, LATEST_API_VERSION } from "@shopify/shopify-api";
 import { restResources } from "@shopify/shopify-api/rest/admin/2024-10";
-import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { MemorySessionStorage } from "@shopify/shopify-app-session-storage-memory";
 
 export const shopify = shopifyApi({
   apiKey: process.env.SHOPIFY_API_KEY!,
@@ -23,6 +20,6 @@ export const shopify = shopifyApi({
   restResources,
 });
 
-export const sessionStorage = new PrismaSessionStorage(prisma);
+export const sessionStorage = new MemorySessionStorage();
 
 export default shopify;

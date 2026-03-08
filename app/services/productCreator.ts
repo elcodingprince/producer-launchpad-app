@@ -14,6 +14,7 @@ export interface BeatProductData {
   key: string;
   genreGid: string;
   producerGid: string;
+  producerName: string;
   producerAlias?: string;
   files: {
     preview?: string;
@@ -143,7 +144,7 @@ export class ProductCreatorService {
     const product = await this.client.createProduct({
       title: data.title,
       descriptionHtml: data.descriptionHtml || `<p>${data.title} - ${data.bpm} BPM ${data.key}</p>`,
-      vendor: data.producerGid, // Will be resolved by theme
+      vendor: data.producerName,
       productType: "Beat",
       tags: data.tags || ["beat", "instrumental"],
       variants,

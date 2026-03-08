@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, Form } from "@remix-run/react";
+import { useLoaderData, useSubmit, useActionData } from "@remix-run/react";
 import { authenticate } from "@shopify/shopify-app-remix/server";
 import {
   Page,
@@ -24,9 +24,20 @@ import { createShopifyClient } from "../services/shopify";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const productService = createProductCreatorService(session);
-  const licenses = await productService.getLicenseMetaobjects();
 
-  return json({ licenses });
+  try {
+    const licenses = await productService.getLicenseMetaobjects();
+    return json({ licenses, error: null });
+  } catch (error) {
+    console.error("License loader error:", error);
+    return json(
+      {
+        licenses: [],
+        error: error instanceof Error ? error.message : "Failed to load licenses",
+      },
+      { status: 500 }
+    );
+  }
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -80,7 +91,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function LicensesPage() {
-  const { licenses } = useLoaderData<typeof loader>();
+  const { licenses, error: loaderError } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
 
@@ -135,6 +146,14 @@ export default function LicensesPage() {
       }}
     >
       <Layout>
+        {loaderError && (
+          <Layout.Section>
+            <Banner title="Unable to load licenses" status="critical">
+              <p>{loaderError}</p>
+            </Banner>
+          </Layout.Section>
+        )}
+
         {actionData?.success && (
           <Layout.Section>
             <Banner title="License created successfully!" status="success" />

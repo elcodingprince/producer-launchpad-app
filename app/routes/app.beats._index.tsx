@@ -12,6 +12,7 @@ import {
   Badge,
   EmptyState,
   Button,
+  Thumbnail,
 } from "@shopify/polaris";
 import { MusicNoteIcon, PlusIcon } from "@shopify/polaris-icons";
 
