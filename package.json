@@ -1,0 +1,69 @@
+{
+  "name": "producer-launchpad",
+  "version": "1.0.0",
+  "description": "Shopify Embedded App for music producers to upload beats with automatic metafield configuration",
+  "private": true,
+  "scripts": {
+    "build": "remix build",
+    "dev": "shopify app dev",
+    "push": "shopify app push",
+    "generate": "shopify app generate",
+    "deploy": "shopify app deploy",
+    "config:use": "shopify app config use",
+    "env": "shopify app env",
+    "start": "remix-serve ./build/server/index.js",
+    "docker-start": "npm run setup && npm run start",
+    "setup": "prisma generate && prisma migrate deploy",
+    "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
+    "shopify": "shopify"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.11.0",
+    "@remix-run/dev": "^2.8.0",
+    "@remix-run/node": "^2.8.0",
+    "@remix-run/react": "^2.8.0",
+    "@remix-run/serve": "^2.8.0",
+    "@shopify/app": "^3.57.0",
+    "@shopify/cli": "^3.57.0",
+    "@shopify/polaris": "^12.20.0",
+    "@shopify/polaris-icons": "^8.11.0",
+    "@shopify/shopify-api": "^9.5.0",
+    "@shopify/shopify-app-remix": "^2.6.0",
+    "@shopify/shopify-app-session-storage-prisma": "^4.0.5",
+    "isbot": "^5.1.1",
+    "prisma": "^5.11.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@remix-run/eslint-config": "^2.8.0",
+    "@shopify/api-codegen-preset": "^1.0.1",
+    "@types/eslint": "^8.56.6",
+    "@types/node": "^20.11.30",
+    "@types/react": "^18.2.67",
+    "@types/react-dom": "^18.2.22",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.2"
+  },
+  "workspaces": [
+    "extensions/*"
+  ],
+  "trustedDependencies": [
+    "@shopify/plugin-cloudflare"
+  ],
+  "resolutions": {
+    "@graphql-tools/url-loader": "8.0.2"
+  },
+  "overrides": {
+    "@graphql-tools/url-loader": "8.0.2"
+  },
+  "engines": {
+    "node": "^18.20 || ^20.10"
+  },
+  "browserslist": [
+    "defaults"
+  ]
+}
