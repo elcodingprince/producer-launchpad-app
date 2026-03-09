@@ -37,6 +37,7 @@ export default function App() {
           <NavMenu>
             <a href="/app">Dashboard</a>
             <a href="/app/setup">Setup</a>
+            <a href="/app/storage">Storage & Delivery</a>
             <a href="/app/beats">My Beats</a>
             <a href="/app/beats/new">Upload Beat</a>
             <a href="/app/licenses">Licenses</a>

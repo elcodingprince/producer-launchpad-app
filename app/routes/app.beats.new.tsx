@@ -6,14 +6,20 @@ import { Page, Layout, Banner } from "@shopify/polaris";
 import { createMetafieldSetupService } from "../services/metafieldSetup";
 import { createProductCreatorService } from "../services/productCreator";
 import {
-  createBunnyCdnService,
   ALLOWED_FILE_TYPES,
+  validateUploadFile,
 } from "../services/bunnyCdn";
 import {
   beatUploadSchema,
   fileUploadSchema,
 } from "../services/validation";
 import { BeatUploadForm } from "../components/BeatUploadForm";
+import {
+  getStorageConfigForDisplay,
+  shouldHardBlockUpload,
+  shouldSoftWarnUpload,
+} from "~/services/storageConfig.server";
+import { uploadBeatFilesForShop } from "~/services/storageUpload.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -22,10 +28,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const setupStatus = await setupService.checkSetupStatus();
+    const storageConfig = await getStorageConfigForDisplay(session.shop);
 
     // Redirect to setup if incomplete
     if (!setupStatus.isComplete) {
       return redirect("/app/setup");
+    }
+
+    if (shouldHardBlockUpload(storageConfig)) {
+      return redirect("/app/storage");
     }
 
     // Load upload dependencies
@@ -35,10 +46,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       productService.getProducerMetaobjects(),
     ]);
 
+    if (producers.length === 0) {
+      return redirect("/app/setup");
+    }
+
     return json({
       licenses,
       genres,
       producers,
+      storageWarning: shouldSoftWarnUpload(storageConfig)
+        ? storageConfig?.lastError || "Storage is currently in an error state."
+        : null,
       error: null,
     });
   } catch (error) {
@@ -48,6 +66,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         licenses: [],
         genres: [],
         producers: [],
+        storageWarning: null,
         error: error instanceof Error ? error.message : "Failed to load upload page",
       },
       { status: 500 }
@@ -58,20 +77,35 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const formData = await request.formData();
+  const storageConfig = await getStorageConfigForDisplay(session.shop);
 
   const intent = formData.get("intent") as string;
 
   if (intent === "upload") {
+    if (shouldHardBlockUpload(storageConfig)) {
+      return redirect("/app/storage");
+    }
+
     try {
-      const bunnyService = createBunnyCdnService();
+      console.info("[upload] started");
       const productService = createProductCreatorService(session, admin);
 
       // Extract form data
       const title = formData.get("title") as string;
       const bpm = parseInt(formData.get("bpm") as string, 10);
       const key = formData.get("key") as string;
-      const genreGid = formData.get("genre") as string;
-      const producerGid = formData.get("producer") as string;
+      const genreGidsRaw = JSON.parse(
+        (formData.get("genreGids") as string) || "[]"
+      );
+      const genreGids = Array.isArray(genreGidsRaw)
+        ? genreGidsRaw.map((g) => String(g))
+        : [];
+      const producerGidsRaw = JSON.parse(
+        (formData.get("producerGids") as string) || "[]"
+      );
+      const producerGids = Array.isArray(producerGidsRaw)
+        ? producerGidsRaw.map((p) => String(p))
+        : [];
       const producerAlias = formData.get("producerAlias") as string;
       const licensePricesRaw = JSON.parse(
         (formData.get("licensePrices") as string) || "[]"
@@ -95,12 +129,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         title,
         bpm,
         key,
-        genreGid,
-        producerGid,
+        genreGids,
+        producerGids,
         licensePrices,
       });
 
       if (!payloadValidation.success) {
+        console.warn("[upload] payload validation failed");
         return json(
           {
             success: false,
@@ -120,6 +155,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       if (!fileValidation.success) {
+        console.warn("[upload] file validation failed");
         return json(
           {
             success: false,
@@ -138,8 +174,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (coverArtFile) filesToValidate.push({ file: coverArtFile, label: "Cover art" });
 
       for (const { file, label } of filesToValidate) {
-        const validation = bunnyService.validateFile(file, ALLOWED_FILE_TYPES);
+        const validation = validateUploadFile(file, ALLOWED_FILE_TYPES);
         if (!validation.valid) {
+          console.warn("[upload] file type/size validation failed:", label);
           return json(
             {
               success: false,
@@ -151,11 +188,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       const producers = await productService.getProducerMetaobjects();
-      const producerName = producers.find((p) => p.id === producerGid)?.name;
+      const selectedProducers = producers.filter((p) => producerGids.includes(p.id));
+      const producerNames = selectedProducers.map((p) => p.name);
 
-      if (!producerName) {
+      if (producerNames.length === 0 || producerNames.length !== producerGids.length) {
+        console.warn("[upload] producer resolution failed");
         return json(
-          { success: false, error: "Selected producer could not be found." },
+          { success: false, error: "One or more selected producers could not be found." },
           { status: 400 }
         );
       }
@@ -164,7 +203,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const beatSlug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now()}`;
 
       // Upload files to BunnyCDN
-      const uploadedFiles = await bunnyService.uploadBeatFiles(
+      console.info("[upload] uploading files to configured storage");
+      const uploadedFiles = await uploadBeatFilesForShop(
+        session.shop,
         {
           preview: previewFile || undefined,
           mp3: mp3File || undefined,
@@ -175,19 +216,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
 
       // Create product with variants
+      console.info("[upload] creating Shopify product");
       const result = await productService.createBeatProduct({
         title,
         bpm,
         key,
-        genreGid,
-        producerGid,
-        producerName,
+        genreGids,
+        producerGids,
+        producerNames,
         producerAlias: producerAlias || undefined,
         files: uploadedFiles,
         licenses: licensePrices,
       });
 
       // Redirect to beat list on success
+      console.info("[upload] completed successfully", { productId: result.productId });
       return redirect("/app/beats?success=true");
     } catch (error) {
       console.error("Upload error:", error);
@@ -208,7 +251,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function NewBeatPage() {
-  const { licenses, genres, producers, error: loaderError } = useLoaderData<typeof loader>();
+  const {
+    licenses,
+    genres,
+    producers,
+    storageWarning,
+    error: loaderError,
+  } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
 
   if (loaderError) {
@@ -231,6 +280,14 @@ export default function NewBeatPage() {
       backAction={{ content: "Dashboard", url: "/app" }}
     >
       <Layout>
+        {storageWarning && (
+          <Layout.Section>
+            <Banner title="Storage warning" status="warning" action={{ content: "Fix storage", url: "/app/storage" }}>
+              <p>{storageWarning}</p>
+            </Banner>
+          </Layout.Section>
+        )}
+
         {actionData?.error && (
           <Layout.Section>
             <Banner title="Upload failed" status="critical">

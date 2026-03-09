@@ -33,15 +33,15 @@ export const REQUIRED_PRODUCT_METAFIELDS = [
     name: "Genre",
     namespace: "custom",
     key: "genre",
-    type: "metaobject_reference",
-    description: "Reference to the genre metaobject",
+    type: "list.metaobject_reference",
+    description: "References to one or more genre metaobjects",
   },
   {
-    name: "Producer",
+    name: "Produced By",
     namespace: "custom",
-    key: "producer",
-    type: "metaobject_reference",
-    description: "Reference to the producer metaobject",
+    key: "produced_by",
+    type: "list.metaobject_reference",
+    description: "References to one or more producer metaobjects",
   },
   {
     name: "Producer Alias",
@@ -111,11 +111,14 @@ export const PRODUCER_DEFINITION = {
   type: "producer",
   fieldDefinitions: [
     { key: "name", name: "Name", type: "single_line_text_field", required: true },
-    { key: "bio", name: "Biography", type: "multi_line_text_field", required: false },
-    { key: "email", name: "Email", type: "single_line_text_field", required: false },
-    { key: "website", name: "Website", type: "url", required: false },
-    { key: "instagram", name: "Instagram", type: "single_line_text_field", required: false },
-    { key: "soundcloud", name: "SoundCloud", type: "single_line_text_field", required: false },
+    {
+      key: "image",
+      name: "image",
+      type: "file_reference",
+      required: false,
+      validations: [{ name: "file_type_options", value: "[\"Image\"]" }],
+    },
+    { key: "bio", name: "bio", type: "rich_text_field", required: false },
   ],
 };
 
@@ -125,9 +128,79 @@ export const GENRE_DEFINITION = {
   fieldDefinitions: [
     { key: "title", name: "Title", type: "single_line_text_field", required: true },
     { key: "url_slug", name: "URL Slug", type: "single_line_text_field", required: true },
+    { key: "description", name: "Description", type: "multi_line_text_field", required: false },
+    { key: "brand_color", name: "Brand Color", type: "color", required: false },
+    { key: "icon_image", name: "Icon Image", type: "file_reference", required: false },
     { key: "sort_order", name: "Sort Order", type: "number_integer", required: false },
   ],
 };
+
+export const DEFAULT_GENRES = [
+  {
+    handle: "trap",
+    fields: [
+      { key: "title", value: "Trap" },
+      { key: "url_slug", value: "trap" },
+      { key: "description", value: "Hard-hitting beats with heavy 808s and hi-hats" },
+      { key: "brand_color", value: "#FF4444" },
+      { key: "sort_order", value: "1" },
+    ],
+  },
+  {
+    handle: "hip-hop",
+    fields: [
+      { key: "title", value: "Hip Hop" },
+      { key: "url_slug", value: "hip-hop" },
+      { key: "description", value: "Classic and contemporary hip hop beats" },
+      { key: "brand_color", value: "#44FF44" },
+      { key: "sort_order", value: "2" },
+    ],
+  },
+  {
+    handle: "rnb",
+    fields: [
+      { key: "title", value: "R&B" },
+      { key: "url_slug", value: "rnb" },
+      { key: "description", value: "Smooth, soulful rhythm and blues" },
+      { key: "brand_color", value: "#4444FF" },
+      { key: "sort_order", value: "3" },
+    ],
+  },
+  {
+    handle: "reggaeton",
+    fields: [
+      { key: "title", value: "Reggaeton" },
+      { key: "url_slug", value: "reggaeton" },
+      { key: "description", value: "Latin-influenced urban beats" },
+      { key: "brand_color", value: "#FFAA44" },
+      { key: "sort_order", value: "4" },
+    ],
+  },
+  {
+    handle: "drill",
+    fields: [
+      { key: "title", value: "Drill" },
+      { key: "url_slug", value: "drill" },
+      { key: "description", value: "Dark, agressive drill beats" },
+      { key: "brand_color", value: "#AA44FF" },
+      { key: "sort_order", value: "5" },
+    ],
+  },
+  {
+    handle: "afrobeats",
+    fields: [
+      { key: "title", value: "Afrobeats" },
+      { key: "url_slug", value: "afrobeats" },
+      { key: "description", value: "African-inspired rhythmic beats" },
+      { key: "brand_color", value: "#FF44AA" },
+      { key: "sort_order", value: "6" },
+    ],
+  },
+];
+
+export const MIN_REQUIRED_PRODUCERS = 1;
+const LEGACY_DEFAULT_PRODUCER_HANDLE = "default-producer";
+const LEGACY_DEFAULT_PRODUCER_NAME = "Default Producer";
 
 export const DEFAULT_LICENSES = [
   {
@@ -197,6 +270,14 @@ export interface SetupStatus {
     required: number;
     existing: number;
   };
+  genres: {
+    required: number;
+    existing: number;
+  };
+  producers: {
+    required: number;
+    existing: number;
+  };
   isComplete: boolean;
 }
 
@@ -210,23 +291,39 @@ export class MetafieldSetupService {
     this.client = createShopifyClient(session, admin);
   }
 
+  private isPlaceholderProducer(metaobject: {
+    handle: string;
+    fields: Array<{ key: string; value: string }>;
+  }) {
+    const name = metaobject.fields.find((field) => field.key === "name")?.value?.trim();
+    return (
+      metaobject.handle === LEGACY_DEFAULT_PRODUCER_HANDLE ||
+      name === LEGACY_DEFAULT_PRODUCER_NAME
+    );
+  }
+
   async checkSetupStatus(): Promise<SetupStatus> {
     const productDefs = await this.client.getMetafieldDefinitions("PRODUCT", "custom");
     const variantDefs = await this.client.getMetafieldDefinitions("PRODUCTVARIANT", "custom");
     const metaobjectDefs = await this.client.getMetaobjectDefinitions();
     const beatLicenses = await this.client.getMetaobjects("beat_license");
+    const genres = await this.client.getMetaobjects("genre");
+    const producers = await this.client.getMetaobjects("producer");
+    const realProducers = producers.filter((producer) => !this.isPlaceholderProducer(producer));
 
-    const productKeys = productDefs.map((d) => d.key);
-    const variantKeys = variantDefs.map((d) => d.key);
+    const productDefsByKey = new Map(productDefs.map((d) => [d.key, d]));
+    const variantDefsByKey = new Map(variantDefs.map((d) => [d.key, d]));
     const metaobjectTypes = metaobjectDefs.map((d) => d.type);
 
-    const missingProductMetafields = REQUIRED_PRODUCT_METAFIELDS.filter(
-      (mf) => !productKeys.includes(mf.key)
-    ).map((mf) => mf.key);
+    const missingProductMetafields = REQUIRED_PRODUCT_METAFIELDS.filter((mf) => {
+      const existing = productDefsByKey.get(mf.key);
+      return !existing || existing.type.name !== mf.type;
+    }).map((mf) => mf.key);
 
-    const missingVariantMetafields = REQUIRED_VARIANT_METAFIELDS.filter(
-      (mf) => !variantKeys.includes(mf.key)
-    ).map((mf) => mf.key);
+    const missingVariantMetafields = REQUIRED_VARIANT_METAFIELDS.filter((mf) => {
+      const existing = variantDefsByKey.get(mf.key);
+      return !existing || existing.type.name !== mf.type;
+    }).map((mf) => mf.key);
 
     const requiredMetaobjectTypes = ["beat_license", "producer", "genre"];
     const missingMetaobjectTypes = requiredMetaobjectTypes.filter(
@@ -253,18 +350,28 @@ export class MetafieldSetupService {
         required: DEFAULT_LICENSES.length,
         existing: beatLicenses.length,
       },
+      genres: {
+        required: DEFAULT_GENRES.length,
+        existing: genres.length,
+      },
+      producers: {
+        required: MIN_REQUIRED_PRODUCERS,
+        existing: realProducers.length,
+      },
       isComplete:
         missingProductMetafields.length === 0 &&
         missingVariantMetafields.length === 0 &&
         missingMetaobjectTypes.length === 0 &&
-        beatLicenses.length >= DEFAULT_LICENSES.length,
+        beatLicenses.length >= DEFAULT_LICENSES.length &&
+        genres.length >= DEFAULT_GENRES.length &&
+        realProducers.length >= MIN_REQUIRED_PRODUCERS,
     };
   }
 
   async createMissingProductMetafields(): Promise<string[]> {
     const created: string[] = [];
     const existing = await this.client.getMetafieldDefinitions("PRODUCT", "custom");
-    const existingKeys = new Set(existing.map((e) => e.key));
+    const existingByKey = new Map(existing.map((e) => [e.key, e]));
     const metaobjectDefs = await this.client.getMetaobjectDefinitions();
     const metaobjectDefinitionIdsByType = new Map(
       metaobjectDefs.map((definition) => [definition.type, definition.id])
@@ -272,12 +379,16 @@ export class MetafieldSetupService {
 
     const requiredMetaobjectTypeByMetafieldKey: Record<string, string> = {
       genre: "genre",
-      producer: "producer",
+      produced_by: "producer",
       beat_licenses: "beat_license",
     };
 
     for (const metafield of REQUIRED_PRODUCT_METAFIELDS) {
-      if (existingKeys.has(metafield.key)) continue;
+      const existingDef = existingByKey.get(metafield.key);
+      if (existingDef && existingDef.type.name === metafield.type) continue;
+      if (existingDef && existingDef.type.name !== metafield.type) {
+        await this.client.deleteMetafieldDefinition(existingDef.id);
+      }
 
       const input: any = {
         name: metafield.name,
@@ -318,14 +429,18 @@ export class MetafieldSetupService {
   async createMissingVariantMetafields(): Promise<string[]> {
     const created: string[] = [];
     const existing = await this.client.getMetafieldDefinitions("PRODUCTVARIANT", "custom");
-    const existingKeys = new Set(existing.map((e) => e.key));
+    const existingByKey = new Map(existing.map((e) => [e.key, e]));
     const metaobjectDefs = await this.client.getMetaobjectDefinitions();
     const beatLicenseDefinitionId = metaobjectDefs.find(
       (definition) => definition.type === "beat_license"
     )?.id;
 
     for (const metafield of REQUIRED_VARIANT_METAFIELDS) {
-      if (existingKeys.has(metafield.key)) continue;
+      const existingDef = existingByKey.get(metafield.key);
+      if (existingDef && existingDef.type.name === metafield.type) continue;
+      if (existingDef && existingDef.type.name !== metafield.type) {
+        await this.client.deleteMetafieldDefinition(existingDef.id);
+      }
 
       const input: any = {
         name: metafield.name,
@@ -381,6 +496,93 @@ export class MetafieldSetupService {
     return created;
   }
 
+  async ensureGenreDefinitionSchema(): Promise<void> {
+    const definition = await this.client.getMetaobjectDefinitionByType("genre");
+    if (!definition) return;
+
+    const expectedByKey = new Map(
+      GENRE_DEFINITION.fieldDefinitions.map((field) => [field.key, field])
+    );
+    const existingByKey = new Map(definition.fieldDefinitions.map((field) => [field.key, field]));
+
+    const missingFields: Array<{
+      key: string;
+      name: string;
+      type: string;
+      required?: boolean;
+    }> = [];
+
+    for (const [key, expected] of expectedByKey) {
+      const existing = existingByKey.get(key);
+      if (!existing) {
+        missingFields.push({
+          key: expected.key,
+          name: expected.name,
+          type: expected.type,
+          required: expected.required,
+        });
+        continue;
+      }
+
+      if (existing.type.name !== expected.type) {
+        throw new Error(
+          `Genre field ${key} has type ${existing.type.name} but expected ${expected.type}. Update this field in Shopify Admin.`
+        );
+      }
+    }
+
+    if (missingFields.length > 0) {
+      await this.client.addMetaobjectDefinitionFields(definition.id, missingFields);
+    }
+  }
+
+  async ensureProducerDefinitionSchema(): Promise<void> {
+    const definition = await this.client.getMetaobjectDefinitionByType("producer");
+    if (!definition) return;
+
+    const expectedByKey = new Map(
+      PRODUCER_DEFINITION.fieldDefinitions.map((field) => [field.key, field])
+    );
+    const existingByKey = new Map(definition.fieldDefinitions.map((field) => [field.key, field]));
+
+    const missingFields: Array<{
+      key: string;
+      name: string;
+      type: string;
+      required?: boolean;
+      validations?: Array<{ name: string; value: string }>;
+    }> = [];
+
+    for (const [key, expected] of expectedByKey) {
+      const existing = existingByKey.get(key);
+      if (!existing) {
+        missingFields.push({
+          key: expected.key,
+          name: expected.name,
+          type: expected.type,
+          required: expected.required,
+          validations: expected.validations,
+        });
+        continue;
+      }
+
+      const allowedTypes =
+        key === "bio"
+          ? new Set(["rich_text_field", "multi_line_text_field"])
+          : new Set([expected.type]);
+
+      if (!allowedTypes.has(existing.type.name)) {
+        throw new Error(
+          `Producer field ${key} has type ${existing.type.name} but expected ${expected.type}. Update this field in Shopify Admin.`
+        );
+      }
+    }
+
+    if (missingFields.length > 0) {
+      await this.client.addMetaobjectDefinitionFields(definition.id, missingFields);
+    }
+  }
+
   async seedDefaultLicenses(): Promise<string[]> {
     const created: string[] = [];
     const existing = await this.client.getMetaobjects("beat_license");
@@ -405,14 +607,93 @@ export class MetafieldSetupService {
     return created;
   }
 
-  async runFullSetup(): Promise<{
+  async seedDefaultGenres(): Promise<string[]> {
+    const seeded: string[] = [];
+    const existing = await this.client.getMetaobjects("genre");
+    const existingByHandle = new Map(existing.map((e) => [e.handle, e]));
+
+    for (const genre of DEFAULT_GENRES) {
+      const existingGenre = existingByHandle.get(genre.handle);
+      if (existingGenre) {
+        const existingFields = new Map(
+          existingGenre.fields.map((field) => [field.key, field.value])
+        );
+        const hasDifferences = genre.fields.some(
+          (field) => existingFields.get(field.key) !== field.value
+        );
+
+        if (!hasDifferences) {
+          continue;
+        }
+
+        try {
+          await this.client.updateMetaobject({
+            id: existingGenre.id,
+            fields: genre.fields,
+          });
+          seeded.push(genre.handle);
+        } catch (error) {
+          console.error(`Failed to update genre ${genre.handle}:`, error);
+          throw error;
+        }
+        continue;
+      }
+
+      try {
+        await this.client.createMetaobject({
+          type: "genre",
+          handle: genre.handle,
+          fields: genre.fields,
+        });
+        seeded.push(genre.handle);
+      } catch (error) {
+        console.error(`Failed to create genre ${genre.handle}:`, error);
+        throw error;
+      }
+    }
+
+    return seeded;
+  }
+
+  async ensureInitialProducer(initialProducerName?: string): Promise<string[]> {
+    const existing = await this.client.getMetaobjects("producer");
+    const realExisting = existing.filter((producer) => !this.isPlaceholderProducer(producer));
+    if (realExisting.length >= MIN_REQUIRED_PRODUCERS) {
+      return [];
+    }
+
+    const trimmedName = (initialProducerName || "").trim();
+    if (!trimmedName) {
+      throw new Error(
+        "Producer setup requires your producer name. Enter it in Setup and run again."
+      );
+    }
+
+    const handle =
+      trimmedName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || `producer-${Date.now()}`;
+
+    await this.client.createMetaobject({
+      type: "producer",
+      handle,
+      fields: [{ key: "name", value: trimmedName }],
+    });
+
+    return [handle];
+  }
+
+  async runFullSetup(options?: { initialProducerName?: string }): Promise<{
     success: boolean;
-    created: {
-      metaobjectDefinitions: string[];
-      productMetafields: string[];
-      variantMetafields: string[];
-      licenses: string[];
-    };
+      created: {
+        metaobjectDefinitions: string[];
+        productMetafields: string[];
+        variantMetafields: string[];
+        licenses: string[];
+        genres: string[];
+        producers: string[];
+      };
     errors: string[];
   }> {
     const result = {
@@ -422,6 +703,8 @@ export class MetafieldSetupService {
         productMetafields: [] as string[],
         variantMetafields: [] as string[],
         licenses: [] as string[],
+        genres: [] as string[],
+        producers: [] as string[],
       },
       errors: [] as string[],
     };
@@ -429,6 +712,8 @@ export class MetafieldSetupService {
     try {
       // Step 1: Create metaobject definitions first (needed for metafield references)
       result.created.metaobjectDefinitions = await this.createMissingMetaobjectDefinitions();
+      await this.ensureGenreDefinitionSchema();
+      await this.ensureProducerDefinitionSchema();
     } catch (error) {
       result.errors.push(`Metaobject definitions: ${(error as Error).message}`);
       result.success = false;
@@ -456,6 +741,22 @@ export class MetafieldSetupService {
       result.created.licenses = await this.seedDefaultLicenses();
     } catch (error) {
       result.errors.push(`Default licenses: ${(error as Error).message}`);
+      result.success = false;
+    }
+
+    try {
+      // Step 5: Seed default genres
+      result.created.genres = await this.seedDefaultGenres();
+    } catch (error) {
+      result.errors.push(`Default genres: ${(error as Error).message}`);
+      result.success = false;
+    }
+
+    try {
+      // Step 6: Ensure at least one producer exists, using user-provided name
+      result.created.producers = await this.ensureInitialProducer(options?.initialProducerName);
+    } catch (error) {
+      result.errors.push(`Producers: ${(error as Error).message}`);
       result.success = false;
     }
 

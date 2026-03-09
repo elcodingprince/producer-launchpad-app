@@ -132,6 +132,37 @@ export class ShopifyClient {
     return response.data?.metafieldDefinitionCreate.createdDefinition;
   }
 
+  async deleteMetafieldDefinition(id: string) {
+    const mutation = `
+      mutation DeleteMetafieldDefinition($id: ID!, $deleteAllAssociatedMetafields: Boolean!) {
+        metafieldDefinitionDelete(id: $id, deleteAllAssociatedMetafields: $deleteAllAssociatedMetafields) {
+          deletedDefinitionId
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      metafieldDefinitionDelete: {
+        deletedDefinitionId?: string;
+        userErrors: Array<{ field: string[]; message: string }>;
+      };
+    }>(mutation, { id, deleteAllAssociatedMetafields: true });
+
+    if (response.data?.metafieldDefinitionDelete.userErrors.length) {
+      throw new Error(
+        `Failed to delete metafield definition: ${response.data.metafieldDefinitionDelete.userErrors
+          .map((e) => e.message)
+          .join(", ")}`
+      );
+    }
+
+    return response.data?.metafieldDefinitionDelete.deletedDefinitionId;
+  }
+
   async getMetaobjectDefinitions() {
     const query = `
       query GetMetaobjectDefinitions {
@@ -152,6 +183,98 @@ export class ShopifyClient {
     }>(query);
 
     return response.data?.metaobjectDefinitions.nodes || [];
+  }
+
+  async getMetaobjectDefinitionByType(type: string) {
+    const query = `
+      query GetMetaobjectDefinitionByType($type: String!) {
+        metaobjectDefinitionByType(type: $type) {
+          id
+          name
+          type
+          fieldDefinitions {
+            key
+            name
+            required
+            type {
+              name
+            }
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      metaobjectDefinitionByType?: {
+        id: string;
+        name: string;
+        type: string;
+        fieldDefinitions: Array<{
+          key: string;
+          name: string;
+          required: boolean;
+          type: { name: string };
+        }>;
+      };
+    }>(query, { type });
+
+    return response.data?.metaobjectDefinitionByType;
+  }
+
+  async addMetaobjectDefinitionFields(
+    definitionId: string,
+    fields: Array<{
+      key: string;
+      name: string;
+      type: string;
+      required?: boolean;
+      validations?: Array<{ name: string; value: string }>;
+    }>
+  ) {
+    if (fields.length === 0) return;
+
+    const mutation = `
+      mutation UpdateMetaobjectDefinition($id: ID!, $definition: MetaobjectDefinitionUpdateInput!) {
+        metaobjectDefinitionUpdate(id: $id, definition: $definition) {
+          metaobjectDefinition {
+            id
+          }
+          userErrors {
+            field
+            message
+            code
+          }
+        }
+      }
+    `;
+
+    const fieldDefinitions = fields.map((field) => ({
+      create: {
+        key: field.key,
+        name: field.name,
+        required: field.required ?? false,
+        type: field.type,
+        ...(field.validations?.length ? { validations: field.validations } : {}),
+      },
+    }));
+
+    const response = await this.query<{
+      metaobjectDefinitionUpdate: {
+        metaobjectDefinition?: { id: string };
+        userErrors: Array<{ field: string[]; message: string; code?: string }>;
+      };
+    }>(mutation, {
+      id: definitionId,
+      definition: { fieldDefinitions },
+    });
+
+    if (response.data?.metaobjectDefinitionUpdate.userErrors.length) {
+      throw new Error(
+        `Failed to update metaobject definition: ${response.data.metaobjectDefinitionUpdate.userErrors
+          .map((e) => e.message)
+          .join(", ")}`
+      );
+    }
   }
 
   async createMetaobjectDefinition(input: {
@@ -245,6 +368,53 @@ export class ShopifyClient {
     }
 
     return response.data?.metaobjectCreate.metaobject;
+  }
+
+  async updateMetaobject(input: {
+    id: string;
+    fields: Array<{ key: string; value: string }>;
+  }) {
+    const mutation = `
+      mutation UpdateMetaobject($id: ID!, $metaobject: MetaobjectUpdateInput!) {
+        metaobjectUpdate(id: $id, metaobject: $metaobject) {
+          metaobject {
+            id
+            handle
+            type
+            fields {
+              key
+              value
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      metaobjectUpdate: {
+        metaobject?: {
+          id: string;
+          handle: string;
+          type: string;
+          fields: Array<{ key: string; value: string }>;
+        };
+        userErrors: Array<{ field: string[]; message: string }>;
+      };
+    }>(mutation, { id: input.id, metaobject: { fields: input.fields } });
+
+    if (response.data?.metaobjectUpdate.userErrors.length > 0) {
+      throw new Error(
+        `Failed to update metaobject: ${response.data.metaobjectUpdate.userErrors
+          .map((e) => e.message)
+          .join(", ")}`
+      );
+    }
+
+    return response.data?.metaobjectUpdate.metaobject;
   }
 
   async getMetaobjects(type: string) {

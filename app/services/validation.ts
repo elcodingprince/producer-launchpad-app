@@ -14,8 +14,8 @@ export const beatUploadSchema = z.object({
   title: z.string().min(1, "Title is required"),
   bpm: z.number().int().min(60, "BPM must be at least 60").max(200, "BPM must be 200 or less"),
   key: keySchema,
-  genreGid: z.string().min(1, "Genre is required"),
-  producerGid: z.string().min(1, "Producer is required"),
+  genreGids: z.array(z.string().min(1)).min(1, "At least one genre is required"),
+  producerGids: z.array(z.string().min(1)).min(1, "At least one producer is required"),
   licensePrices: z.array(licensePriceSchema).min(1, "At least one license price is required"),
 });
 

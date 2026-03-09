@@ -47,27 +47,53 @@ export class BunnyCdnService {
     folder?: string
   ): Promise<BunnyUploadResult> {
     const path = folder ? `/${folder}/${fileName}` : `/${fileName}`;
+    const maxRetries = 2;
+    const timeoutMs = 30000;
+    let lastError: unknown;
 
-    const response = await fetch(`${this.baseUrl}/${this.storageZone}${path}`, {
-      method: "PUT",
-      headers: {
-        AccessKey: this.storagePassword,
-        "Content-Type": contentType,
-      },
-      body: file,
-    });
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (!response.ok) {
-      throw new Error(
-        `BunnyCDN upload failed: ${response.status} ${response.statusText}`
-      );
+      try {
+        const response = await fetch(`${this.baseUrl}/${this.storageZone}${path}`, {
+          method: "PUT",
+          headers: {
+            AccessKey: this.storagePassword,
+            "Content-Type": contentType,
+          },
+          body: file,
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `BunnyCDN upload failed: ${response.status} ${response.statusText}`
+          );
+        }
+
+        clearTimeout(timeout);
+        return {
+          url: `https://${this.pullZone}.b-cdn.net${path}`,
+          path,
+          fileName,
+        };
+      } catch (error) {
+        clearTimeout(timeout);
+        lastError = error;
+        if (attempt === maxRetries) {
+          break;
+        }
+      }
     }
 
-    return {
-      url: `https://${this.pullZone}.b-cdn.net${path}`,
-      path: path,
-      fileName: fileName,
-    };
+    if (lastError instanceof Error && lastError.name === "AbortError") {
+      throw new Error(`BunnyCDN upload timed out for ${fileName}`);
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`BunnyCDN upload failed for ${fileName}`);
   }
 
   async uploadBeatFiles(
@@ -151,23 +177,7 @@ export class BunnyCdnService {
       { ext: string; maxSize: number }
     >
   ): { valid: boolean; error?: string } {
-    const config = allowedTypes[file.type];
-
-    if (!config) {
-      return {
-        valid: false,
-        error: `File type "${file.type}" is not allowed.`,
-      };
-    }
-
-    if (file.size > config.maxSize) {
-      return {
-        valid: false,
-        error: `File is too large. Maximum size is ${config.maxSize / 1024 / 1024}MB.`,
-      };
-    }
-
-    return { valid: true };
+    return validateUploadFile(file, allowedTypes);
   }
 }
 
@@ -182,4 +192,27 @@ export const ALLOWED_FILE_TYPES = {
 
 export function createBunnyCdnService() {
   return new BunnyCdnService();
+}
+
+export function validateUploadFile(
+  file: File,
+  allowedTypes: Record<string, { ext: string; maxSize: number }>
+): { valid: boolean; error?: string } {
+  const config = allowedTypes[file.type];
+
+  if (!config) {
+    return {
+      valid: false,
+      error: `File type "${file.type}" is not allowed.`,
+    };
+  }
+
+  if (file.size > config.maxSize) {
+    return {
+      valid: false,
+      error: `File is too large. Maximum size is ${config.maxSize / 1024 / 1024}MB.`,
+    };
+  }
+
+  return { valid: true };
 }

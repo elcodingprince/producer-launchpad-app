@@ -6,9 +6,6 @@ webhooks_path = "/webhooks"
 dev = "npm run dev:web"
 build = "npm run build"
 
-[hmr_server]
-http_paths = ["/vite/hmr"]
-
 [auth]
 path = "/auth"
 callback_path = "/auth/callback"

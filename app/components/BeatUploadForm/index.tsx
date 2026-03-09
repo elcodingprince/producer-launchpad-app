@@ -1,9 +1,10 @@
 import { useState, useCallback } from "react";
-import { useSubmit } from "@remix-run/react";
+import { useNavigation, useSubmit } from "@remix-run/react";
 import {
   Card,
   TextField,
   Select,
+  ChoiceList,
   Button,
   DropZone,
   InlineStack,
@@ -55,13 +56,16 @@ const keyOptions = [
 
 export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormProps) {
   const submit = useSubmit();
+  const navigation = useNavigation();
 
   // Form state
   const [title, setTitle] = useState("");
   const [bpm, setBpm] = useState("");
   const [key, setKey] = useState("C minor");
-  const [genre, setGenre] = useState(genres[0]?.id || "");
-  const [producer, setProducer] = useState(producers[0]?.id || "");
+  const [genreGids, setGenreGids] = useState<string[]>(genres[0]?.id ? [genres[0].id] : []);
+  const [producerGids, setProducerGids] = useState<string[]>(
+    producers[0]?.id ? [producers[0].id] : []
+  );
   const [producerAlias, setProducerAlias] = useState("");
   const [licensePrices, setLicensePrices] = useState<
     Array<{ licenseId: string; licenseGid: string; price: string }>
@@ -79,8 +83,9 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
   const [stemsFile, setStemsFile] = useState<File | null>(null);
   const [coverArtFile, setCoverArtFile] = useState<File | null>(null);
 
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const uploading =
+    navigation.state === "submitting" &&
+    navigation.formMethod?.toLowerCase() === "post";
 
   const handleDrop = useCallback(
     (
@@ -99,20 +104,17 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
   );
 
   const handleUpload = () => {
-    if (!title || !bpm || !key || !genre || !producer) {
+    if (!title || !bpm || !key || genreGids.length === 0 || producerGids.length === 0) {
       return;
     }
-
-    setUploading(true);
-    setUploadProgress(0);
 
     const formData = new FormData();
     formData.append("intent", "upload");
     formData.append("title", title);
     formData.append("bpm", bpm);
     formData.append("key", key);
-    formData.append("genre", genre);
-    formData.append("producer", producer);
+    formData.append("genreGids", JSON.stringify(genreGids));
+    formData.append("producerGids", JSON.stringify(producerGids));
     formData.append("producerAlias", producerAlias);
     formData.append(
       "licensePrices",
@@ -178,23 +180,21 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
             />
           </FormLayout.Group>
 
-          <FormLayout.Group>
-            <Select
-              label="Genre"
-              options={genreOptions}
-              value={genre}
-              onChange={setGenre}
-              requiredIndicator
-            />
+          <ChoiceList
+            title="Producers"
+            choices={producerOptions}
+            selected={producerGids}
+            onChange={(selected) => setProducerGids(selected)}
+            allowMultiple
+          />
 
-            <Select
-              label="Producer"
-              options={producerOptions}
-              value={producer}
-              onChange={setProducer}
-              requiredIndicator
-            />
-          </FormLayout.Group>
+          <ChoiceList
+            title="Genres"
+            choices={genreOptions}
+            selected={genreGids}
+            onChange={(selected) => setGenreGids(selected)}
+            allowMultiple
+          />
 
           <TextField
             label="Producer Alias (Optional)"
@@ -350,7 +350,7 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
         <Card sectioned>
           <BlockStack gap="200">
             <Text>Uploading your beat...</Text>
-            <ProgressBar progress={uploadProgress} />
+            <ProgressBar progress={40} />
           </BlockStack>
         </Card>
       )}
@@ -365,8 +365,8 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
           !title ||
           !bpm ||
           !key ||
-          !genre ||
-          !producer ||
+          genreGids.length === 0 ||
+          producerGids.length === 0 ||
           !previewFile
         }
         fullWidth

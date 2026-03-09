@@ -12,9 +12,9 @@ export interface BeatProductData {
   descriptionHtml?: string;
   bpm: number;
   key: string;
-  genreGid: string;
-  producerGid: string;
-  producerName: string;
+  genreGids: string[];
+  producerGids: string[];
+  producerNames: string[];
   producerAlias?: string;
   files: {
     preview?: string;
@@ -28,6 +28,8 @@ export interface BeatProductData {
 
 export class ProductCreatorService {
   private client: ShopifyClient;
+  private static readonly LEGACY_DEFAULT_PRODUCER_HANDLE = "default-producer";
+  private static readonly LEGACY_DEFAULT_PRODUCER_NAME = "Default Producer";
 
   constructor(
     session: any,
@@ -62,14 +64,14 @@ export class ProductCreatorService {
       {
         namespace: "custom",
         key: "genre",
-        value: data.genreGid,
-        type: "metaobject_reference",
+        value: JSON.stringify(data.genreGids),
+        type: "list.metaobject_reference",
       },
       {
         namespace: "custom",
-        key: "producer",
-        value: data.producerGid,
-        type: "metaobject_reference",
+        key: "produced_by",
+        value: JSON.stringify(data.producerGids),
+        type: "list.metaobject_reference",
       },
       {
         namespace: "custom",
@@ -147,7 +149,7 @@ export class ProductCreatorService {
     const product = await this.client.createProduct({
       title: data.title,
       descriptionHtml: data.descriptionHtml || `<p>${data.title} - ${data.bpm} BPM ${data.key}</p>`,
-      vendor: data.producerName,
+      vendor: data.producerNames[0] || "Unknown Producer",
       productType: "Beat",
       tags: data.tags || ["beat", "instrumental"],
       variants,
@@ -197,19 +199,23 @@ export class ProductCreatorService {
       handle: string;
       title: string;
       urlSlug: string;
+      sortOrder: number;
     }>
   > {
     const metaobjects = await this.client.getMetaobjects("genre");
 
-    return metaobjects.map((obj) => {
+    return metaobjects
+      .map((obj) => {
       const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
       return {
         id: obj.id,
         handle: obj.handle,
         title: fields.get("title") || "",
         urlSlug: fields.get("url_slug") || "",
+        sortOrder: Number(fields.get("sort_order") || "999"),
       };
-    });
+      })
+      .sort((a, b) => a.sortOrder - b.sortOrder);
   }
 
   async getProducerMetaobjects(): Promise<
@@ -221,17 +227,23 @@ export class ProductCreatorService {
   > {
     const metaobjects = await this.client.getMetaobjects("producer");
 
-    return metaobjects.map((obj) => {
-      const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
-      return {
-        id: obj.id,
-        handle: obj.handle,
-        name: fields.get("name") || "",
-      };
-    });
+    return metaobjects
+      .map((obj) => {
+        const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
+        return {
+          id: obj.id,
+          handle: obj.handle,
+          name: fields.get("name") || "",
+        };
+      })
+      .filter(
+        (producer) =>
+          producer.handle !== ProductCreatorService.LEGACY_DEFAULT_PRODUCER_HANDLE &&
+          producer.name !== ProductCreatorService.LEGACY_DEFAULT_PRODUCER_NAME
+      );
   }
 
-  async createProducer(name: string, bio?: string, email?: string): Promise<{
+  async createProducer(name: string, bio?: string): Promise<{
     id: string;
     handle: string;
   }> {
@@ -242,7 +254,6 @@ export class ProductCreatorService {
 
     const fields = [{ key: "name", value: name }];
     if (bio) fields.push({ key: "bio", value: bio });
-    if (email) fields.push({ key: "email", value: email });
 
     const metaobject = await this.client.createMetaobject({
       type: "producer",

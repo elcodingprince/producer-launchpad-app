@@ -22,7 +22,6 @@ import {
   PlusIcon,
   SoundIcon,
   ArrowRightIcon,
-  MusicIcon,
 } from "@shopify/polaris-icons";
 import { createMetafieldSetupService } from "../services/metafieldSetup";
 import { createProductCreatorService } from "../services/productCreator";
@@ -223,7 +222,7 @@ export default function Dashboard() {
                   Upload New Beat
                 </Button>
                 <Button
-                  icon={MusicIcon}
+                  icon={SoundIcon}
                   url="/app/beats"
                 >
                   View All Beats

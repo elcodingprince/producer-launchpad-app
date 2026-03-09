@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useActionData, useSubmit } from "@remix-run/react";
+import { Form, useLoaderData, useActionData, useNavigation } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import {
   Page,
@@ -8,6 +8,7 @@ import {
   Card,
   Banner,
   Button,
+  TextField,
   InlineStack,
   BlockStack,
   Text,
@@ -18,6 +19,8 @@ import {
 } from "@shopify/polaris";
 import { CheckCircleIcon, RefreshIcon } from "@shopify/polaris-icons";
 import { createMetafieldSetupService } from "../services/metafieldSetup";
+import { useState } from "react";
+import { getStorageConfigForDisplay } from "~/services/storageConfig.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -25,7 +28,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const setupStatus = await setupService.checkSetupStatus();
-    return json({ setupStatus, error: null });
+    const storageConfig = await getStorageConfigForDisplay(session.shop);
+    return json({ setupStatus, storageConfig, error: null });
   } catch (error) {
     console.error("Setup loader error:", error);
     return json(
@@ -41,9 +45,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const setupService = createMetafieldSetupService(session, admin);
+  const formData = await request.formData();
+  const initialProducerName = (formData.get("initialProducerName") as string) || "";
 
   try {
-    const result = await setupService.runFullSetup();
+    const result = await setupService.runFullSetup({ initialProducerName });
     return json({ success: result.success, result });
   } catch (error) {
     console.error("Setup error:", error);
@@ -58,13 +64,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SetupPage() {
-  const { setupStatus, error: loaderError } = useLoaderData<typeof loader>();
+  const { setupStatus, storageConfig, error: loaderError } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
-  const submit = useSubmit();
-
-  const handleRunSetup = () => {
-    submit(null, { method: "post" });
-  };
+  const navigation = useNavigation();
+  const [initialProducerName, setInitialProducerName] = useState("");
+  const isRunningSetup =
+    navigation.state === "submitting" &&
+    navigation.formMethod?.toLowerCase() === "post";
+  const requiresInitialProducer = setupStatus?.producers?.existing === 0;
+  const canRunSetup = !requiresInitialProducer || initialProducerName.trim().length > 0;
 
   if (loaderError || !setupStatus) {
     return (
@@ -101,6 +109,23 @@ export default function SetupPage() {
       term: "Beat Licenses",
       description: `${setupStatus.beatLicenses.existing}/${setupStatus.beatLicenses.required} created`,
     },
+    {
+      term: "Genres",
+      description: `${setupStatus.genres.existing}/${setupStatus.genres.required} created`,
+    },
+    {
+      term: "Producers",
+      description: `${setupStatus.producers.existing}/${setupStatus.producers.required} created`,
+    },
+    {
+      term: "Storage & Delivery",
+      description:
+        storageConfig?.status === "connected"
+          ? "Connected"
+          : storageConfig?.status === "error"
+            ? "Error - needs attention"
+            : "Not configured",
+    },
   ];
 
   return (
@@ -118,10 +143,48 @@ export default function SetupPage() {
           </Layout.Section>
         )}
 
-        {actionData?.error && !actionData.success && (
+        {actionData?.success &&
+          actionData?.result &&
+          actionData.result.created.metaobjectDefinitions.length === 0 &&
+          actionData.result.created.productMetafields.length === 0 &&
+          actionData.result.created.variantMetafields.length === 0 &&
+          actionData.result.created.licenses.length === 0 &&
+          actionData.result.created.genres.length === 0 &&
+          actionData.result.created.producers.length === 0 && (
+            <Layout.Section>
+              <Banner title="No setup changes were needed" status="info">
+                <p>Your store already matches the expected setup schema and seed data.</p>
+              </Banner>
+            </Layout.Section>
+          )}
+
+        {actionData && !actionData.success && actionData?.error && (
           <Layout.Section>
             <Banner title="Setup failed" status="critical">
               <p>{actionData.error}</p>
+            </Banner>
+          </Layout.Section>
+        )}
+
+        {actionData &&
+          !actionData.success &&
+          actionData.result?.errors &&
+          actionData.result.errors.length > 0 && (
+            <Layout.Section>
+              <Banner title="Setup completed with issues" status="critical">
+                <List type="bullet">
+                  {actionData.result.errors.map((error: string) => (
+                    <List.Item key={error}>{error}</List.Item>
+                  ))}
+                </List>
+              </Banner>
+            </Layout.Section>
+          )}
+
+        {isRunningSetup && (
+          <Layout.Section>
+            <Banner title="Running setup..." status="info">
+              <p>Applying schema checks and seed data. This can take a few seconds.</p>
             </Banner>
           </Layout.Section>
         )}
@@ -149,16 +212,49 @@ export default function SetupPage() {
 
               <DescriptionList items={items} />
 
-              {!setupStatus.isComplete && (
-                <Button
-                  primary
-                  icon={RefreshIcon}
-                  onClick={handleRunSetup}
-                  loading={!!actionData && !actionData.success && !actionData.error}
+              {storageConfig?.status !== "connected" && (
+                <Banner
+                  title="Storage setup required"
+                  status={storageConfig?.status === "error" ? "warning" : "info"}
+                  action={{ content: "Configure Storage", url: "/app/storage" }}
                 >
-                  Run Setup Wizard
-                </Button>
+                  <p>
+                    Configure storage before uploading beats. If connection failed, fix it in
+                    Storage & Delivery.
+                  </p>
+                </Banner>
               )}
+
+              {requiresInitialProducer && (
+                <Banner status="info" title="Create your first producer profile">
+                  <p>
+                    Enter your producer name. This creates the first Producer metaobject entry
+                    used by uploads.
+                  </p>
+                </Banner>
+              )}
+
+              <Form method="post">
+                {requiresInitialProducer && (
+                  <TextField
+                    label="Producer Name"
+                    name="initialProducerName"
+                    value={initialProducerName}
+                    onChange={setInitialProducerName}
+                    autoComplete="off"
+                    requiredIndicator
+                  />
+                )}
+                <Button
+                  primary={!setupStatus.isComplete}
+                  icon={RefreshIcon}
+                  submit
+                  loading={isRunningSetup}
+                  disabled={!canRunSetup}
+                >
+                  {setupStatus.isComplete ? "Run Setup Again" : "Run Setup Wizard"}
+                </Button>
+              </Form>
             </BlockStack>
           </Card>
         </Layout.Section>
@@ -263,6 +359,39 @@ export default function SetupPage() {
                     <List type="bullet">
                       {actionData.result.created.licenses.map((handle: string) => (
                         <List.Item key={handle}>{handle}</List.Item>
+                      ))}
+                    </List>
+                  </div>
+                )}
+
+                {actionData.result.created.genres.length > 0 && (
+                  <div>
+                    <Text fontWeight="semibold">Seeded/Updated Genres:</Text>
+                    <List type="bullet">
+                      {actionData.result.created.genres.map((handle: string) => (
+                        <List.Item key={handle}>{handle}</List.Item>
+                      ))}
+                    </List>
+                  </div>
+                )}
+
+                {actionData.result.created.producers.length > 0 && (
+                  <div>
+                    <Text fontWeight="semibold">Seeded/Updated Producers:</Text>
+                    <List type="bullet">
+                      {actionData.result.created.producers.map((handle: string) => (
+                        <List.Item key={handle}>{handle}</List.Item>
+                      ))}
+                    </List>
+                  </div>
+                )}
+
+                {actionData.result.errors.length > 0 && (
+                  <div>
+                    <Text fontWeight="semibold">Errors:</Text>
+                    <List type="bullet">
+                      {actionData.result.errors.map((error: string) => (
+                        <List.Item key={error}>{error}</List.Item>
                       ))}
                     </List>
                   </div>

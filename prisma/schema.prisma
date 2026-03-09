@@ -24,3 +24,21 @@ model Session {
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
 }
+
+model ShopStorageConfig {
+  id                 String   @id @default(cuid())
+  shop               String   @unique
+  mode               String   @default("disconnected")
+  provider           String?
+  status             String   @default("disconnected")
+  accountId          String?
+  bucketName         String?
+  publicBaseUrl      String?
+  accessKeyIdEnc     String?
+  secretAccessKeyEnc String?
+  lastTestedAt       DateTime?
+  lastError          String?
+  errorType          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
