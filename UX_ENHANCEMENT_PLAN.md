@@ -217,6 +217,27 @@ Per-shop config in app DB:
 2. Phase 2: License-first uploader + validation + preview panel.
 3. Phase 3: Stripe managed billing activation + provider expansion.
 
+## 4.8 Server-Side Publish Validation Guard (TODO)
+**Critical:** Implement explicit server-side validation before product publish action.
+
+**Validation Rules:**
+1. Every variant with a price > 0 must have a valid `download_bundle` metafield.
+2. The `download_bundle` must contain at least one file reference.
+3. All referenced files must exist in storage (verify via HEAD request or DB lookup).
+4. License tier requirements must be satisfied:
+   - Basic: MP3 file required
+   - Premium: WAV file required  
+   - Unlimited: WAV + Stems required
+
+**Error Responses:**
+- Return 400 with explicit error message: "Cannot publish: [License Tier] has no files mapped."
+- Block publish action entirely if validation fails.
+- Do not rely solely on client-side gating.
+
+**Implementation Location:**
+- Route: `app/routes/app.beats.new.tsx` (publish action)
+- Service: `app/services/validation.ts` (server-side publish validator)
+
 ---
 
 ## 5. Required API Interactions
