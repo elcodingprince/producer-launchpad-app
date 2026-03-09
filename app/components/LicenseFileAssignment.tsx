@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, memo } from 'react';
 import {
   Card,
   Button,
@@ -17,6 +17,41 @@ import {
   XIcon,
 } from '@shopify/polaris-icons';
 import { validateUploadFile, ALLOWED_FILE_TYPES } from '../services/bunnyCdn';
+
+// File type badge component - defined outside main component for performance
+const FileTypeBadge = memo(({ type }: { type: string }) => {
+  const FILE_TYPES: Record<string, { label: string; icon: string; color: string }> = {
+    mp3: { label: 'MP3', icon: '🎵', color: '#10B981' },
+    wav: { label: 'WAV', icon: '🎼', color: '#3B82F6' },
+    stems: { label: 'Stems', icon: '📦', color: '#F59E0B' },
+    cover: { label: 'Cover Art', icon: '🖼️', color: '#EC4899' },
+    other: { label: 'File', icon: '📄', color: '#6B7280' },
+  };
+
+  const config = FILE_TYPES[type] || FILE_TYPES.other;
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        padding: '2px 8px',
+        borderRadius: '12px',
+        fontSize: '11px',
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        backgroundColor: `${config.color}20`,
+        color: config.color,
+      }}
+    >
+      <span>{config.icon}</span>
+      {config.label}
+    </span>
+  );
+});
+
+FileTypeBadge.displayName = 'FileTypeBadge';
 
 // License tier type
 export interface LicenseTier {
@@ -59,20 +94,25 @@ export interface LicenseFileAssignmentProps {
   error?: string | null;
 }
 
-// File type definitions
-const FILE_TYPES: Record<string, { label: string; icon: string; color: string }> = {
-  mp3: { label: 'MP3', icon: '🎵', color: '#10B981' },
-  wav: { label: 'WAV', icon: '🎼', color: '#3B82F6' },
-  stems: { label: 'Stems', icon: '📦', color: '#F59E0B' },
-  cover: { label: 'Cover Art', icon: '🖼️', color: '#EC4899' },
-  other: { label: 'File', icon: '📄', color: '#6B7280' },
-};
-
-// Default license tier styling
+// Default license tier styling - defined outside component
 const DEFAULT_TIER_STYLES: Record<string, { color: string; icon: string; recommendedFiles: string[] }> = {
   basic: { color: '#0066FF', icon: '🔷', recommendedFiles: ['mp3'] },
   premium: { color: '#8B5CF6', icon: '💎', recommendedFiles: ['mp3', 'wav'] },
   unlimited: { color: '#F59E0B', icon: '👑', recommendedFiles: ['mp3', 'wav', 'stems'] },
+};
+
+// Helper function defined outside component
+const getTierStyle = (tier: LicenseTier) => {
+  const defaultStyle = DEFAULT_TIER_STYLES[tier.id] || {
+    color: '#6B7280',
+    icon: '📋',
+    recommendedFiles: [],
+  };
+  return {
+    color: tier.color || defaultStyle.color,
+    icon: tier.icon || defaultStyle.icon,
+    recommendedFiles: tier.recommendedFiles || defaultStyle.recommendedFiles,
+  };
 };
 
 export function LicenseFileAssignment({
@@ -134,11 +174,11 @@ export function LicenseFileAssignment({
   const handleDrop = useCallback(async (
     _dropFiles: File[],
     acceptedFiles: File[],
-    rejectedFiles: File[]
+    rejectedFilesInput: File[]
   ) => {
     // Handle rejected files
-    if (rejectedFiles.length > 0) {
-      setRejectedFiles(rejectedFiles.map(file => ({
+    if (rejectedFilesInput.length > 0) {
+      setRejectedFiles(rejectedFilesInput.map(file => ({
         file,
         error: 'File type not supported',
       })));
@@ -172,14 +212,15 @@ export function LicenseFileAssignment({
     // Upload files if onUpload handler provided
     if (onUpload && validFiles.length > 0) {
       try {
-        const filesWithUrls = await onUpload(validFiles.map(f => f.file!).filter(Boolean));
+        const filesToUpload = validFiles.map(f => f.file).filter((f): f is File => f !== undefined);
+        const filesWithUrls = await onUpload(filesToUpload);
         const updatedFiles = [...uploadedFiles, ...filesWithUrls];
         updateState(updatedFiles, licenseFiles);
       } catch (err) {
         setRejectedFiles(validFiles.map(f => ({
-          file: f.file!,
+          file: f.file,
           error: err instanceof Error ? err.message : 'Upload failed',
-        })));
+        })).filter((r): r is { file: File; error: string } => r.file !== undefined));
       }
     } else {
       // Just add to state without uploading
@@ -239,45 +280,6 @@ export function LicenseFileAssignment({
     return licenses.every((license) => (licenseFiles[license.id]?.length || 0) > 0);
   }, [licenses, licenseFiles]);
 
-  // File type badge component
-  const FileTypeBadge = ({ type }: { type: string }) => {
-    const config = FILE_TYPES[type] || FILE_TYPES.other;
-    return (
-      <span
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '4px',
-          padding: '2px 8px',
-          borderRadius: '12px',
-          fontSize: '11px',
-          fontWeight: '600',
-          textTransform: 'uppercase',
-          letterSpacing: '0.5px',
-          backgroundColor: `${config.color}20`,
-          color: config.color,
-        }}
-      >
-        <span>{config.icon}</span>
-        {config.label}
-      </span>
-    );
-  };
-
-  // Get tier styling
-  const getTierStyle = (tier: LicenseTier) => {
-    const defaultStyle = DEFAULT_TIER_STYLES[tier.id] || {
-      color: '#6B7280',
-      icon: '📋',
-      recommendedFiles: [],
-    };
-    return {
-      color: tier.color || defaultStyle.color,
-      icon: tier.icon || defaultStyle.icon,
-      recommendedFiles: tier.recommendedFiles || defaultStyle.recommendedFiles,
-    };
-  };
-
   return (
     <BlockStack gap="600">
       {/* Header */}
@@ -332,7 +334,7 @@ export function LicenseFileAssignment({
             disabled={uploading}
           >
             {uploading ? (
-              <BlockStack align="center" gap="200">
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', padding: '32px' }}>
                 <Spinner size="large" />
                 <Text variant="bodyMd">Uploading...</Text>
                 {uploadProgress !== undefined && (
@@ -340,7 +342,7 @@ export function LicenseFileAssignment({
                     {uploadProgress}%
                   </Text>
                 )}
-              </BlockStack>
+              </div>
             ) : (
               <DropZone.FileUpload actionHint="Accepts .mp3, .wav, .zip, .jpg, .png up to 500MB" />
             )}
@@ -371,7 +373,7 @@ export function LicenseFileAssignment({
                 >
                   <FileTypeBadge type={file.type} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text variant="bodySm" fontWeight="medium" truncate>
+                    <Text variant="bodySm" fontWeight="medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {file.name}
                     </Text>
                     <Text variant="bodyXs" tone="subdued">
@@ -384,6 +386,7 @@ export function LicenseFileAssignment({
                     variant="plain"
                     onClick={() => removeFile(file.id)}
                     disabled={uploading}
+                    accessibilityLabel={`Remove ${file.name}`}
                   />
                 </div>
               ))}
@@ -477,7 +480,7 @@ export function LicenseFileAssignment({
                                 }}
                               >
                                 <FileTypeBadge type={file.type} />
-                                <Text variant="bodySm" truncate>
+                                <Text variant="bodySm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                                   {file.name}
                                 </Text>
                                 <div style={{ flex: 1 }} />
@@ -488,6 +491,7 @@ export function LicenseFileAssignment({
                                   size="slim"
                                   onClick={() => removeFileFromLicense(fileId, tier.id)}
                                   disabled={uploading}
+                                  accessibilityLabel={`Remove ${file.name} from ${tier.name}`}
                                 />
                               </div>
                             );
