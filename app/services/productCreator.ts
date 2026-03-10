@@ -148,6 +148,7 @@ export class ProductCreatorService {
       tags: data.tags || ["beat", "instrumental"],
       images: data.coverArtUrl ? [{ src: data.coverArtUrl }] : [],
       variants,
+      metafields: productMetafields,
     });
 
     if (!product) {

@@ -475,7 +475,7 @@ export class ShopifyClient {
       type: string;
     }>;
   }) {
-    const { variants, images, ...baseInput } = input;
+    const { variants, images, metafields, ...baseInput } = input;
     const optionValues = Array.from(
       new Set(
         variants
@@ -499,6 +499,16 @@ export class ShopifyClient {
       createInput.media = images.map((img) => ({
         originalSource: img.src,
         mediaContentType: "IMAGE",
+      }));
+    }
+
+    // Add metafields if provided
+    if (metafields && metafields.length > 0) {
+      createInput.metafields = metafields.map((mf) => ({
+        namespace: mf.namespace,
+        key: mf.key,
+        value: mf.value,
+        type: mf.type,
       }));
     }
 
