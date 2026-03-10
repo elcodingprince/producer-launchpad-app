@@ -57,6 +57,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const setupStatus = await setupService.checkSetupStatus();
     const storageConfig = await getStorageConfigForDisplay(session.shop);
 
+    // Redirect to setup if incomplete
     if (!setupStatus.isComplete) {
       return redirect("/app/setup");
     }
@@ -65,6 +66,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return redirect("/app/storage");
     }
 
+    // Load upload dependencies
     const [licenses, genres, producers] = await Promise.all([
       productService.getLicenseMetaobjects(),
       productService.getGenreMetaobjects(),
@@ -111,6 +113,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.info("[upload] started");
     const productService = createProductCreatorService(session, admin);
 
+    // Parse multipart form data to get actual File objects
     const formData = await request.formData();
     
     // Extract beat details
@@ -121,14 +124,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const producerGids = JSON.parse((formData.get("producerGids") as string) || "[]");
     const producerAlias = (formData.get("producerAlias") as string) || "";
 
-    // Extract license file assignments and preview
+    // Extract license file assignments (maps tier -> array of temp file IDs)
     const licenseFilesData = JSON.parse((formData.get("licenseFiles") as string) || "{}");
-    const previewFileId = (formData.get("previewFileId") as string) || null;
+    
+    // Extract preview file ID
+    const previewFileId = formData.get("previewFileId") as string | null;
+    
+    // Extract file metadata (maps temp file ID -> metadata including purpose)
     const fileMetadataJson = (formData.get("fileMetadata") as string) || "{}";
     const fileMetadata = JSON.parse(fileMetadataJson);
 
     // === SERVER-SIDE VALIDATION ===
     
+    // Validate required fields
     if (!title || !bpm || !key || genreGids.length === 0 || producerGids.length === 0) {
       return json(
         { success: false, error: "Please fill in all required fields" },
@@ -184,7 +192,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Validate that all assigned files exist in uploads
     const allAssignedFileIds = new Set<string>();
-    allAssignedFileIds.add(previewFileId);
+    allAssignedFileIds.add(previewFileId); // Preview is also required
     for (const tier of licenseTiers) {
       const filesForTier = licenseFilesData[tier] || [];
       for (const fileId of filesForTier) {
@@ -209,44 +217,56 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const selectedProducers = producers.filter((p) => producerGids.includes(p.id));
     const producerNames = selectedProducers.map((p) => p.name);
 
+    // Generate beat slug for storage path
     const beatSlug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now()}`;
 
     // === UPLOAD FILES TO STORAGE ===
     console.info("[upload] uploading files to configured storage");
     
-    const filesToUpload: DynamicFileUpload[] = fileEntries.map(entry => ({
-      file: entry.file,
-      fileType: entry.purpose === 'preview' ? 'preview' : entry.purpose,
-      originalName: entry.file.name,
-    }));
+    // Prepare files for upload with their purpose
+    const filesToUpload: DynamicFileUpload[] = fileEntries.map(entry => {
+      const metadata = fileMetadata[entry.tempId] || {};
+      return {
+        file: entry.file,
+        fileType: metadata.type || "other",
+        originalName: metadata.name || entry.file.name,
+        purpose: entry.purpose, // Pass purpose for tracking
+      };
+    });
 
+    // Upload all files
     const uploadResults = await uploadDynamicFilesForShop(session.shop, filesToUpload, beatSlug);
     
+    // Create a map from tempId to upload result
     const tempIdToResult = new Map<string, UploadedFileResult>();
     for (let i = 0; i < fileEntries.length; i++) {
       tempIdToResult.set(fileEntries[i].tempId, uploadResults[i]);
     }
 
-    // Get preview URL
-    const previewResult = tempIdToResult.get(previewFileId);
-    const previewUrl = previewResult?.storageUrl;
-
-    // Get cover art URL (if any)
+    // Track cover art and preview URLs by purpose
     let coverArtUrl: string | undefined;
-    for (const result of uploadResults) {
-      if (result.fileType === "cover" && !coverArtUrl) {
+    let previewUrl: string | undefined;
+    
+    for (let i = 0; i < fileEntries.length; i++) {
+      const entry = fileEntries[i];
+      const result = uploadResults[i];
+      
+      if (entry.purpose === "preview" || entry.tempId === previewFileId) {
+        previewUrl = result.storageUrl;
+      }
+      if (entry.purpose === "cover" || result.fileType === "cover") {
         coverArtUrl = result.storageUrl;
-        break;
       }
     }
 
-    // Get actual license GIDs
+    // Get actual license GIDs from the database
     const licenses = await productService.getLicenseMetaobjects();
     const licenseMap = new Map(licenses.map((l) => [l.licenseId, l.id]));
 
     // === CREATE SHOPIFY PRODUCT ===
     console.info("[upload] creating Shopify product");
     
+    // Prepare license file bundles for the product creator
     const licenseFileBundles = licenseTiers.map(tier => {
       const tierConfig = LICENSE_TIERS.find(t => t.id === tier)!;
       const tempFileIdsForTier = licenseFilesData[tier] || [];
@@ -260,6 +280,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             name: metadata.name || result.originalName,
             storageUrl: result.storageUrl,
             fileType: result.fileType,
+            purpose: metadata.purpose || result.fileType,
           };
         })
         .filter(Boolean);
@@ -271,6 +292,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       };
     });
 
+    // Prepare license prices
     const licensePrices = LICENSE_TIERS.map(lp => ({
       licenseId: lp.id,
       licenseGid: licenseMap.get(lp.id) || "",
@@ -296,6 +318,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.info("[upload] saving file mappings to database", { productId: result.productId });
     
     const productId = result.productId;
+    
+    // Create BeatFile records for each uploaded file
     const beatFileRecords: Array<{ id: string; tempId: string }> = [];
     
     for (const entry of fileEntries) {
@@ -310,7 +334,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           filename: metadata.name || uploadResult.originalName,
           storageUrl: uploadResult.storageUrl,
           fileType: uploadResult.fileType,
-          filePurpose: entry.purpose,
+          filePurpose: metadata.purpose || entry.purpose || uploadResult.fileType,
           size: uploadResult.size,
         },
       });
@@ -318,6 +342,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       beatFileRecords.push({ id: beatFile.id, tempId: entry.tempId });
     }
     
+    // Create a map from tempId to database BeatFile id
     const tempIdToDbId = new Map(beatFileRecords.map(r => [r.tempId, r.id]));
     
     // Create LicenseFileMapping records for each tier
@@ -368,7 +393,7 @@ export default function NewBeatPage() {
   const [producerGids, setProducerGids] = useState<string[]>(producers[0]?.id ? [producers[0].id] : []);
   const [producerAlias, setProducerAlias] = useState("");
 
-  // File states
+  // License file assignment state
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [licenseFiles, setLicenseFiles] = useState<LicenseFiles>({
     basic: [],
@@ -379,21 +404,25 @@ export default function NewBeatPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // Handle file upload
+  // Handle file upload with purpose
   const handleFileUpload = useCallback(
     async (files: File[], purpose: 'preview' | 'license'): Promise<UploadedFile[]> => {
       setIsUploading(true);
       setUploadError(null);
 
       try {
-        const newFiles: UploadedFile[] = files.map((file) => ({
-          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: file.name,
-          type: purpose === 'preview' ? 'preview' : detectFileType(file.name),
-          purpose: purpose === 'preview' ? 'preview' : detectFilePurpose(file.name),
-          size: formatFileSize(file.size),
-          file: file,
-        }));
+        // Create local file entries with temporary IDs and purpose
+        const newFiles: UploadedFile[] = files.map((file) => {
+          const fileType = detectFileType(file.name);
+          return {
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            name: file.name,
+            type: purpose === 'preview' ? 'preview' : fileType,
+            purpose: purpose === 'preview' ? 'preview' : (fileType === 'mp3' || fileType === 'wav' || fileType === 'stems' ? fileType : 'other'),
+            size: formatFileSize(file.size),
+            file: file,
+          };
+        });
 
         return newFiles;
       } catch (error) {
@@ -408,16 +437,6 @@ export default function NewBeatPage() {
 
   // Detect file type
   const detectFileType = (filename: string): UploadedFile["type"] => {
-    const ext = filename.toLowerCase().split(".").pop();
-    if (ext === "mp3") return "mp3";
-    if (ext === "wav") return "wav";
-    if (ext === "zip") return "stems";
-    if (["jpg", "jpeg", "png"].includes(ext || "")) return "cover";
-    return "other";
-  };
-
-  // Detect file purpose
-  const detectFilePurpose = (filename: string): UploadedFile["purpose"] => {
     const ext = filename.toLowerCase().split(".").pop();
     if (ext === "mp3") return "mp3";
     if (ext === "wav") return "wav";
@@ -458,12 +477,16 @@ export default function NewBeatPage() {
     formData.append("producerGids", JSON.stringify(producerGids));
     formData.append("producerAlias", producerAlias);
     formData.append("licenseFiles", JSON.stringify(licenseFiles));
-    formData.append("previewFileId", previewFile?.id || "");
     
-    // Build file metadata and append files
+    // Add preview file ID
+    if (previewFile) {
+      formData.append("previewFileId", previewFile.id);
+    }
+    
+    // Build file metadata map with purpose
     const fileMetadata: Record<
       string,
-      { name: string; type: string; purpose: string; size: string }
+      { name: string; type: string; size: string; purpose: string }
     > = {};
 
     // Append preview file
@@ -473,8 +496,8 @@ export default function NewBeatPage() {
       fileMetadata[previewFile.id] = {
         name: previewFile.name,
         type: previewFile.type,
-        purpose: previewFile.purpose,
         size: previewFile.size,
+        purpose: previewFile.purpose,
       };
     }
     
@@ -486,8 +509,8 @@ export default function NewBeatPage() {
         fileMetadata[uploadedFile.id] = {
           name: uploadedFile.name,
           type: uploadedFile.type,
-          purpose: uploadedFile.purpose,
           size: uploadedFile.size,
+          purpose: uploadedFile.purpose,
         };
       }
     });
@@ -497,14 +520,22 @@ export default function NewBeatPage() {
     submit(formData, { method: "post", encType: "multipart/form-data" });
   };
 
+  // Map licenses to tier format for LicenseFileAssignment
   const licenseTiers = [
     { id: "basic", name: "Basic", price: "$29.99", description: "MP3 for personal use" },
     { id: "premium", name: "Premium", price: "$49.99", description: "MP3 + WAV for commercial use" },
     { id: "unlimited", name: "Unlimited", price: "$99.99", description: "Full package + stems" },
   ];
 
-  const genreOptions = genres.map((g) => ({ label: g.title, value: g.id }));
-  const producerOptions = producers.map((p) => ({ label: p.name, value: p.id }));
+  const genreOptions = genres.map((g) => ({
+    label: g.title,
+    value: g.id,
+  }));
+
+  const producerOptions = producers.map((p) => ({
+    label: p.name,
+    value: p.id,
+  }));
 
   if (loaderError) {
     return (
@@ -553,9 +584,13 @@ export default function NewBeatPage() {
 
         <Layout.Section>
           <BlockStack gap="500">
+            {/* Beat Details */}
             <Card>
               <BlockStack gap="400">
-                <Text variant="headingMd" as="h2">Beat Details</Text>
+                <Text variant="headingMd" as="h2">
+                  Beat Details
+                </Text>
+
                 <FormLayout>
                   <TextField
                     label="Beat Title"
@@ -565,6 +600,7 @@ export default function NewBeatPage() {
                     helpText="Enter a catchy title for your beat"
                     requiredIndicator
                   />
+
                   <FormLayout.Group>
                     <TextField
                       label="BPM"
@@ -575,6 +611,7 @@ export default function NewBeatPage() {
                       helpText="Beats per minute"
                       requiredIndicator
                     />
+
                     <Select
                       label="Key"
                       options={keyOptions.map((k) => ({ label: k, value: k }))}
@@ -583,7 +620,7 @@ export default function NewBeatPage() {
                       requiredIndicator
                     />
                   </FormLayout.Group>
-                  
+
                   <ChoiceList
                     title="Producers"
                     choices={producerOptions}
@@ -591,7 +628,7 @@ export default function NewBeatPage() {
                     onChange={setProducerGids}
                     allowMultiple
                   />
-                  
+
                   <ChoiceList
                     title="Genres"
                     choices={genreOptions}
@@ -599,7 +636,7 @@ export default function NewBeatPage() {
                     onChange={setGenreGids}
                     allowMultiple
                   />
-                  
+
                   <TextField
                     label="Producer Alias (Optional)"
                     value={producerAlias}
@@ -611,6 +648,7 @@ export default function NewBeatPage() {
               </BlockStack>
             </Card>
 
+            {/* License File Assignment */}
             <LicenseFileAssignment
               licenses={licenseTiers}
               uploadedFiles={uploadedFiles}
@@ -630,6 +668,7 @@ export default function NewBeatPage() {
               error={uploadError}
             />
 
+            {/* Submit Button */}
             <Card>
               <Button
                 variant="primary"
