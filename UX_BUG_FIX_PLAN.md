@@ -91,6 +91,26 @@
 
 ---
 
+## Additional UX/UI Bug - Upload CTA Label and Missing Progress Feedback
+
+### Problem
+- Final action button currently reads `Create Beat Product`, which does not match the user mental model of "uploading a beat."
+- There is no clear upload progress state during submission, making long uploads feel stalled or unclear.
+
+### UX Goal
+- Use action language that matches user intent.
+- Provide visible progress feedback while upload and product creation are in flight.
+
+### TODO
+- Update primary submit CTA label from `Create Beat Product` to `Upload`.
+- Add a clear upload progress/loading state in the uploader UI.
+
+### Current Progress
+- Status: `Pending`
+- Design/implementation: `Not started`
+
+---
+
 ## Additional Product Flow Problem - Post Upload Redirect to Non-Functional "My Beats"
 
 ### Problem
