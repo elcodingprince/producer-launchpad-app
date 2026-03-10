@@ -3,7 +3,7 @@ import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useActionData, useSubmit } from "@remix-run/react";
 import { useState, useCallback } from "react";
 import { authenticate } from "~/shopify.server";
-import { prisma } from "~/db.server";
+import prisma from "~/db.server";
 import {
   Page,
   Layout,

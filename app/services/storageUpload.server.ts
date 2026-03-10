@@ -1,5 +1,9 @@
-import { createBunnyCdnService, type BeatFileUpload, type UploadedBeatFiles } from "./bunnyCdn";
-import { getResolvedR2Credentials, getStorageConfig } from "./storageConfig.server";
+import { type BeatFileUpload, type UploadedBeatFiles } from "./bunnyCdn";
+import {
+  getManagedR2Credentials,
+  getResolvedR2Credentials,
+  getStorageConfig,
+} from "./storageConfig.server";
 import { uploadR2Object } from "./r2.server";
 
 export interface DynamicFileUpload {
@@ -73,17 +77,26 @@ async function uploadSelfManagedR2(
   return results;
 }
 
-async function uploadToBunnyCDN(
+async function uploadManagedR2(
   files: DynamicFileUpload[],
   beatSlug: string
 ): Promise<UploadedFileResult[]> {
-  const bunnyService = createBunnyCdnService();
+  const creds = getManagedR2Credentials();
+  if (!creds) {
+    throw new Error(
+      "Managed storage is not configured. Set CF_R2_ACCOUNT_ID, CF_R2_BUCKET_NAME, CF_R2_ACCESS_KEY_ID and CF_R2_SECRET_ACCESS_KEY in the app backend."
+    );
+  }
+
+  const baseUrl = creds.publicBaseUrl
+    ? normalizeBaseUrl(creds.publicBaseUrl)
+    : `https://${creds.accountId}.r2.cloudflarestorage.com/${creds.bucketName}`;
   const results: UploadedFileResult[] = [];
 
   for (const fileData of files) {
     const { file, fileType, originalName } = fileData;
-    const extension = originalName.split('.').pop() || '';
-    const safeName = `${Date.now()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+    const safeName = `${Date.now()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
+    const key = `${beatSlug}/${safeName}`;
     
     // Determine content type
     const contentTypeMap: Record<string, string> = {
@@ -95,18 +108,20 @@ async function uploadToBunnyCDN(
     };
     const contentType = contentTypeMap[fileType] || 'application/octet-stream';
 
-    const arrayBuffer = await file.arrayBuffer();
-    const upload = await bunnyService.uploadFile(
-      arrayBuffer,
-      safeName,
+    await uploadR2Object({
+      accountId: creds.accountId,
+      bucketName: creds.bucketName,
+      accessKeyId: creds.accessKeyId,
+      secretAccessKey: creds.secretAccessKey,
+      key,
       contentType,
-      beatSlug
-    );
+      body: await file.arrayBuffer(),
+    });
 
     results.push({
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       originalName,
-      storageUrl: upload.url,
+      storageUrl: `${baseUrl}/${key}`,
       fileType,
       size: file.size,
     });
@@ -138,7 +153,7 @@ export async function uploadDynamicFilesForShop(
     return uploadSelfManagedR2(shop, files, beatSlug);
   }
 
-  return uploadToBunnyCDN(files, beatSlug);
+  return uploadManagedR2(files, beatSlug);
 }
 
 // Legacy function for backward compatibility
@@ -200,6 +215,31 @@ export async function uploadBeatFilesForShop(shop: string, files: BeatFileUpload
     return uploadSelfManagedR2Legacy(shop, files, beatSlug);
   }
 
-  const managedUploader = createBunnyCdnService();
-  return managedUploader.uploadBeatFiles(files, beatSlug);
+  const dynamicFiles: DynamicFileUpload[] = [];
+  if (files.preview) dynamicFiles.push({ file: files.preview, fileType: "mp3", originalName: files.preview.name });
+  if (files.mp3) dynamicFiles.push({ file: files.mp3, fileType: "mp3", originalName: files.mp3.name });
+  if (files.wav) dynamicFiles.push({ file: files.wav, fileType: "wav", originalName: files.wav.name });
+  if (files.stems) dynamicFiles.push({ file: files.stems, fileType: "stems", originalName: files.stems.name });
+  if (files.coverArt) dynamicFiles.push({ file: files.coverArt, fileType: "cover", originalName: files.coverArt.name });
+
+  const uploaded = await uploadManagedR2(dynamicFiles, beatSlug);
+  const result: UploadedBeatFiles = {};
+  for (const item of uploaded) {
+    if (!result.preview && item.fileType === "mp3") {
+      result.preview = item.storageUrl;
+      continue;
+    }
+    if (!result.untaggedMp3 && item.fileType === "mp3") {
+      result.untaggedMp3 = item.storageUrl;
+      continue;
+    }
+    if (!result.fullVersionZip && item.fileType === "stems") {
+      result.fullVersionZip = item.storageUrl;
+      continue;
+    }
+    if (!result.coverArt && item.fileType === "cover") {
+      result.coverArt = item.storageUrl;
+    }
+  }
+  return result;
 }

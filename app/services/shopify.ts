@@ -455,6 +455,7 @@ export class ShopifyClient {
     productType?: string;
     tags?: string[];
     variants: Array<{
+      title?: string;
       price: string;
       compareAtPrice?: string;
       inventoryPolicy?: string;
@@ -473,18 +474,41 @@ export class ShopifyClient {
       type: string;
     }>;
   }) {
+    const { variants, ...baseInput } = input;
+    const optionValues = Array.from(
+      new Set(
+        variants
+          .map((variant) => variant.title?.trim())
+          .filter((value): value is string => !!value)
+      )
+    );
+
+    const createInput: Record<string, unknown> = { ...baseInput };
+    if (optionValues.length > 0) {
+      createInput.productOptions = [
+        {
+          name: "License",
+          values: optionValues.map((name) => ({ name })),
+        },
+      ];
+    }
+
     const mutation = `
       mutation CreateProduct($input: ProductInput!) {
         productCreate(input: $input) {
           product {
             id
             title
-            variants(first: 10) {
+            variants(first: 100) {
               edges {
                 node {
                   id
                   title
                   price
+                  selectedOptions {
+                    name
+                    value
+                  }
                 }
               }
             }
@@ -508,13 +532,14 @@ export class ShopifyClient {
                 id: string;
                 title: string;
                 price: string;
+                selectedOptions: Array<{ name: string; value: string }>;
               };
             }>;
           };
         };
         userErrors: Array<{ field: string[]; message: string }>;
       };
-    }>(mutation, { input });
+    }>(mutation, { input: createInput });
 
     if (response.data?.productCreate.userErrors.length > 0) {
       throw new Error(
@@ -522,7 +547,177 @@ export class ShopifyClient {
       );
     }
 
-    return response.data?.productCreate.product;
+    const product = response.data?.productCreate.product;
+    if (!product) return product;
+
+    if (variants.length > 0) {
+      const byLicenseValue = new Map<string, string>();
+      for (const edge of product.variants.edges) {
+        const selected = edge.node.selectedOptions.find((opt) => opt.name === "License");
+        if (selected?.value) {
+          byLicenseValue.set(selected.value, edge.node.id);
+        }
+      }
+
+      const updates = variants
+        .map((variant, index) => {
+          const variantId =
+            (variant.title ? byLicenseValue.get(variant.title) : undefined) ||
+            product.variants.edges[index]?.node.id;
+          if (!variantId) return null;
+          return {
+            id: variantId,
+            price: variant.price,
+            compareAtPrice: variant.compareAtPrice,
+            metafields: variant.metafields,
+          };
+        })
+        .filter((v): v is NonNullable<typeof v> => v !== null);
+
+      if (updates.length > 0) {
+        const updateMutation = `
+          mutation ProductVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+              productVariants {
+                id
+                title
+                price
+                selectedOptions {
+                  name
+                  value
+                }
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `;
+
+        const updateResponse = await this.query<{
+          productVariantsBulkUpdate: {
+            productVariants: Array<{
+              id: string;
+              title: string;
+              price: string;
+              selectedOptions: Array<{ name: string; value: string }>;
+            }>;
+            userErrors: Array<{ field: string[]; message: string }>;
+          };
+        }>(updateMutation, {
+          productId: product.id,
+          variants: updates,
+        });
+
+        if (updateResponse.data?.productVariantsBulkUpdate.userErrors.length) {
+          throw new Error(
+            `Failed to update product variants: ${updateResponse.data.productVariantsBulkUpdate.userErrors
+              .map((e) => e.message)
+              .join(", ")}`
+          );
+        }
+
+        const updatedByLicenseValue = new Map<string, { id: string; title: string; price: string }>();
+        for (const variant of updateResponse.data?.productVariantsBulkUpdate.productVariants || []) {
+          const selected = variant.selectedOptions.find((opt) => opt.name === "License");
+          if (selected?.value) {
+            updatedByLicenseValue.set(selected.value, {
+              id: variant.id,
+              title: variant.title,
+              price: variant.price,
+            });
+          }
+        }
+
+        const orderedEdges = variants
+          .map((variant, index) => {
+            const selected = variant.title ? updatedByLicenseValue.get(variant.title) : undefined;
+            if (selected) {
+              return { node: selected };
+            }
+            return product.variants.edges[index];
+          })
+          .filter((edge): edge is { node: { id: string; title: string; price: string } } => !!edge);
+
+        return {
+          ...product,
+          variants: {
+            edges: orderedEdges,
+          },
+        };
+      }
+    }
+
+    const orderedEdges = variants
+      .map((variant, index) => {
+        const matched = product.variants.edges.find((edge) =>
+          edge.node.selectedOptions.some(
+            (opt) => opt.name === "License" && opt.value === variant.title
+          )
+        );
+        return matched || product.variants.edges[index];
+      })
+      .filter((edge): edge is { node: { id: string; title: string; price: string; selectedOptions: Array<{ name: string; value: string }> } } => !!edge);
+
+    return {
+      ...product,
+      variants: {
+        edges: orderedEdges.map((edge) => ({
+          node: {
+            id: edge.node.id,
+            title: edge.node.title,
+            price: edge.node.price,
+          },
+        })),
+      },
+    };
+  }
+
+  async setMetafields(
+    metafields: Array<{
+      ownerId: string;
+      namespace: string;
+      key: string;
+      type: string;
+      value: string;
+    }>
+  ) {
+    if (metafields.length === 0) return [];
+
+    const mutation = `
+      mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields {
+            id
+            namespace
+            key
+          }
+          userErrors {
+            field
+            message
+            code
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      metafieldsSet: {
+        metafields: Array<{ id: string; namespace: string; key: string }>;
+        userErrors: Array<{ field: string[]; message: string; code?: string }>;
+      };
+    }>(mutation, { metafields });
+
+    if (response.data?.metafieldsSet.userErrors.length) {
+      throw new Error(
+        `Failed to set metafields: ${response.data.metafieldsSet.userErrors
+          .map((e) => e.message)
+          .join(", ")}`
+      );
+    }
+
+    return response.data?.metafieldsSet.metafields || [];
   }
 }
 

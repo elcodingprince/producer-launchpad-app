@@ -4,6 +4,13 @@ import type { StorageErrorType } from "./r2.server";
 
 export type StorageMode = "managed" | "self_managed";
 export type StorageStatus = "disconnected" | "connected" | "error";
+export interface ResolvedR2Credentials {
+  accountId: string;
+  bucketName: string;
+  publicBaseUrl: string | null;
+  accessKeyId: string;
+  secretAccessKey: string;
+}
 
 interface SaveSelfManagedInput {
   shop: string;
@@ -162,6 +169,26 @@ export async function getResolvedR2Credentials(shop: string) {
   } catch {
     return null;
   }
+}
+
+export function getManagedR2Credentials(): ResolvedR2Credentials | null {
+  const accountId = process.env.CF_R2_ACCOUNT_ID?.trim() || "";
+  const bucketName = process.env.CF_R2_BUCKET_NAME?.trim() || "";
+  const accessKeyId = process.env.CF_R2_ACCESS_KEY_ID?.trim() || "";
+  const secretAccessKey = process.env.CF_R2_SECRET_ACCESS_KEY?.trim() || "";
+  const publicBaseUrl = process.env.CF_R2_PUBLIC_BASE_URL?.trim() || null;
+
+  if (!accountId || !bucketName || !accessKeyId || !secretAccessKey) {
+    return null;
+  }
+
+  return {
+    accountId,
+    bucketName,
+    accessKeyId,
+    secretAccessKey,
+    publicBaseUrl,
+  };
 }
 
 export function shouldHardBlockUpload(config: { status: string } | null) {

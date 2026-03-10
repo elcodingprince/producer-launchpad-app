@@ -50,8 +50,8 @@ export class ProductCreatorService {
     productId: string;
     variants: Array<{ id: string; price: string; licenseId: string }>;
   }> {
-    // Build metafields array
-    const metafields: Array<{
+    // Build product metafields array
+    const productMetafields: Array<{
       namespace: string;
       key: string;
       value: string;
@@ -91,7 +91,7 @@ export class ProductCreatorService {
 
     // Add optional metafields
     if (data.producerAlias) {
-      metafields.push({
+      productMetafields.push({
         namespace: "custom",
         key: "producer_alias",
         value: data.producerAlias,
@@ -100,7 +100,7 @@ export class ProductCreatorService {
     }
 
     if (data.previewUrl) {
-      metafields.push({
+      productMetafields.push({
         namespace: "custom",
         key: "audio_preview",
         value: data.previewUrl,
@@ -109,7 +109,7 @@ export class ProductCreatorService {
     }
 
     if (data.coverArtUrl) {
-      metafields.push({
+      productMetafields.push({
         namespace: "custom",
         key: "cover_art",
         value: data.coverArtUrl,
@@ -127,7 +127,7 @@ export class ProductCreatorService {
         type: f.fileType,
       }));
       
-      metafields.push({
+      productMetafields.push({
         namespace: "custom",
         key: `license_files_${bundle.tierId}`,
         value: JSON.stringify(filesForTier),
@@ -137,20 +137,15 @@ export class ProductCreatorService {
 
     // Build variants array - one per license
     const variants = data.licenses.map((license) => ({
+      title:
+        data.licenseFileBundles.find((bundle) => bundle.tierId === license.licenseId)?.tierName ||
+        license.licenseId,
       price: license.price.toFixed(2),
       compareAtPrice: license.compareAtPrice
         ? license.compareAtPrice.toFixed(2)
         : undefined,
       inventoryPolicy: "CONTINUE",
       inventoryManagement: null,
-      metafields: [
-        {
-          namespace: "custom",
-          key: "license_reference",
-          value: license.licenseGid,
-          type: "metaobject_reference",
-        },
-      ],
     }));
 
     // Create the product
@@ -161,12 +156,40 @@ export class ProductCreatorService {
       productType: "Beat",
       tags: data.tags || ["beat", "instrumental"],
       variants,
-      metafields,
     });
 
     if (!product) {
       throw new Error("Failed to create product - no product returned");
     }
+
+    const metafieldsToSet: Array<{
+      ownerId: string;
+      namespace: string;
+      key: string;
+      type: string;
+      value: string;
+    }> = productMetafields.map((mf) => ({
+      ownerId: product.id,
+      namespace: mf.namespace,
+      key: mf.key,
+      type: mf.type,
+      value: mf.value,
+    }));
+
+    for (let i = 0; i < product.variants.edges.length; i++) {
+      const variant = product.variants.edges[i];
+      const license = data.licenses[i];
+      if (!license?.licenseGid) continue;
+      metafieldsToSet.push({
+        ownerId: variant.node.id,
+        namespace: "custom",
+        key: "license_reference",
+        type: "metaobject_reference",
+        value: license.licenseGid,
+      });
+    }
+
+    await this.client.setMetafields(metafieldsToSet);
 
     return {
       productId: product.id,

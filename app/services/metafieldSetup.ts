@@ -71,6 +71,27 @@ export const REQUIRED_PRODUCT_METAFIELDS = [
     type: "url",
     description: "URL to the full version ZIP (WAV + stems)",
   },
+  {
+    name: "License Files - Basic",
+    namespace: "custom",
+    key: "license_files_basic",
+    type: "json",
+    description: "JSON file mapping for Basic license tier",
+  },
+  {
+    name: "License Files - Premium",
+    namespace: "custom",
+    key: "license_files_premium",
+    type: "json",
+    description: "JSON file mapping for Premium license tier",
+  },
+  {
+    name: "License Files - Unlimited",
+    namespace: "custom",
+    key: "license_files_unlimited",
+    type: "json",
+    description: "JSON file mapping for Unlimited license tier",
+  },
 ];
 
 export const REQUIRED_VARIANT_METAFIELDS = [
