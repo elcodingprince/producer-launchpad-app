@@ -23,13 +23,6 @@ export const REQUIRED_PRODUCT_METAFIELDS = [
     description: "URL to the audio preview file",
   },
   {
-    name: "Cover Art",
-    namespace: "custom",
-    key: "cover_art",
-    type: "url",
-    description: "URL to the cover art image",
-  },
-  {
     name: "Genre",
     namespace: "custom",
     key: "genre",

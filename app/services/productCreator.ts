@@ -108,15 +108,6 @@ export class ProductCreatorService {
       });
     }
 
-    if (data.coverArtUrl) {
-      productMetafields.push({
-        namespace: "custom",
-        key: "cover_art",
-        value: data.coverArtUrl,
-        type: "url",
-      });
-    }
-
     // Store license file bundles as a JSON metafield for each license tier
     // This allows the storefront to know which files belong to which tier
     for (const bundle of data.licenseFileBundles) {
@@ -155,6 +146,7 @@ export class ProductCreatorService {
       vendor: data.producerNames[0] || "Unknown Producer",
       productType: "Beat",
       tags: data.tags || ["beat", "instrumental"],
+      images: data.coverArtUrl ? [{ src: data.coverArtUrl }] : [],
       variants,
     });
 

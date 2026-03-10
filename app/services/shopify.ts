@@ -454,6 +454,7 @@ export class ShopifyClient {
     vendor?: string;
     productType?: string;
     tags?: string[];
+    images?: Array<{ src: string }>;
     variants: Array<{
       title?: string;
       price: string;
@@ -474,7 +475,7 @@ export class ShopifyClient {
       type: string;
     }>;
   }) {
-    const { variants, ...baseInput } = input;
+    const { variants, images, ...baseInput } = input;
     const optionValues = Array.from(
       new Set(
         variants
@@ -493,12 +494,23 @@ export class ShopifyClient {
       ];
     }
 
+    // Add images if provided
+    if (images && images.length > 0) {
+      createInput.media = images.map((img) => ({
+        originalSource: img.src,
+        mediaContentType: "IMAGE",
+      }));
+    }
+
     const mutation = `
       mutation CreateProduct($input: ProductInput!) {
         productCreate(input: $input) {
           product {
             id
             title
+            featuredImage {
+              url
+            }
             variants(first: 100) {
               edges {
                 node {
