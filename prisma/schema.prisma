@@ -42,3 +42,37 @@ model ShopStorageConfig {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }
+
+model BeatFile {
+  id          String   @id @default(cuid())
+  beatId      String   // Shopify product ID or internal beat identifier
+  filename    String
+  storageUrl  String
+  fileType    String   // audio/mpeg, audio/wav, application/zip, image/jpeg, etc.
+  filePurpose String   // preview, mp3, wav, stems, cover, license_pdf
+  size        Int      // file size in bytes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  licenseMappings LicenseFileMapping[]
+
+  @@index([beatId])
+  @@index([beatId, filePurpose])
+}
+
+model LicenseFileMapping {
+  id           String   @id @default(cuid())
+  beatId       String   // Shopify product ID
+  licenseTier  String   // basic, premium, unlimited
+  fileId       String
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  beatFile     BeatFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([beatId, licenseTier])
+  @@index([fileId])
+}

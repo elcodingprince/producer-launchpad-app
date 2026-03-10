@@ -7,6 +7,17 @@ export interface LicensePricing {
   compareAtPrice?: number;
 }
 
+export interface LicenseFileBundle {
+  tierId: string;
+  tierName: string;
+  files: {
+    id: string;
+    name: string;
+    storageUrl: string;
+    fileType: string;
+  }[];
+}
+
 export interface BeatProductData {
   title: string;
   descriptionHtml?: string;
@@ -16,14 +27,11 @@ export interface BeatProductData {
   producerGids: string[];
   producerNames: string[];
   producerAlias?: string;
-  files: {
-    preview?: string;
-    untaggedMp3?: string;
-    fullVersionZip?: string;
-    coverArt?: string;
-  };
+  licenseFileBundles: LicenseFileBundle[]; // License-specific file bundles
   licenses: LicensePricing[];
   tags?: string[];
+  coverArtUrl?: string;
+  previewUrl?: string;
 }
 
 export class ProductCreatorService {
@@ -91,39 +99,39 @@ export class ProductCreatorService {
       });
     }
 
-    if (data.files.preview) {
+    if (data.previewUrl) {
       metafields.push({
         namespace: "custom",
         key: "audio_preview",
-        value: data.files.preview,
+        value: data.previewUrl,
         type: "url",
       });
     }
 
-    if (data.files.coverArt) {
+    if (data.coverArtUrl) {
       metafields.push({
         namespace: "custom",
         key: "cover_art",
-        value: data.files.coverArt,
+        value: data.coverArtUrl,
         type: "url",
       });
     }
 
-    if (data.files.untaggedMp3) {
+    // Store license file bundles as a JSON metafield for each license tier
+    // This allows the storefront to know which files belong to which tier
+    for (const bundle of data.licenseFileBundles) {
+      const filesForTier = bundle.files.map(f => ({
+        id: f.id,
+        name: f.name,
+        url: f.storageUrl,
+        type: f.fileType,
+      }));
+      
       metafields.push({
         namespace: "custom",
-        key: "untagged_mp3",
-        value: data.files.untaggedMp3,
-        type: "url",
-      });
-    }
-
-    if (data.files.fullVersionZip) {
-      metafields.push({
-        namespace: "custom",
-        key: "full_version_zip",
-        value: data.files.fullVersionZip,
-        type: "url",
+        key: `license_files_${bundle.tierId}`,
+        value: JSON.stringify(filesForTier),
+        type: "json",
       });
     }
 

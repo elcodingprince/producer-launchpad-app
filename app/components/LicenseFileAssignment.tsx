@@ -15,20 +15,22 @@ import {
 import {
   PlusIcon,
   XIcon,
+  SoundIcon,
 } from '@shopify/polaris-icons';
 import { validateUploadFile, ALLOWED_FILE_TYPES } from '../services/bunnyCdn';
 
 // File type badge component - defined outside main component for performance
-const FileTypeBadge = memo(({ type }: { type: string }) => {
+const FileTypeBadge = memo(({ type, purpose }: { type: string; purpose?: string }) => {
   const FILE_TYPES: Record<string, { label: string; icon: string; color: string }> = {
     mp3: { label: 'MP3', icon: '🎵', color: '#10B981' },
     wav: { label: 'WAV', icon: '🎼', color: '#3B82F6' },
     stems: { label: 'Stems', icon: '📦', color: '#F59E0B' },
     cover: { label: 'Cover Art', icon: '🖼️', color: '#EC4899' },
+    preview: { label: 'Preview', icon: '▶️', color: '#8B5CF6' },
     other: { label: 'File', icon: '📄', color: '#6B7280' },
   };
 
-  const config = FILE_TYPES[type] || FILE_TYPES.other;
+  const config = FILE_TYPES[purpose || type] || FILE_TYPES.other;
   return (
     <span
       style={{
@@ -68,15 +70,16 @@ export interface LicenseTier {
 export interface UploadedFile {
   id: string;
   name: string;
-  type: 'mp3' | 'wav' | 'stems' | 'cover' | 'other';
+  type: 'mp3' | 'wav' | 'stems' | 'cover' | 'preview' | 'other';
+  purpose: 'preview' | 'mp3' | 'wav' | 'stems' | 'cover' | 'license_pdf' | 'other';
   size: string;
-  file?: File; // Original file object for upload
-  storageUrl?: string; // Set after successful upload
+  file?: File;
+  storageUrl?: string;
 }
 
 // License file mapping
 export interface LicenseFiles {
-  [tierId: string]: string[]; // tierId -> array of fileIds
+  [tierId: string]: string[];
 }
 
 // Component props
@@ -84,24 +87,26 @@ export interface LicenseFileAssignmentProps {
   licenses: LicenseTier[];
   uploadedFiles?: UploadedFile[];
   licenseFiles?: LicenseFiles;
+  previewFile?: UploadedFile | null;
   onChange?: (data: {
     uploadedFiles: UploadedFile[];
     licenseFiles: LicenseFiles;
+    previewFile: UploadedFile | null;
   }) => void;
-  onUpload?: (files: File[]) => Promise<UploadedFile[]>;
+  onUpload?: (files: File[], purpose: 'preview' | 'license') => Promise<UploadedFile[]>;
   uploading?: boolean;
   uploadProgress?: number;
   error?: string | null;
 }
 
-// Default license tier styling - defined outside component
+// Default license tier styling
 const DEFAULT_TIER_STYLES: Record<string, { color: string; icon: string; recommendedFiles: string[] }> = {
   basic: { color: '#0066FF', icon: '🔷', recommendedFiles: ['mp3'] },
   premium: { color: '#8B5CF6', icon: '💎', recommendedFiles: ['mp3', 'wav'] },
   unlimited: { color: '#F59E0B', icon: '👑', recommendedFiles: ['mp3', 'wav', 'stems'] },
 };
 
-// Helper function defined outside component
+// Helper function
 const getTierStyle = (tier: LicenseTier) => {
   const defaultStyle = DEFAULT_TIER_STYLES[tier.id] || {
     color: '#6B7280',
@@ -119,41 +124,44 @@ export function LicenseFileAssignment({
   licenses,
   uploadedFiles: externalFiles,
   licenseFiles: externalLicenseFiles,
+  previewFile: externalPreviewFile,
   onChange,
   onUpload,
   uploading = false,
   uploadProgress,
   error,
 }: LicenseFileAssignmentProps) {
-  // Internal state for uncontrolled usage
+  // Internal state
   const [internalFiles, setInternalFiles] = useState<UploadedFile[]>([]);
   const [internalLicenseFiles, setInternalLicenseFiles] = useState<LicenseFiles>({
     basic: [],
     premium: [],
     unlimited: [],
   });
-  
-  // Use external state if provided, otherwise internal
-  const uploadedFiles = externalFiles ?? internalFiles;
-  const licenseFiles = externalLicenseFiles ?? internalLicenseFiles;
-  
-  // Popover state
+  const [internalPreviewFile, setInternalPreviewFile] = useState<UploadedFile | null>(null);
   const [activePopover, setActivePopover] = useState<string | null>(null);
-  
-  // Rejected files state
   const [rejectedFiles, setRejectedFiles] = useState<Array<{ file: File; error: string }>>([]);
 
-  // Update state helper
-  const updateState = useCallback((newFiles: UploadedFile[], newLicenseFiles: LicenseFiles) => {
-    if (onChange) {
-      onChange({ uploadedFiles: newFiles, licenseFiles: newLicenseFiles });
-    } else {
-      setInternalFiles(newFiles);
-      setInternalLicenseFiles(newLicenseFiles);
-    }
-  }, [onChange]);
+  // Use external state if provided
+  const uploadedFiles = externalFiles ?? internalFiles;
+  const licenseFiles = externalLicenseFiles ?? internalLicenseFiles;
+  const previewFile = externalPreviewFile ?? internalPreviewFile;
 
-  // Detect file type from extension
+  // Update state helper
+  const updateState = useCallback(
+    (newFiles: UploadedFile[], newLicenseFiles: LicenseFiles, newPreviewFile: UploadedFile | null) => {
+      if (onChange) {
+        onChange({ uploadedFiles: newFiles, licenseFiles: newLicenseFiles, previewFile: newPreviewFile });
+      } else {
+        setInternalFiles(newFiles);
+        setInternalLicenseFiles(newLicenseFiles);
+        setInternalPreviewFile(newPreviewFile);
+      }
+    },
+    [onChange]
+  );
+
+  // Detect file type
   const detectFileType = useCallback((filename: string): UploadedFile['type'] => {
     const ext = filename.toLowerCase().split('.').pop();
     if (ext === 'mp3') return 'mp3';
@@ -170,112 +178,163 @@ export function LicenseFileAssignment({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }, []);
 
-  // Handle file drop with validation
-  const handleDrop = useCallback(async (
-    _dropFiles: File[],
-    acceptedFiles: File[],
-    rejectedFilesInput: File[]
-  ) => {
-    // Handle rejected files
-    if (rejectedFilesInput.length > 0) {
-      setRejectedFiles(rejectedFilesInput.map(file => ({
-        file,
-        error: 'File type not supported',
-      })));
-      return;
-    }
+  // Handle preview file drop
+  const handlePreviewDrop = useCallback(
+    async (_dropFiles: File[], acceptedFiles: File[], rejectedFilesInput: File[]) => {
+      if (rejectedFilesInput.length > 0) {
+        setRejectedFiles([{ file: rejectedFilesInput[0], error: 'File type not supported. Use MP3.' }]);
+        return;
+      }
 
-    // Validate each accepted file
-    const validFiles: UploadedFile[] = [];
-    const invalidFiles: Array<{ file: File; error: string }> = [];
+      const file = acceptedFiles[0];
+      if (!file) return;
 
-    for (const file of acceptedFiles) {
       const validation = validateUploadFile(file, ALLOWED_FILE_TYPES);
-      if (validation.valid) {
-        validFiles.push({
-          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: file.name,
-          type: detectFileType(file.name),
-          size: formatFileSize(file.size),
-          file, // Keep reference for upload
-        });
+      if (!validation.valid) {
+        setRejectedFiles([{ file, error: validation.error || 'Invalid file' }]);
+        return;
+      }
+
+      const previewFileData: UploadedFile = {
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: file.name,
+        type: 'preview',
+        purpose: 'preview',
+        size: formatFileSize(file.size),
+        file,
+      };
+
+      if (onUpload) {
+        try {
+          const uploaded = await onUpload([file], 'preview');
+          updateState(uploadedFiles, licenseFiles, uploaded[0] || null);
+        } catch (err) {
+          setRejectedFiles([{ file, error: err instanceof Error ? err.message : 'Upload failed' }]);
+        }
       } else {
-        invalidFiles.push({ file, error: validation.error || 'Invalid file' });
+        updateState(uploadedFiles, licenseFiles, previewFileData);
       }
-    }
 
-    if (invalidFiles.length > 0) {
-      setRejectedFiles(invalidFiles);
-      return;
-    }
+      setRejectedFiles([]);
+    },
+    [uploadedFiles, licenseFiles, onUpload, formatFileSize, updateState]
+  );
 
-    // Upload files if onUpload handler provided
-    if (onUpload && validFiles.length > 0) {
-      try {
-        const filesToUpload = validFiles.map(f => f.file).filter((f): f is File => f !== undefined);
-        const filesWithUrls = await onUpload(filesToUpload);
-        const updatedFiles = [...uploadedFiles, ...filesWithUrls];
-        updateState(updatedFiles, licenseFiles);
-      } catch (err) {
-        setRejectedFiles(validFiles.map(f => ({
-          file: f.file,
-          error: err instanceof Error ? err.message : 'Upload failed',
-        })).filter((r): r is { file: File; error: string } => r.file !== undefined));
+  // Handle license files drop
+  const handleLicenseFilesDrop = useCallback(
+    async (_dropFiles: File[], acceptedFiles: File[], rejectedFilesInput: File[]) => {
+      if (rejectedFilesInput.length > 0) {
+        setRejectedFiles(rejectedFilesInput.map((f) => ({ file: f, error: 'File type not supported' })));
+        return;
       }
-    } else {
-      // Just add to state without uploading
-      const updatedFiles = [...uploadedFiles, ...validFiles];
-      updateState(updatedFiles, licenseFiles);
-    }
 
-    // Clear rejected files after successful drop
-    setRejectedFiles([]);
-  }, [uploadedFiles, licenseFiles, onUpload, detectFileType, formatFileSize, updateState]);
+      const validFiles: UploadedFile[] = [];
+      const invalidFiles: Array<{ file: File; error: string }> = [];
+
+      for (const file of acceptedFiles) {
+        const validation = validateUploadFile(file, ALLOWED_FILE_TYPES);
+        if (validation.valid) {
+          const fileType = detectFileType(file.name);
+          validFiles.push({
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            name: file.name,
+            type: fileType,
+            purpose: fileType === 'mp3' || fileType === 'wav' || fileType === 'stems' ? fileType : 'other',
+            size: formatFileSize(file.size),
+            file,
+          });
+        } else {
+          invalidFiles.push({ file, error: validation.error || 'Invalid file' });
+        }
+      }
+
+      if (invalidFiles.length > 0) {
+        setRejectedFiles(invalidFiles);
+        return;
+      }
+
+      if (onUpload && validFiles.length > 0) {
+        try {
+          const filesToUpload = validFiles.map((f) => f.file).filter((f): f is File => f !== undefined);
+          const uploaded = await onUpload(filesToUpload, 'license');
+          updateState([...uploadedFiles, ...uploaded], licenseFiles, previewFile);
+        } catch (err) {
+          setRejectedFiles(
+            validFiles
+              .map((f) => ({ file: f.file, error: err instanceof Error ? err.message : 'Upload failed' }))
+              .filter((r): r is { file: File; error: string } => r.file !== undefined)
+          );
+        }
+      } else {
+        updateState([...uploadedFiles, ...validFiles], licenseFiles, previewFile);
+      }
+
+      setRejectedFiles([]);
+    },
+    [uploadedFiles, licenseFiles, previewFile, onUpload, detectFileType, formatFileSize, updateState]
+  );
+
+  // Remove preview file
+  const removePreviewFile = useCallback(() => {
+    updateState(uploadedFiles, licenseFiles, null);
+  }, [uploadedFiles, licenseFiles, updateState]);
 
   // Add file to license tier
-  const addFileToLicense = useCallback((fileId: string, tierId: string) => {
-    const updatedLicenseFiles = {
-      ...licenseFiles,
-      [tierId]: [...(licenseFiles[tierId] || []), fileId],
-    };
-    updateState(uploadedFiles, updatedLicenseFiles);
-    setActivePopover(null);
-  }, [uploadedFiles, licenseFiles, updateState]);
+  const addFileToLicense = useCallback(
+    (fileId: string, tierId: string) => {
+      const updatedLicenseFiles = {
+        ...licenseFiles,
+        [tierId]: [...(licenseFiles[tierId] || []), fileId],
+      };
+      updateState(uploadedFiles, updatedLicenseFiles, previewFile);
+      setActivePopover(null);
+    },
+    [uploadedFiles, licenseFiles, previewFile, updateState]
+  );
 
   // Remove file from license tier
-  const removeFileFromLicense = useCallback((fileId: string, tierId: string) => {
-    const updatedLicenseFiles = {
-      ...licenseFiles,
-      [tierId]: (licenseFiles[tierId] || []).filter((id) => id !== fileId),
-    };
-    updateState(uploadedFiles, updatedLicenseFiles);
-  }, [uploadedFiles, licenseFiles, updateState]);
+  const removeFileFromLicense = useCallback(
+    (fileId: string, tierId: string) => {
+      const updatedLicenseFiles = {
+        ...licenseFiles,
+        [tierId]: (licenseFiles[tierId] || []).filter((id) => id !== fileId),
+      };
+      updateState(uploadedFiles, updatedLicenseFiles, previewFile);
+    },
+    [uploadedFiles, licenseFiles, previewFile, updateState]
+  );
 
-  // Remove file entirely
-  const removeFile = useCallback((fileId: string) => {
-    const updatedFiles = uploadedFiles.filter((f) => f.id !== fileId);
-    const updatedLicenseFiles: LicenseFiles = {};
-    
-    // Remove from all license tiers
-    Object.keys(licenseFiles).forEach((tierId) => {
-      updatedLicenseFiles[tierId] = licenseFiles[tierId].filter((id) => id !== fileId);
-    });
-    
-    updateState(updatedFiles, updatedLicenseFiles);
-  }, [uploadedFiles, licenseFiles, updateState]);
+  // Remove license file entirely
+  const removeLicenseFile = useCallback(
+    (fileId: string) => {
+      const updatedFiles = uploadedFiles.filter((f) => f.id !== fileId);
+      const updatedLicenseFiles: LicenseFiles = {};
+      Object.keys(licenseFiles).forEach((tierId) => {
+        updatedLicenseFiles[tierId] = licenseFiles[tierId].filter((id) => id !== fileId);
+      });
+      updateState(updatedFiles, updatedLicenseFiles, previewFile);
+    },
+    [uploadedFiles, licenseFiles, previewFile, updateState]
+  );
 
   // Get file by ID
-  const getFile = useCallback((fileId: string) => {
-    return uploadedFiles.find((f) => f.id === fileId);
-  }, [uploadedFiles]);
+  const getFile = useCallback(
+    (fileId: string) => {
+      return uploadedFiles.find((f) => f.id === fileId);
+    },
+    [uploadedFiles]
+  );
 
-  // Get files not yet assigned to a tier
-  const getUnassignedFiles = useCallback((tierId: string) => {
-    const assignedToTier = licenseFiles[tierId] || [];
-    return uploadedFiles.filter((f) => !assignedToTier.includes(f.id));
-  }, [uploadedFiles, licenseFiles]);
+  // Get unassigned files for a tier
+  const getUnassignedFiles = useCallback(
+    (tierId: string) => {
+      const assignedToTier = licenseFiles[tierId] || [];
+      return uploadedFiles.filter((f) => !assignedToTier.includes(f.id));
+    },
+    [uploadedFiles, licenseFiles]
+  );
 
-  // Check if all tiers have minimum required files
+  // Check if all tiers have files
   const isComplete = useCallback(() => {
     return licenses.every((license) => (licenseFiles[license.id]?.length || 0) > 0);
   }, [licenses, licenseFiles]);
@@ -285,10 +344,10 @@ export function LicenseFileAssignment({
       {/* Header */}
       <div style={{ textAlign: 'center' }}>
         <Text variant="headingXl" as="h1">
-          Assign Files to Licenses
+          Upload Beat Files
         </Text>
         <Text variant="bodyMd" tone="subdued">
-          Upload once, assign to multiple license tiers
+          Upload preview and license files for your beat
         </Text>
       </div>
 
@@ -319,36 +378,118 @@ export function LicenseFileAssignment({
         </Banner>
       )}
 
-      {/* File Upload Zone */}
+      {/* Step 0: Preview Audio */}
       <Card>
         <BlockStack gap="400">
-          <Text variant="headingMd" as="h2">
-            Step 1: Upload Your Files
-          </Text>
+          <div>
+            <Text variant="headingMd" as="h2">
+              Step 1: Preview Audio (Required)
+            </Text>
+            <Text variant="bodySm" tone="subdued">
+              This watermarked MP3 plays on your storefront. It's not part of any license package.
+            </Text>
+          </div>
+
+          {!previewFile ? (
+            <DropZone
+              onDrop={handlePreviewDrop}
+              accept="audio/mpeg"
+              type="file"
+              allowMultiple={false}
+              disabled={uploading}
+            >
+              {uploading ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '16px',
+                    padding: '32px',
+                  }}
+                >
+                  <Spinner size="large" />
+                  <Text variant="bodyMd">Uploading preview...</Text>
+                </div>
+              ) : (
+                <DropZone.FileUpload actionHint="Accepts .mp3 for storefront preview" />
+              )}
+            </DropZone>
+          ) : (
+            <div
+              style={{
+                padding: '12px',
+                backgroundColor: '#F3E8FF',
+                borderRadius: '8px',
+                border: '1px solid #D8B4FE',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <FileTypeBadge type="preview" purpose="preview" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text variant="bodySm" fontWeight="medium">
+                  {previewFile.name}
+                </Text>
+                <Text variant="bodyXs" tone="subdued">
+                  {previewFile.size}
+                </Text>
+              </div>
+              <Button
+                icon={XIcon}
+                tone="critical"
+                variant="plain"
+                onClick={removePreviewFile}
+                disabled={uploading}
+                accessibilityLabel="Remove preview file"
+              />
+            </div>
+          )}
+        </BlockStack>
+      </Card>
+
+      {/* Step 1: License Files */}
+      <Card>
+        <BlockStack gap="400">
+          <div>
+            <Text variant="headingMd" as="h2">
+              Step 2: License Files
+            </Text>
+            <Text variant="bodySm" tone="subdued">
+              Upload files that will be included in license packages (MP3, WAV, stems)
+            </Text>
+          </div>
 
           <DropZone
-            onDrop={handleDrop}
-            accept=".mp3,.wav,.zip,.jpg,.jpeg,.png"
+            onDrop={handleLicenseFilesDrop}
+            accept=".mp3,.wav,.zip"
             type="file"
             allowMultiple
             disabled={uploading}
           >
             {uploading ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', padding: '32px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '16px',
+                  padding: '32px',
+                }}
+              >
                 <Spinner size="large" />
                 <Text variant="bodyMd">Uploading...</Text>
                 {uploadProgress !== undefined && (
-                  <Text variant="bodySm" tone="subdued">
-                    {uploadProgress}%
-                  </Text>
+                  <Text variant="bodySm" tone="subdued">{uploadProgress}%</Text>
                 )}
               </div>
             ) : (
-              <DropZone.FileUpload actionHint="Accepts .mp3, .wav, .zip, .jpg, .png up to 500MB" />
+              <DropZone.FileUpload actionHint="Accepts .mp3, .wav, .zip" />
             )}
           </DropZone>
 
-          {/* Uploaded Files List */}
+          {/* Uploaded License Files List */}
           {uploadedFiles.length > 0 && (
             <div
               style={{
@@ -371,9 +512,13 @@ export function LicenseFileAssignment({
                     gap: '12px',
                   }}
                 >
-                  <FileTypeBadge type={file.type} />
+                  <FileTypeBadge type={file.type} purpose={file.purpose} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text variant="bodySm" fontWeight="medium" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <Text
+                      variant="bodySm"
+                      fontWeight="medium"
+                      style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
                       {file.name}
                     </Text>
                     <Text variant="bodyXs" tone="subdued">
@@ -384,7 +529,7 @@ export function LicenseFileAssignment({
                     icon={XIcon}
                     tone="critical"
                     variant="plain"
-                    onClick={() => removeFile(file.id)}
+                    onClick={() => removeLicenseFile(file.id)}
                     disabled={uploading}
                     accessibilityLabel={`Remove ${file.name}`}
                   />
@@ -395,11 +540,11 @@ export function LicenseFileAssignment({
         </BlockStack>
       </Card>
 
-      {/* License Assignment Cards */}
+      {/* Step 2: Assign to License Tiers */}
       {uploadedFiles.length > 0 && (
         <>
           <Text variant="headingMd" as="h2">
-            Step 2: Assign to License Tiers
+            Step 3: Assign to License Tiers
           </Text>
 
           <div
@@ -479,11 +624,18 @@ export function LicenseFileAssignment({
                                   border: '1px solid #BBF7D0',
                                 }}
                               >
-                                <FileTypeBadge type={file.type} />
-                                <Text variant="bodySm" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                <FileTypeBadge type={file.type} purpose={file.purpose} />
+                                <Text
+                                  variant="bodySm"
+                                  style={{
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    flex: 1,
+                                  }}
+                                >
                                   {file.name}
                                 </Text>
-                                <div style={{ flex: 1 }} />
                                 <Button
                                   icon={XIcon}
                                   tone="critical"
@@ -520,7 +672,7 @@ export function LicenseFileAssignment({
                         items={unassignedFiles.map((file) => ({
                           content: (
                             <InlineStack gap="200" align="center">
-                              <FileTypeBadge type={file.type} />
+                              <FileTypeBadge type={file.type} purpose={file.purpose} />
                               <Text variant="bodySm">{file.name}</Text>
                             </InlineStack>
                           ),
@@ -532,13 +684,11 @@ export function LicenseFileAssignment({
                     {/* Recommended badges */}
                     <BlockStack gap="100">
                       {style.recommendedFiles.map((recType) => {
-                        const hasType = tierFiles.some(
-                          (fid) => getFile(fid)?.type === recType
-                        );
+                        const hasType = tierFiles.some((fid) => getFile(fid)?.type === recType);
                         if (hasType) return null;
                         return (
                           <Badge key={recType} tone="warning">
-                            Recommended: {FILE_TYPES[recType]?.label || recType}
+                            Recommended: {recType.toUpperCase()}
                           </Badge>
                         );
                       })}
@@ -590,9 +740,13 @@ export function LicenseFileAssignment({
                 })}
               </div>
 
+              {!previewFile && (
+                <Banner tone="warning">Please upload a preview audio file.</Banner>
+              )}
+
               {!isComplete() && (
                 <Banner tone="warning">
-                  Please assign at least one file to each license tier before publishing.
+                  Please assign at least one file to each license tier.
                 </Banner>
               )}
             </BlockStack>
