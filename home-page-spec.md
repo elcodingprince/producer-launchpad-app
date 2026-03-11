@@ -2,7 +2,7 @@
 **Producer Launchpad Dashboard**
 
 **Route:** `/app` (app homepage URL)  
-**Pattern Reference:** [Home Page Patterns](./skills/shopify-dev/patterns/home-page.md)
+**Pattern Reference:** [Home Page Patterns](./skills/shopify-app-design/patterns/home-page.md)
 
 ---
 
@@ -20,7 +20,7 @@ Provide **daily value** to producers by:
 
 **Type:** Single-column  
 **Width:** Default (not full-width)  
-**Pattern:** [Home Page - Single Column](./skills/shopify-dev/patterns/home-page.md)
+**Pattern:** [Home Page - Single Column](./skills/shopify-app-design/patterns/home-page.md)
 
 ---
 
@@ -329,7 +329,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 ## References
 
-- [Home Page Patterns](./skills/shopify-dev/patterns/home-page.md)
+- [Home Page Patterns](./skills/shopify-app-design/patterns/home-page.md)
 - [Shopify Homepage Template](https://shopify.dev/docs/api/app-home/patterns/templates/homepage)
 - [Resource List Pattern](https://shopify.dev/docs/api/app-home/polaris-web-components/lists/resource-list)
 

@@ -2,7 +2,7 @@
 **Producer Launchpad App**
 
 **Date:** March 11, 2026  
-**Reference:** [Navigation Patterns](./skills/shopify-dev/patterns/navigation.md)
+**Reference:** [Navigation Patterns](./skills/shopify-app-design/patterns/navigation.md)
 
 ---
 
@@ -82,7 +82,7 @@ Producer Launchpad (app name → /app homepage)
 ### 1. Home (Dashboard) — `/app`
 
 **Purpose:** Provide daily value, status updates, clear CTAs  
-**Pattern:** [Home Page](./skills/shopify-dev/patterns/home-page.md)  
+**Pattern:** [Home Page](./skills/shopify-app-design/patterns/home-page.md)  
 **Layout:** Single-column with cards
 
 **Content:**
@@ -116,7 +116,7 @@ Producer Launchpad (app name → /app homepage)
 ### 3. Upload Beat — `/app/beats/new`
 
 **Purpose:** Upload new beat with files and metadata  
-**Pattern:** [Page Design](./skills/shopify-dev/patterns/page-design.md)  
+**Pattern:** [Page Design](./skills/shopify-app-design/patterns/page-design.md)  
 **Layout:** Single-column
 
 **Content:**
@@ -170,7 +170,7 @@ Producer Launchpad (app name → /app homepage)
 ### 6. Support — `/app/support` (NEW)
 
 **Purpose:** Help, docs, contact  
-**Pattern:** [Home Page - Support](./skills/shopify-dev/patterns/home-page.md#support)  
+**Pattern:** [Home Page - Support](./skills/shopify-app-design/patterns/home-page.md#support)  
 **Layout:** Single-column
 
 **Content:**
@@ -290,9 +290,9 @@ Following Shopify pattern: organize by merchant workflow
 
 ## References
 
-- [Navigation Patterns](./skills/shopify-dev/patterns/navigation.md)
-- [Home Page Patterns](./skills/shopify-dev/patterns/home-page.md)
-- [Page Design Patterns](./skills/shopify-dev/patterns/page-design.md)
+- [Navigation Patterns](./skills/shopify-app-design/patterns/navigation.md)
+- [Home Page Patterns](./skills/shopify-app-design/patterns/home-page.md)
+- [Page Design Patterns](./skills/shopify-app-design/patterns/page-design.md)
 - [Shopify App Structure](https://shopify.dev/docs/apps/design/app-structure)
 
 ---

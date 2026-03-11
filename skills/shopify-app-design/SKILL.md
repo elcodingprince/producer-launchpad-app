@@ -97,8 +97,11 @@ Badge tone="attention"                → valid tone but wrong for required indi
 
 ---
 
-## Detailed Component Patterns
+---
 
+## Pattern Library
+
+### Component Patterns (Tactical)
 For copy-paste patterns covering:
 - File rows, file upload states, cover art image slots
 - File type chips (icon + label with correct bg tokens)
@@ -107,3 +110,25 @@ For copy-paste patterns covering:
 - DropZone empty vs filled states
 
 → See [patterns/component-patterns.md](patterns/component-patterns.md)
+
+### Strategic Patterns (Architecture)
+
+#### Home Page Patterns
+When to use: Designing app homepage/dashboard  
+Key concepts: Daily value, status updates, CTAs, support placement  
+→ See [patterns/home-page.md](patterns/home-page.md)
+
+#### Navigation Patterns
+When to use: Structuring app navigation and IA  
+Key concepts: Max 7 nav items, no homepage duplicate, breadcrumbs, action labels  
+→ See [patterns/navigation.md](patterns/navigation.md)
+
+#### Page Design Patterns
+When to use: Choosing layouts and structuring pages  
+Key concepts: Single/two-column layouts, 4px grid, density, containers  
+→ See [patterns/page-design.md](patterns/page-design.md)
+
+#### Billing Patterns
+When to use: Implementing subscriptions or pricing  
+Key concepts: Subscription models, gating, trials, best practices  
+→ See [patterns/billing.md](patterns/billing.md)

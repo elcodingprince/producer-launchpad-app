@@ -206,7 +206,7 @@ Producer Launchpad (app name → /app)
 - No separation by topic
 
 #### New Proposal
-- `skills/shopify-dev/` with separate files:
+- `skills/shopify-app-design/` with separate files:
   - `home-page.md`
   - `navigation.md`
   - `page-design.md`
@@ -343,7 +343,7 @@ Producer Launchpad (app name → /app)
 
 Use the new structure:
 ```
-skills/shopify-dev/
+skills/shopify-app-design/
 ├── SKILL.md
 └── patterns/
     ├── home-page.md
@@ -412,7 +412,7 @@ Use the new detailed specs:
 
 ## Action Items
 
-1. ✅ Use **new pattern files** (`skills/shopify-dev/patterns/`)
+1. ✅ Use **new pattern files** (`skills/shopify-app-design/patterns/`)
 2. ✅ Adopt **hybrid navigation** (4 items: Beats, Upload, Settings, Support)
 3. ✅ Use **new implementation specs** for building
 4. ✅ Add **existing roadmap** for timeline tracking

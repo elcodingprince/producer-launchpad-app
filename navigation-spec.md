@@ -1,7 +1,7 @@
 # Navigation Specification
 **Producer Launchpad App**
 
-**Pattern Reference:** [Navigation Patterns](./skills/shopify-dev/patterns/navigation.md)
+**Pattern Reference:** [Navigation Patterns](./skills/shopify-app-design/patterns/navigation.md)
 
 ---
 
@@ -409,7 +409,7 @@ function AppNavigation() {
 
 ## References
 
-- [Navigation Patterns](./skills/shopify-dev/patterns/navigation.md)
+- [Navigation Patterns](./skills/shopify-app-design/patterns/navigation.md)
 - [Shopify Navigation Guidelines](https://shopify.dev/docs/apps/design/navigation)
 - [Polaris AppNav](https://shopify.dev/docs/api/app-home/app-bridge-web-components/app-nav)
 - [Polaris Page](https://shopify.dev/docs/api/app-home/polaris-web-components/structure/page)

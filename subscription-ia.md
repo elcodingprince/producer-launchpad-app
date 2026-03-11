@@ -1,7 +1,7 @@
 # Subscription & Billing Information Architecture
 **Producer Launchpad App**
 
-**Pattern Reference:** [Billing Patterns](./skills/shopify-dev/patterns/billing.md)
+**Pattern Reference:** [Billing Patterns](./skills/shopify-app-design/patterns/billing.md)
 
 ---
 
@@ -484,7 +484,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
 ## References
 
-- [Billing Patterns](./skills/shopify-dev/patterns/billing.md)
+- [Billing Patterns](./skills/shopify-app-design/patterns/billing.md)
 - [Shopify App Billing](https://shopify.dev/docs/apps/launch/billing)
 - [React Router Billing](https://shopify.dev/docs/api/shopify-app-react-router/latest/apis/billing)
 - [Billing Best Practices](https://shopify.dev/docs/apps/launch/billing#best-practices)
