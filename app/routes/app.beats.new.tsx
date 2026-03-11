@@ -30,6 +30,7 @@ import {
   type UploadedFile,
   type LicenseFiles,
 } from "../components/LicenseFileAssignment";
+import { MultiSelectCombobox } from "../components/MultiSelectCombobox";
 import { UploadIcon } from "@shopify/polaris-icons";
 
 const keyOptions = [
@@ -527,14 +528,14 @@ export default function NewBeatPage() {
     { id: "unlimited", name: "Unlimited", price: "$99.99", description: "Full package + stems" },
   ];
 
-  const genreOptions = genres.map((g) => ({
-    label: g.title,
-    value: g.id,
+  const genreOptions = genres.filter(Boolean).map((g) => ({
+    label: g!.title,
+    value: g!.id,
   }));
 
-  const producerOptions = producers.map((p) => ({
-    label: p.name,
-    value: p.id,
+  const producerOptions = producers.filter(Boolean).map((p) => ({
+    label: p!.name,
+    value: p!.id,
   }));
 
   if (loaderError) {
@@ -620,30 +621,6 @@ export default function NewBeatPage() {
                       requiredIndicator
                     />
                   </FormLayout.Group>
-
-                  <ChoiceList
-                    title="Producers"
-                    choices={producerOptions}
-                    selected={producerGids}
-                    onChange={setProducerGids}
-                    allowMultiple
-                  />
-
-                  <ChoiceList
-                    title="Genres"
-                    choices={genreOptions}
-                    selected={genreGids}
-                    onChange={setGenreGids}
-                    allowMultiple
-                  />
-
-                  <TextField
-                    label="Producer Alias (Optional)"
-                    value={producerAlias}
-                    onChange={setProducerAlias}
-                    autoComplete="off"
-                    helpText="Alternative name to display"
-                  />
                 </FormLayout>
               </BlockStack>
             </Card>
@@ -667,19 +644,68 @@ export default function NewBeatPage() {
               uploading={isUploading}
               error={uploadError}
             />
+          </BlockStack>
+        </Layout.Section>
 
-            {/* Submit Button */}
+        <Layout.Section variant="oneThird">
+          <BlockStack gap="500">
+            {/* Publish Card */}
             <Card>
-              <Button
-                variant="primary"
-                size="large"
-                icon={UploadIcon}
-                onClick={handleSubmit}
-                disabled={!isFormValid() || isUploading}
-                fullWidth
-              >
-                {isUploading ? "Uploading..." : "Create Beat Product"}
-              </Button>
+              <BlockStack gap="400">
+                <Text variant="headingMd" as="h2">
+                  Status
+                </Text>
+                <Button
+                  variant="primary"
+                  size="large"
+                  icon={UploadIcon}
+                  onClick={handleSubmit}
+                  disabled={!isFormValid() || isUploading}
+                  fullWidth
+                >
+                  {isUploading ? "Uploading..." : "Create Beat Product"}
+                </Button>
+                {!isFormValid() && (
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Please fill out all required details and assign audio files before publishing.
+                  </Text>
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Organization Card */}
+            <Card>
+              <BlockStack gap="400">
+                <Text variant="headingMd" as="h2">
+                  Organization
+                </Text>
+                
+                <FormLayout>
+                  <MultiSelectCombobox
+                    label="Producers"
+                    options={producerOptions}
+                    selectedValues={producerGids}
+                    onChange={setProducerGids}
+                    placeholder="Search producers"
+                  />
+
+                  <TextField
+                    label="Producer Alias (Optional)"
+                    value={producerAlias}
+                    onChange={setProducerAlias}
+                    autoComplete="off"
+                    helpText="Alternative name to display"
+                  />
+
+                  <MultiSelectCombobox
+                    label="Genres"
+                    options={genreOptions}
+                    selectedValues={genreGids}
+                    onChange={setGenreGids}
+                    placeholder="Search genres"
+                  />
+                </FormLayout>
+              </BlockStack>
             </Card>
           </BlockStack>
         </Layout.Section>

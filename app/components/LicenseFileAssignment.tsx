@@ -11,26 +11,43 @@ import {
   Popover,
   Banner,
   Spinner,
+  Icon,
+  OptionList,
 } from '@shopify/polaris';
 import {
   PlusIcon,
   XIcon,
   SoundIcon,
+  PlayCircleIcon,
+  AlertDiamondIcon,
+  PackageIcon,
+  StarFilledIcon,
+  CheckCircleIcon,
 } from '@shopify/polaris-icons';
 import { validateUploadFile, ALLOWED_FILE_TYPES } from '../services/bunnyCdn';
 
 // File type badge component - defined outside main component for performance
-const FileTypeBadge = memo(({ type, purpose }: { type: string; purpose?: string }) => {
-  const FILE_TYPES: Record<string, { label: string; icon: string; color: string }> = {
-    mp3: { label: 'MP3', icon: '🎵', color: '#10B981' },
-    wav: { label: 'WAV', icon: '🎼', color: '#3B82F6' },
-    stems: { label: 'Stems', icon: '📦', color: '#F59E0B' },
-    cover: { label: 'Cover Art', icon: '🖼️', color: '#EC4899' },
-    preview: { label: 'Preview', icon: '▶️', color: '#8B5CF6' },
-    other: { label: 'File', icon: '📄', color: '#6B7280' },
+const FileTypeBadge = memo(({ type, purpose, iconTheme = false }: { type: string; purpose?: string; iconTheme?: boolean }) => {
+  const FILE_TYPES: Record<string, { label: string; icon: any; color: string; tint: "success" | "info" | "warning" | "critical" }> = {
+    mp3: { label: 'MP3', icon: SoundIcon, color: '#10B981', tint: 'success' },
+    wav: { label: 'WAV', icon: SoundIcon, color: '#3B82F6', tint: 'info' },
+    stems: { label: 'Stems', icon: PackageIcon, color: '#F59E0B', tint: 'warning' },
+    cover: { label: 'Cover Art', icon: StarFilledIcon, color: '#EC4899', tint: 'info' },
+    preview: { label: 'Preview', icon: PlayCircleIcon, color: '#8B5CF6', tint: 'info' },
+    other: { label: 'File', icon: SoundIcon, color: '#6B7280', tint: 'info' },
   };
 
   const config = FILE_TYPES[purpose || type] || FILE_TYPES.other;
+
+  if (iconTheme) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: `${config.color}20`, padding: '4px 8px', borderRadius: '4px' }}>
+        <Icon source={config.icon} tone={config.tint} />
+        <Text as="span" variant="bodySm" fontWeight="bold"><span style={{ color: config.color }}>{config.label}</span></Text>
+      </div>
+    );
+  }
+
   return (
     <span
       style={{
@@ -47,7 +64,7 @@ const FileTypeBadge = memo(({ type, purpose }: { type: string; purpose?: string 
         color: config.color,
       }}
     >
-      <span>{config.icon}</span>
+      <Icon source={config.icon} tone={config.tint} />
       {config.label}
     </span>
   );
@@ -100,22 +117,24 @@ export interface LicenseFileAssignmentProps {
 }
 
 // Default license tier styling
-const DEFAULT_TIER_STYLES: Record<string, { color: string; icon: string; recommendedFiles: string[] }> = {
-  basic: { color: '#0066FF', icon: '🔷', recommendedFiles: ['mp3'] },
-  premium: { color: '#8B5CF6', icon: '💎', recommendedFiles: ['mp3', 'wav'] },
-  unlimited: { color: '#F59E0B', icon: '👑', recommendedFiles: ['mp3', 'wav', 'stems'] },
+const DEFAULT_TIER_STYLES: Record<string, { color: string; icon: any; tint: "info" | "warning"; recommendedFiles: string[] }> = {
+  basic: { color: '#0066FF', icon: AlertDiamondIcon, tint: 'info', recommendedFiles: ['mp3'] },
+  premium: { color: '#8B5CF6', icon: AlertDiamondIcon, tint: 'info', recommendedFiles: ['mp3', 'wav'] },
+  unlimited: { color: '#F59E0B', icon: StarFilledIcon, tint: 'warning', recommendedFiles: ['mp3', 'wav', 'stems'] },
 };
 
 // Helper function
 const getTierStyle = (tier: LicenseTier) => {
-  const defaultStyle = DEFAULT_TIER_STYLES[tier.id] || {
+  const defaultStyle = DEFAULT_TIER_STYLES[tier.id.toLowerCase()] || {
     color: '#6B7280',
-    icon: '📋',
+    icon: CheckCircleIcon,
+    tint: 'info',
     recommendedFiles: [],
   };
   return {
     color: tier.color || defaultStyle.color,
-    icon: tier.icon || defaultStyle.icon,
+    icon: defaultStyle.icon,
+    tint: defaultStyle.tint,
     recommendedFiles: tier.recommendedFiles || defaultStyle.recommendedFiles,
   };
 };
@@ -340,17 +359,7 @@ export function LicenseFileAssignment({
   }, [licenses, licenseFiles]);
 
   return (
-    <BlockStack gap="600">
-      {/* Header */}
-      <div style={{ textAlign: 'center' }}>
-        <Text variant="headingXl" as="h1">
-          Upload Beat Files
-        </Text>
-        <Text variant="bodyMd" tone="subdued">
-          Upload preview and license files for your beat
-        </Text>
-      </div>
-
+    <BlockStack gap="500">
       {/* Error Banner */}
       {error && (
         <Banner tone="critical">
@@ -366,11 +375,11 @@ export function LicenseFileAssignment({
           action={{ content: 'Clear', onAction: () => setRejectedFiles([]) }}
         >
           <BlockStack gap="200">
-            <Text variant="bodyMd" fontWeight="semibold">
+            <Text as="p" variant="bodyMd" fontWeight="semibold">
               Some files could not be added:
             </Text>
             {rejectedFiles.map((rejected, index) => (
-              <Text key={index} variant="bodySm">
+              <Text as="p" key={index} variant="bodySm">
                 • {rejected.file.name}: {rejected.error}
               </Text>
             ))}
@@ -378,18 +387,24 @@ export function LicenseFileAssignment({
         </Banner>
       )}
 
-      {/* Step 0: Preview Audio */}
+      {/* Media Card */}
       <Card>
-        <BlockStack gap="400">
+        <BlockStack gap="500">
           <div>
             <Text variant="headingMd" as="h2">
-              Step 1: Preview Audio (Required)
-            </Text>
-            <Text variant="bodySm" tone="subdued">
-              This watermarked MP3 plays on your storefront. It's not part of any license package.
+              Media Files
             </Text>
           </div>
 
+          <BlockStack gap="300">
+            <div>
+              <Text variant="headingSm" as="h3">
+                Preview Audio (Required)
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                This watermarked MP3 plays on your storefront. It's not part of any license package.
+              </Text>
+            </div>
           {!previewFile ? (
             <DropZone
               onDrop={handlePreviewDrop}
@@ -409,7 +424,7 @@ export function LicenseFileAssignment({
                   }}
                 >
                   <Spinner size="large" />
-                  <Text variant="bodyMd">Uploading preview...</Text>
+                  <Text as="span" variant="bodyMd">Uploading preview...</Text>
                 </div>
               ) : (
                 <DropZone.FileUpload actionHint="Accepts .mp3 for storefront preview" />
@@ -427,12 +442,12 @@ export function LicenseFileAssignment({
                 gap: '12px',
               }}
             >
-              <FileTypeBadge type="preview" purpose="preview" />
+              <FileTypeBadge type="preview" purpose="preview" iconTheme={true} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <Text variant="bodySm" fontWeight="medium">
+                <Text as="span" variant="bodySm" fontWeight="medium">
                   {previewFile.name}
                 </Text>
-                <Text variant="bodyXs" tone="subdued">
+                <Text as="span" variant="bodyXs" tone="subdued">
                   {previewFile.size}
                 </Text>
               </div>
@@ -447,20 +462,18 @@ export function LicenseFileAssignment({
             </div>
           )}
         </BlockStack>
-      </Card>
 
-      {/* Step 1: License Files */}
-      <Card>
-        <BlockStack gap="400">
-          <div>
-            <Text variant="headingMd" as="h2">
-              Step 2: License Files
-            </Text>
-            <Text variant="bodySm" tone="subdued">
-              Upload files that will be included in license packages (MP3, WAV, stems)
-            </Text>
-          </div>
+        <hr style={{ border: 'none', borderTop: '1px solid var(--p-color-border)', margin: '8px 0' }} />
 
+          <BlockStack gap="300">
+            <div>
+              <Text variant="headingSm" as="h3">
+                License Files
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Upload files that will be included in license packages (MP3, WAV, stems)
+              </Text>
+            </div>
           <DropZone
             onDrop={handleLicenseFilesDrop}
             accept=".mp3,.wav,.zip"
@@ -479,9 +492,9 @@ export function LicenseFileAssignment({
                 }}
               >
                 <Spinner size="large" />
-                <Text variant="bodyMd">Uploading...</Text>
+                <Text as="p" variant="bodyMd">Uploading...</Text>
                 {uploadProgress !== undefined && (
-                  <Text variant="bodySm" tone="subdued">{uploadProgress}%</Text>
+                  <Text as="span" variant="bodySm" tone="subdued">{uploadProgress}%</Text>
                 )}
               </div>
             ) : (
@@ -512,16 +525,14 @@ export function LicenseFileAssignment({
                     gap: '12px',
                   }}
                 >
-                  <FileTypeBadge type={file.type} purpose={file.purpose} />
+                  <FileTypeBadge type={file.type} purpose={file.purpose} iconTheme={true} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text
-                      variant="bodySm"
-                      fontWeight="medium"
-                      style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >
-                      {file.name}
-                    </Text>
-                    <Text variant="bodyXs" tone="subdued">
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <Text as="span" variant="bodySm" fontWeight="medium">
+                        {file.name}
+                      </Text>
+                    </div>
+                    <Text as="span" variant="bodyXs" tone="subdued">
                       {file.size}
                     </Text>
                   </div>
@@ -538,220 +549,188 @@ export function LicenseFileAssignment({
             </div>
           )}
         </BlockStack>
+        </BlockStack>
       </Card>
 
-      {/* Step 2: Assign to License Tiers */}
+      {/* License Configuration & File Assignments */}
       {uploadedFiles.length > 0 && (
-        <>
-          <Text variant="headingMd" as="h2">
-            Step 3: Assign to License Tiers
-          </Text>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-              gap: '16px',
-            }}
-          >
-            {licenses.map((tier) => {
-              const style = getTierStyle(tier);
-              const tierFiles = licenseFiles[tier.id] || [];
-              const unassignedFiles = getUnassignedFiles(tier.id);
-
-              return (
-                <Card key={tier.id}>
-                  <BlockStack gap="400">
-                    {/* Tier Header */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '12px',
-                        paddingBottom: '12px',
-                        borderBottom: `2px solid ${style.color}`,
-                      }}
-                    >
-                      <span style={{ fontSize: '24px' }}>{style.icon}</span>
-                      <div style={{ flex: 1 }}>
-                        <InlineStack align="space-between">
-                          <Text variant="headingMd" as="h3">
-                            {tier.name}
-                          </Text>
-                          <Text variant="headingMd" as="span" tone="success" fontWeight="bold">
-                            {tier.price}
-                          </Text>
-                        </InlineStack>
-                        {tier.description && (
-                          <Text variant="bodySm" tone="subdued">
-                            {tier.description}
-                          </Text>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Files in this tier */}
-                    <div style={{ minHeight: '100px' }}>
-                      {tierFiles.length === 0 ? (
-                        <div
-                          style={{
-                            padding: '24px',
-                            textAlign: 'center',
-                            backgroundColor: '#F9FAFB',
-                            borderRadius: '8px',
-                            border: '2px dashed #E5E7EB',
-                          }}
-                        >
-                          <Text variant="bodySm" tone="subdued">
-                            No files assigned yet
-                          </Text>
-                        </div>
-                      ) : (
-                        <BlockStack gap="200">
-                          {tierFiles.map((fileId) => {
-                            const file = getFile(fileId);
-                            if (!file) return null;
-                            return (
-                              <div
-                                key={fileId}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '8px 12px',
-                                  backgroundColor: '#F0FDF4',
-                                  borderRadius: '6px',
-                                  border: '1px solid #BBF7D0',
-                                }}
-                              >
-                                <FileTypeBadge type={file.type} purpose={file.purpose} />
-                                <Text
-                                  variant="bodySm"
-                                  style={{
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                    flex: 1,
-                                  }}
-                                >
-                                  {file.name}
-                                </Text>
-                                <Button
-                                  icon={XIcon}
-                                  tone="critical"
-                                  variant="plain"
-                                  size="slim"
-                                  onClick={() => removeFileFromLicense(fileId, tier.id)}
-                                  disabled={uploading}
-                                  accessibilityLabel={`Remove ${file.name} from ${tier.name}`}
-                                />
-                              </div>
-                            );
-                          })}
-                        </BlockStack>
-                      )}
-                    </div>
-
-                    {/* Add File Button */}
-                    <Popover
-                      active={activePopover === tier.id}
-                      activator={
-                        <Button
-                          fullWidth
-                          icon={PlusIcon}
-                          onClick={() => setActivePopover(activePopover === tier.id ? null : tier.id)}
-                          disabled={unassignedFiles.length === 0 || uploading}
-                        >
-                          Add File
-                        </Button>
-                      }
-                      onClose={() => setActivePopover(null)}
-                    >
-                      <ActionList
-                        actionRole="menuitem"
-                        items={unassignedFiles.map((file) => ({
-                          content: (
-                            <InlineStack gap="200" align="center">
-                              <FileTypeBadge type={file.type} purpose={file.purpose} />
-                              <Text variant="bodySm">{file.name}</Text>
-                            </InlineStack>
-                          ),
-                          onAction: () => addFileToLicense(file.id, tier.id),
-                        }))}
-                      />
-                    </Popover>
-
-                    {/* Recommended badges */}
-                    <BlockStack gap="100">
-                      {style.recommendedFiles.map((recType) => {
-                        const hasType = tierFiles.some((fid) => getFile(fid)?.type === recType);
-                        if (hasType) return null;
-                        return (
-                          <Badge key={recType} tone="warning">
-                            Recommended: {recType.toUpperCase()}
-                          </Badge>
-                        );
-                      })}
-                    </BlockStack>
-                  </BlockStack>
-                </Card>
-              );
-            })}
-          </div>
-
-          {/* Summary */}
-          <Card>
-            <BlockStack gap="400">
+        <Card padding="0">
+          <BlockStack gap="0">
+            {/* Top section: Variants definitions */}
+            <div style={{ padding: '16px' }}>
               <Text variant="headingMd" as="h2">
-                Summary
+                Beat Licenses
               </Text>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: `repeat(${licenses.length}, 1fr)`,
-                  gap: '16px',
-                }}
-              >
-                {licenses.map((tier) => {
-                  const count = (licenseFiles[tier.id] || []).length;
-                  return (
-                    <div
-                      key={tier.id}
-                      style={{
-                        textAlign: 'center',
-                        padding: '16px',
-                        backgroundColor: count > 0 ? '#F0FDF4' : '#FEF3C7',
-                        borderRadius: '8px',
-                        border: `1px solid ${count > 0 ? '#BBF7D0' : '#FCD34D'}`,
-                      }}
-                    >
-                      <Text variant="bodySm" tone="subdued">
-                        {tier.name}
-                      </Text>
-                      <Text variant="headingLg" as="p" fontWeight="bold">
-                        {count}
-                      </Text>
-                      <Text variant="bodyXs" tone="subdued">
-                        files
-                      </Text>
-                    </div>
-                  );
-                })}
+              
+              <div style={{ marginTop: '16px', border: '1px solid var(--p-color-border)', borderRadius: '8px', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--p-color-bg-surface-secondary)', borderBottom: '1px solid var(--p-color-border)' }}>
+                      <th style={{ padding: '8px 16px', textAlign: 'left', fontWeight: '500', fontSize: '13px', color: 'var(--p-color-text-subdued)' }}>Variant</th>
+                      <th style={{ padding: '8px 16px', textAlign: 'left', fontWeight: '500', fontSize: '13px', color: 'var(--p-color-text-subdued)' }}>Price</th>
+                      <th style={{ padding: '8px 16px', textAlign: 'left', fontWeight: '500', fontSize: '13px', color: 'var(--p-color-text-subdued)' }}>Available</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {licenses.map((tier, index) => {
+                      const style = getTierStyle(tier);
+                      return (
+                        <tr key={tier.id} style={{ borderBottom: index < licenses.length - 1 ? '1px solid var(--p-color-border)' : 'none' }}>
+                          <td style={{ padding: '12px 16px' }}>
+                            <InlineStack gap="300" align="start" blockAlign="center">
+                              <div style={{ width: '32px', height: '32px', border: '1px solid var(--p-color-border)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' }}>
+                                <Icon source={style.icon} tone={style.tint} />
+                              </div>
+                              <Text variant="bodyMd" as="span" fontWeight="medium">{tier.name}</Text>
+                            </InlineStack>
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <Text variant="bodyMd" as="span">{tier.price}</Text>
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <Text variant="bodyMd" as="span" tone="subdued">-</Text>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
+            </div>
 
-              {!previewFile && (
-                <Banner tone="warning">Please upload a preview audio file.</Banner>
-              )}
+            <div style={{ borderTop: '1px solid var(--p-color-border)' }}></div>
 
-              {!isComplete() && (
-                <Banner tone="warning">
-                  Please assign at least one file to each license tier.
-                </Banner>
-              )}
-            </BlockStack>
-          </Card>
-        </>
+            {/* Bottom section: File Assignments */}
+            <div style={{ padding: '16px', backgroundColor: 'var(--p-color-bg-surface-secondary)' }}>
+               <Text variant="headingMd" as="h2">Assign Files</Text>
+               <div style={{ marginTop: '16px' }}>
+                 <BlockStack gap="400">
+                   {licenses.map(tier => {
+                     const tierFiles = licenseFiles[tier.id] || [];
+                     return (
+                       <div key={tier.id}>
+                         <div style={{ marginBottom: '4px' }}>
+                            <Text variant="bodyMd" as="p" fontWeight="medium">
+                               {tier.name}
+                            </Text>
+                         </div>
+                         <Popover
+                           active={activePopover === tier.id}
+                           activator={
+                             <div
+                               onClick={() => setActivePopover(activePopover === tier.id ? null : tier.id)}
+                               style={{
+                                 minHeight: '36px',
+                                 border: activePopover === tier.id ? '2px solid var(--p-color-border-focus)' : '1px solid var(--p-color-border)',
+                                 borderRadius: '6px',
+                                 padding: '6px 8px',
+                                 cursor: 'pointer',
+                                 display: 'flex',
+                                 flexWrap: 'wrap',
+                                 gap: '8px',
+                                 alignItems: 'center',
+                                 backgroundColor: '#FFFFFF',
+                                 boxShadow: activePopover === tier.id ? 'none' : 'inset 0 1px 0 0 rgba(0, 0, 0, 0.05)',
+                                 transition: 'border-color 0.2s',
+                               }}
+                             >
+                               {tierFiles.length > 0 ? (
+                                 tierFiles.map(fileId => {
+                                   const file = getFile(fileId);
+                                   if (!file) return null;
+                                   
+                                   let iconSource = SoundIcon;
+                                   if (file.type === 'stems') iconSource = PackageIcon;
+                                   
+                                   return (
+                                     <div key={fileId} style={{ 
+                                       display: 'inline-flex', 
+                                       padding: '2px 6px', 
+                                       backgroundColor: 'var(--p-color-bg-surface-secondary)', 
+                                       borderRadius: '4px', 
+                                       border: '1px solid var(--p-color-border-hover)', 
+                                       alignItems: 'center', 
+                                       gap: '4px' 
+                                     }}>
+                                        <Icon source={iconSource} tone="info" />
+                                        <Text as="span" variant="bodySm" fontWeight="medium">{file.type.toUpperCase()}</Text>
+                                        <div 
+                                          onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            removeFileFromLicense(fileId, tier.id); 
+                                          }} 
+                                          style={{ cursor: 'pointer', display: 'flex', marginLeft: '2px', borderLeft: '1px solid var(--p-color-border-hover)', paddingLeft: '4px' }}
+                                        >
+                                           <Icon source={XIcon} />
+                                        </div>
+                                     </div>
+                                   );
+                                 })
+                               ) : (
+                                 <Text as="span" tone="subdued">Select files</Text>
+                               )}
+                             </div>
+                           }
+                           onClose={() => setActivePopover(null)}
+                           autofocusTarget="none"
+                           fullWidth
+                         >
+                           <div style={{ minWidth: '300px' }}>
+                             {uploadedFiles.length > 0 ? (
+                               <OptionList
+                                 title={`Select files for ${tier.name}`}
+                                 onChange={(selectedIds) => {
+                                   const updated = { ...licenseFiles, [tier.id]: selectedIds };
+                                   if (onChange) {
+                                     onChange({ uploadedFiles, licenseFiles: updated, previewFile });
+                                   } else {
+                                     updateState(uploadedFiles, updated, previewFile);
+                                   }
+                                 }}
+                                 options={uploadedFiles.map(file => ({
+                                   value: file.id,
+                                   label: file.name,
+                                 }))}
+                                 selected={tierFiles}
+                                 allowMultiple
+                               />
+                             ) : (
+                               <div style={{ padding: '16px', textAlign: 'center' }}>
+                                 <Text as="span" tone="subdued">No files uploaded yet.</Text>
+                               </div>
+                             )}
+                           </div>
+                         </Popover>
+                         
+                         {getTierStyle(tier).recommendedFiles.length > 0 && (
+                           <div style={{ marginTop: '6px' }}>
+                              <Text variant="bodySm" as="span" tone="subdued">
+                                 Recommended: {getTierStyle(tier).recommendedFiles.join(', ').toUpperCase()}
+                              </Text>
+                           </div>
+                         )}
+                       </div>
+                     );
+                   })}
+                 </BlockStack>
+               </div>
+            </div>
+
+            {/* Warnings */}
+            <div style={{ padding: '16px', borderTop: '1px solid var(--p-color-border)' }}>
+              <BlockStack gap="300">
+                {!previewFile && (
+                  <Banner tone="warning">Please upload a preview audio file.</Banner>
+                )}
+                {!isComplete() && (
+                  <Banner tone="warning">
+                    Please assign at least one file to each license tier.
+                  </Banner>
+                )}
+              </BlockStack>
+            </div>
+          </BlockStack>
+        </Card>
       )}
     </BlockStack>
   );

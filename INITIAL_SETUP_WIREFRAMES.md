@@ -213,3 +213,76 @@ If any fail -> show "Fix Required" with exact mismatch + retry button
 | [ View Config Summary ]                                           |
 +------------------------------------------------------------------+
 ```
+
+---
+
+## Option C - "Smart Defaults" Flow (Recommended)
+
+### Why this is the best approach
+This approach borrows from your CRO-focused product page redesign (reducing visual clutter and cognitive load). It combines the **low-friction speed of Option A** with the **schema-safety and customization of Option B** using **Progressive Disclosure**. Technical checks run silently in the background, and customization is offered as an *optional* secondary path rather than a mandatory hurdle.
+
+### Flow
+1. **Background Magic**: Preflight schema & wiring checks run during the loading screen. No technical jargon is shown to the user unless a fatal error occurs.
+2. **Step 1: Identity**: Producer Name (Required).
+3. **Step 2: The Foundation (Licenses & Genres)**: Present industry-standard seeded data with a clear "Looks Good" primary button, and an optional "Customize" button for power users.
+4. **Step 3: Storage**: Default to managed storage, secondary option for self-managed.
+5. **Setup Complete -> Upload**
+
+### Wireframe
+```text
++------------------------------------------------------------------+
+| Producer Launchpad - Welcome                                     |
++------------------------------------------------------------------+
+
+[ Silent Check in Background: Schema, Metafields, Scopes ]
+(If error: show troubleshooting UI. If success: show Step 1)
+
++------------------------------------------------------------------+
+| STEP 1: Your Producer Profile                                    |
++------------------------------------------------------------------+
+| Let's get your store ready. What's your producer or brand name?  |
+|                                                                  |
+| Name *  [________________________]                               |
+| Bio     [________________________] (Optional)                    |
+|                                                                  |
+| [ Continue ]                                      (1/3 complete) |
++------------------------------------------------------------------+
+
+
++------------------------------------------------------------------+
+| STEP 2: Catalog Presets                                          |
++------------------------------------------------------------------+
+| We've pre-loaded your store with industry standards so you can   |
+| start selling immediately.                                       |
+|                                                                  |
+| ✓ 3 License Tiers (Basic, Premium, Unlimited)                    |
+| ✓ 6 Popular Genres (Trap, Hip Hop, R&B...)                       |
+|                                                                  |
+| [ Looks Good, Continue ] <-- Primary, frictionless action        |
+|                                                                  |
+| * Note: You can always customize these later in your Shopify     |
+|   Admin under Content > Metaobjects.                             |
+|                                                   (2/3 complete) |
++------------------------------------------------------------------+
+
+
++------------------------------------------------------------------+
+| STEP 3: Storage Configuration                                    |
++------------------------------------------------------------------+
+| Where should we securely store your high-quality audio files?    |
+|                                                                  |
+| (•) managed by Producer Launchpad (Recommended)                  |
+| ( ) connect my own Cloudflare R2 bucket                          |
+|                                                                  |
+| [ Finish Setup ]                                  (3/3 complete) |
++------------------------------------------------------------------+
+
+
++------------------------------------------------------------------+
+| SETUP COMPLETE                                                   |
++------------------------------------------------------------------+
+| 🎉 Your beat store is ready.                                     |
+|                                                                  |
+| [ Upload Your First Beat ] <-- Big primary CTA                   |
++------------------------------------------------------------------+
+```
