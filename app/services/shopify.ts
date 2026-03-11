@@ -741,6 +741,38 @@ export class ShopifyClient {
 
     return response.data?.metafieldsSet.metafields || [];
   }
+
+  async pinMetafieldDefinition(definitionId: string) {
+    const mutation = `
+      mutation PinMetafieldDefinition($definitionId: ID!) {
+        metafieldDefinitionPin(definitionId: $definitionId) {
+          pinnedDefinition {
+            id
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      metafieldDefinitionPin: {
+        pinnedDefinition?: { id: string };
+        userErrors: Array<{ field: string[]; message: string }>;
+      };
+    }>(mutation, { definitionId });
+
+    if (response.data?.metafieldDefinitionPin.userErrors.length) {
+      const message = response.data.metafieldDefinitionPin.userErrors
+        .map((e) => e.message)
+        .join(", ");
+      throw new Error(`Failed to pin metafield definition: ${message}`);
+    }
+
+    return response.data?.metafieldDefinitionPin.pinnedDefinition;
+  }
 }
 
 export function createShopifyClient(

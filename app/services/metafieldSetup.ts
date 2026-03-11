@@ -488,6 +488,36 @@ export class MetafieldSetupService {
     return created;
   }
 
+  async pinRequiredMetafieldDefinitions(): Promise<void> {
+    const [productDefs, variantDefs] = await Promise.all([
+      this.client.getMetafieldDefinitions("PRODUCT", "custom"),
+      this.client.getMetafieldDefinitions("PRODUCTVARIANT", "custom"),
+    ]);
+
+    const productByKey = new Map(productDefs.map((d) => [d.key, d]));
+    const variantByKey = new Map(variantDefs.map((d) => [d.key, d]));
+
+    for (const mf of REQUIRED_PRODUCT_METAFIELDS) {
+      const def = productByKey.get(mf.key);
+      if (!def) continue;
+      try {
+        await this.client.pinMetafieldDefinition(def.id);
+      } catch (error) {
+        console.warn(`Unable to pin product metafield ${mf.key}:`, (error as Error).message);
+      }
+    }
+
+    for (const mf of REQUIRED_VARIANT_METAFIELDS) {
+      const def = variantByKey.get(mf.key);
+      if (!def) continue;
+      try {
+        await this.client.pinMetafieldDefinition(def.id);
+      } catch (error) {
+        console.warn(`Unable to pin variant metafield ${mf.key}:`, (error as Error).message);
+      }
+    }
+  }
+
   async createMissingMetaobjectDefinitions(): Promise<string[]> {
     const created: string[] = [];
     const existing = await this.client.getMetaobjectDefinitions();
@@ -747,6 +777,14 @@ export class MetafieldSetupService {
       result.created.variantMetafields = await this.createMissingVariantMetafields();
     } catch (error) {
       result.errors.push(`Variant metafields: ${(error as Error).message}`);
+      result.success = false;
+    }
+
+    try {
+      // Step 3.5: Pin metafields so they are visible in Shopify admin forms
+      await this.pinRequiredMetafieldDefinitions();
+    } catch (error) {
+      result.errors.push(`Pin metafields: ${(error as Error).message}`);
       result.success = false;
     }
 
