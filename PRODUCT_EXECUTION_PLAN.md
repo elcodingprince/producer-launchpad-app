@@ -17,6 +17,8 @@
 - Fresh install can land on a blocked dashboard (`Unable to load dashboard`) instead of setup.
 #### Goal
 - First-time users must be routed to setup wizard immediately.
+#### Wireframe Reference
+- See [INITIAL_SETUP_WIREFRAMES.md](/Users/payan/producer-launchpad-app/INITIAL_SETUP_WIREFRAMES.md) for initial-state flow options.
 #### Status
 - `Pending`
 #### Verified Current State
