@@ -98,16 +98,16 @@
 ## 3) Technical Reference (Consolidated)
 
 ### Canonical Metafield Mapping
-- Product title -> product `title` (not metafield)
-- `BPM` -> `custom.bpm` (`number_integer`)
-- `Key` -> `custom.key` (`single_line_text_field`)
-- `Genres[]` -> `custom.genre` (`list.metaobject_reference`)
-- `Producers[]` -> `custom.produced_by` (`list.metaobject_reference`)
-- `Producer Alias` -> `custom.producer_alias` (`single_line_text_field`)
-- `Preview file URL` -> `custom.audio_preview` (`url`)
-- License files per tier -> `custom.license_files_basic|premium|unlimited` (`json`)
-- Variant license link -> `custom.license_reference` (`metaobject_reference`)
-- Cover art should use product media/images (not `custom.cover_art` metafield).
+- Product title → product `title` (not metafield)
+- `BPM` → `custom.bpm` (`number_integer`)
+- `Key` → `custom.key` (`single_line_text_field`)
+- `Genres[]` → `custom.genre` (`list.metaobject_reference`)
+- `Producers[]` → `custom.produced_by` (`list.metaobject_reference`)
+- `Producer Alias` → `custom.producer_alias` (`single_line_text_field`)
+- `Preview file URL` → `custom.audio_preview` (`url`)
+- **Cover art** → product `media` field via `images: [{ src: url }]` (✅ **NOT** `custom.cover_art` metafield)
+- License files per tier → `custom.license_files_basic|premium|unlimited` (`json`)
+- Variant license link → `custom.license_reference` (`metaobject_reference`)
 
 ### Metaobject Reference Rules
 - Metaobject references must store GIDs, not names/handles.
@@ -121,8 +121,9 @@
 
 ### Known Reliability Risks
 - Embedded tunnel uploads can fail on large multipart requests (connection reset/aborted).
-- Admin UI visibility depends on metafield pinning; unpinned definitions can appear as "No metafields pinned" even when values exist.
-- Metafield pinning support is implemented in setup services (`pinRequiredMetafieldDefinitions` + `metafieldDefinitionPin`), but setup must run to apply pins.
+- ✅ **Resolved**: Admin UI visibility now automatic — metafield pinning runs during setup wizard via `pinRequiredMetafieldDefinitions()` and `metafieldDefinitionPin` mutation.
+  - All required product and variant metafields are automatically pinned after definition creation.
+  - No manual pinning needed in Shopify admin.
 
 ---
 
@@ -136,12 +137,47 @@
 ---
 
 ## 5) Progress Tracker
+
+### UX Bugs
 - Bug 1: `Pending` (investigated, not fixed)
 - Bug 2: `Pending` (investigated, not fixed)
 - Bug 3: `Pending` (label unchanged; loading-only state exists, no progress UI)
 - Bug 4: `Pending` (known placeholder implementation)
-- Technical baseline:
-  - Metafield pinning capability: `Implemented` (requires setup execution)
+
+### Technical Improvements (Completed)
+- ✅ **Cover art architecture**: Migrated from `custom.cover_art` metafield to product `images` array (Shopify standard)
+- ✅ **Metafield upload optimization**: Product metafields now set once via `productCreate` mutation; variant metafields set separately via `setMetafields()`
+- ✅ **Metafield pinning**: Automatic pinning implemented in setup wizard via `pinRequiredMetafieldDefinitions()` and `metafieldDefinitionPin` mutation
+- ✅ **Upload validation**: Metafields confirmed uploading correctly (visibility issue was pinning, not upload failure)
+
+---
+
+---
+
+## 6) What's Next
+
+### Immediate Priorities (UX Bugs)
+1. **Bug 1: Initial install routing** → Force redirect to setup on fresh install
+   - Modify `app._index.tsx` to check setup status and redirect
+   - Prevent dashboard rendering when setup incomplete
+
+2. **Bug 2: Setup wizard hierarchy** → Move producer profile action above diagnostics
+   - Reorder `app.setup.tsx` layout
+   - Primary action first, status/diagnostics below
+
+3. **Bug 4: My Beats data integration** → Connect product list to actual data
+   - Implement `app.beats._index.tsx` loader to fetch created products
+   - Remove placeholder `beats: []` response
+
+4. **Bug 3: Upload CTA refinement** → Improve upload experience
+   - Rename button from "Create Beat Product" to "Upload Beat"
+   - Add progress indicator beyond loading state
+
+### Future Enhancements
+- License file package architecture decision (3 options documented previously)
+- Producer/license metaobject field completion (images, bios, terms)
+- Storage configuration UX improvements
+- License-first upload flow refinement
 
 ---
 
