@@ -155,25 +155,21 @@ export class ProductCreatorService {
       throw new Error("Failed to create product - no product returned");
     }
 
-    const metafieldsToSet: Array<{
+    // Product metafields are already set via productCreate mutation above
+    // Only need to set variant metafields separately (must be done after product creation)
+    const variantMetafields: Array<{
       ownerId: string;
       namespace: string;
       key: string;
       type: string;
       value: string;
-    }> = productMetafields.map((mf) => ({
-      ownerId: product.id,
-      namespace: mf.namespace,
-      key: mf.key,
-      type: mf.type,
-      value: mf.value,
-    }));
+    }> = [];
 
     for (let i = 0; i < product.variants.edges.length; i++) {
       const variant = product.variants.edges[i];
       const license = data.licenses[i];
       if (!license?.licenseGid) continue;
-      metafieldsToSet.push({
+      variantMetafields.push({
         ownerId: variant.node.id,
         namespace: "custom",
         key: "license_reference",
@@ -182,7 +178,9 @@ export class ProductCreatorService {
       });
     }
 
-    await this.client.setMetafields(metafieldsToSet);
+    if (variantMetafields.length > 0) {
+      await this.client.setMetafields(variantMetafields);
+    }
 
     return {
       productId: product.id,
