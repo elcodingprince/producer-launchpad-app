@@ -127,6 +127,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Extract license file assignments (maps tier -> array of temp file IDs)
     const licenseFilesData = JSON.parse((formData.get("licenseFiles") as string) || "{}");
+    const licensePricesData = JSON.parse((formData.get("licensePrices") as string) || "{}");
     
     // Extract preview file ID
     const previewFileId = formData.get("previewFileId") as string | null;
@@ -294,12 +295,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     // Prepare license prices
-    const licensePrices = LICENSE_TIERS.map(lp => ({
-      licenseId: lp.id,
-      licenseGid: licenseMap.get(lp.id) || "",
-      price: lp.price,
-      compareAtPrice: lp.compareAtPrice,
-    }));
+    const licensePrices = LICENSE_TIERS.map(lp => {
+      const customPriceStr = licensePricesData[lp.id];
+      const customPrice = customPriceStr ? parseFloat(customPriceStr) : lp.price;
+      return {
+        licenseId: lp.id,
+        licenseGid: licenseMap.get(lp.id) || "",
+        price: isNaN(customPrice) ? lp.price : customPrice,
+        compareAtPrice: lp.compareAtPrice,
+      };
+    });
 
     const result = await productService.createBeatProduct({
       title,
@@ -401,7 +406,13 @@ export default function NewBeatPage() {
     premium: [],
     unlimited: [],
   });
+  const [licensePrices, setLicensePrices] = useState<Record<string, string>>({
+    basic: "29.99",
+    premium: "49.99",
+    unlimited: "99.99",
+  });
   const [previewFile, setPreviewFile] = useState<UploadedFile | null>(null);
+  const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -478,17 +489,30 @@ export default function NewBeatPage() {
     formData.append("producerGids", JSON.stringify(producerGids));
     formData.append("producerAlias", producerAlias);
     formData.append("licenseFiles", JSON.stringify(licenseFiles));
+    formData.append("licensePrices", JSON.stringify(licensePrices));
     
     // Add preview file ID
     if (previewFile) {
       formData.append("previewFileId", previewFile.id);
     }
-    
+
     // Build file metadata map with purpose
     const fileMetadata: Record<
       string,
       { name: string; type: string; size: string; purpose: string }
     > = {};
+
+    // Append cover art file
+    if (coverArtFile?.file) {
+      const fieldName = `file_${coverArtFile.id}`;
+      formData.append(fieldName, coverArtFile.file);
+      fileMetadata[coverArtFile.id] = {
+        name: coverArtFile.name,
+        type: coverArtFile.type,
+        size: coverArtFile.size,
+        purpose: "cover",
+      };
+    }
 
     // Append preview file
     if (previewFile?.file) {
@@ -501,7 +525,7 @@ export default function NewBeatPage() {
         purpose: previewFile.purpose,
       };
     }
-    
+
     // Append license files
     uploadedFiles.forEach((uploadedFile) => {
       if (uploadedFile.file) {
@@ -553,7 +577,15 @@ export default function NewBeatPage() {
   }
 
   return (
-    <Page title="Upload New Beat" backAction={{ content: "Dashboard", url: "/app" }}>
+    <Page 
+      title="Upload New Beat" 
+      backAction={{ content: "Dashboard", url: "/app" }}
+      primaryAction={{
+        content: isUploading ? "Uploading..." : "Save product",
+        onAction: handleSubmit,
+        disabled: !isFormValid() || isUploading,
+      }}
+    >
       <Layout>
         {storageWarning && (
           <Layout.Section>
@@ -589,36 +621,33 @@ export default function NewBeatPage() {
             <Card>
               <BlockStack gap="400">
                 <Text variant="headingMd" as="h2">
-                  Beat Details
+                  Beat details
                 </Text>
 
                 <FormLayout>
                   <TextField
-                    label="Beat Title"
+                    label={<span>Beat title <Text as="span" tone="subdued">(required)</Text></span>}
                     value={title}
                     onChange={setTitle}
                     autoComplete="off"
                     helpText="Enter a catchy title for your beat"
-                    requiredIndicator
                   />
 
                   <FormLayout.Group>
                     <TextField
-                      label="BPM"
+                      label={<span>BPM <Text as="span" tone="subdued">(required)</Text></span>}
                       type="number"
                       value={bpm}
                       onChange={setBpm}
                       autoComplete="off"
                       helpText="Beats per minute"
-                      requiredIndicator
                     />
 
                     <Select
-                      label="Key"
+                      label={<span>Key <Text as="span" tone="subdued">(required)</Text></span>}
                       options={keyOptions.map((k) => ({ label: k, value: k }))}
                       value={key}
                       onChange={setKey}
-                      requiredIndicator
                     />
                   </FormLayout.Group>
                 </FormLayout>
@@ -630,15 +659,21 @@ export default function NewBeatPage() {
               licenses={licenseTiers}
               uploadedFiles={uploadedFiles}
               licenseFiles={licenseFiles}
+              licensePrices={licensePrices}
               previewFile={previewFile}
+              coverArtFile={coverArtFile}
               onChange={({
                 uploadedFiles: newFiles,
                 licenseFiles: newLicenseFiles,
                 previewFile: newPreviewFile,
+                coverArtFile: newCoverArtFile,
+                licensePrices: newLicensePrices,
               }) => {
                 setUploadedFiles(newFiles);
                 setLicenseFiles(newLicenseFiles);
                 setPreviewFile(newPreviewFile);
+                setCoverArtFile(newCoverArtFile);
+                setLicensePrices(newLicensePrices);
               }}
               onUpload={handleFileUpload}
               uploading={isUploading}
@@ -649,26 +684,27 @@ export default function NewBeatPage() {
 
         <Layout.Section variant="oneThird">
           <BlockStack gap="500">
-            {/* Publish Card */}
+            {/* Status Card */}
             <Card>
               <BlockStack gap="400">
                 <Text variant="headingMd" as="h2">
                   Status
                 </Text>
-                <Button
-                  variant="primary"
-                  size="large"
-                  icon={UploadIcon}
-                  onClick={handleSubmit}
-                  disabled={!isFormValid() || isUploading}
-                  fullWidth
-                >
-                  {isUploading ? "Uploading..." : "Create Beat Product"}
-                </Button>
+                <Select
+                  label="Status"
+                  labelHidden
+                  options={[
+                    { label: "Active", value: "active" },
+                    { label: "Draft", value: "draft" }
+                  ]}
+                  value="draft"
+                  onChange={() => {}}
+                />
+                
                 {!isFormValid() && (
-                  <Text as="p" tone="subdued" variant="bodySm">
-                    Please fill out all required details and assign audio files before publishing.
-                  </Text>
+                  <Banner tone="warning">
+                    <p>There are missing audio files or required fields. Please complete all requirements before publishing.</p>
+                  </Banner>
                 )}
               </BlockStack>
             </Card>
@@ -690,7 +726,7 @@ export default function NewBeatPage() {
                   />
 
                   <TextField
-                    label="Producer Alias (Optional)"
+                    label="Producer alias (optional)"
                     value={producerAlias}
                     onChange={setProducerAlias}
                     autoComplete="off"
