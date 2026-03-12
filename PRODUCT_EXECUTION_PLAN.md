@@ -144,6 +144,13 @@
 - Bug 3: `Pending` (label unchanged; loading-only state exists, no progress UI)
 - Bug 4: `Pending` (known placeholder implementation)
 
+### License Delivery Automation
+- Status: `Planned` — Architecture complete, ready for implementation
+- Database schema: Designed
+- Services: Planned (PDF, email, delivery)
+- UI: Planned (templates list, edit page)
+- Webhook handler: Planned
+
 ### Technical Improvements (Completed)
 - ✅ **Cover art architecture**: Migrated from `custom.cover_art` metafield to product `images` array (Shopify standard)
 - ✅ **Metafield upload optimization**: Product metafields now set once via `productCreate` mutation; variant metafields set separately via `setMetafields()`
@@ -156,7 +163,7 @@
 
 ## 6) What's Next
 
-### Immediate Priorities (UX Bugs)
+### Immediate Priorities (UX Bugs + Core Feature)
 1. **Bug 1: Initial install routing** → Force redirect to setup on fresh install
    - Modify `app._index.tsx` to check setup status and redirect
    - Prevent dashboard rendering when setup incomplete
@@ -172,6 +179,50 @@
 4. **Bug 3: Upload CTA refinement** → Improve upload experience
    - Rename button from "Create Beat Product" to "Upload Beat"
    - Add progress indicator beyond loading state
+
+5. **License Delivery Automation** → Core revenue feature
+   - Implement license template management UI
+   - Add PDF generation service (PDFKit)
+   - Add email delivery service (Resend)
+   - Create order webhook handler
+   - Modify upload to set variant metafields
+   - Database migrations
+
+### License Delivery Automation (NEW FEATURE)
+**Status:** `Planned` — Ready for implementation
+
+**Overview:** Automatically generate and deliver license PDFs to customers upon purchase.
+
+**Architecture:**
+- License templates stored in DB (configured via `/app/licenses` page)
+- Variant metafield `license_template_id` links variant to template
+- Webhook `orders/create` triggers PDF generation + email delivery
+- PDFKit for PDF generation, Resend for email delivery
+
+**Implementation Files:**
+- `app/services/license-template.server.ts` — CRUD operations
+- `app/services/license-pdf.server.ts` — PDFKit PDF generation
+- `app/services/license-email.server.ts` — Resend email delivery
+- `app/services/license-delivery.server.ts` — Orchestration
+- `app/routes/webhooks.orders-create.tsx` — Order webhook handler
+- `app/routes/app.licenses._index.tsx` — Templates list UI
+- `app/routes/app.licenses.$id.edit.tsx` — Edit template UI
+- `app/routes/app.upload.tsx` — Modified to set variant metafields
+
+**Database Schema:**
+- `LicenseTemplate` — Stores HTML templates with placeholders
+- `LicenseDelivery` — Delivery history/tracking
+
+**User Flow:**
+1. Producer configures license templates (Basic/Premium/Exclusive)
+2. Upload beat → App creates variants with `license_template_id` metafield
+3. Customer purchases → Automatic PDF generation + email delivery
+
+**Cost:** Resend free tier (3,000 emails/mo), scales to $20/mo at ~900 customers
+
+**Timeline:** 21.5 hours (3 dev days)
+
+---
 
 ### Future Enhancements
 - License file package architecture decision (3 options documented previously)
