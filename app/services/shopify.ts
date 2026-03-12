@@ -33,6 +33,81 @@ export class ShopifyClient {
     return response;
   }
 
+  async uploadImage(file: File): Promise<string> {
+    const filename = file.name || "cover.jpg";
+    const mimeType = file.type || (filename.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg");
+    const fileSize = file.size.toString();
+
+    const mutation = `
+      mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+        stagedUploadsCreate(input: $input) {
+          stagedTargets {
+            url
+            resourceUrl
+            parameters {
+              name
+              value
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      stagedUploadsCreate: {
+        stagedTargets: Array<{
+          url: string;
+          resourceUrl: string;
+          parameters: Array<{ name: string; value: string }>;
+        }>;
+        userErrors: Array<{ field: string[]; message: string }>;
+      };
+    }>(mutation, {
+      input: [
+        {
+          filename,
+          mimeType,
+          resource: "IMAGE",
+          httpMethod: "POST",
+          fileSize,
+        },
+      ],
+    });
+
+    if (response.data?.stagedUploadsCreate?.userErrors?.length) {
+      throw new Error(
+        `Failed to request staged upload: ${response.data.stagedUploadsCreate.userErrors.map((e) => e.message).join(", ")}`
+      );
+    }
+
+    const target = response.data?.stagedUploadsCreate?.stagedTargets?.[0];
+    if (!target) {
+      throw new Error("No staged target returned by Shopify");
+    }
+
+    const formData = new FormData();
+    target.parameters.forEach((param) => {
+      formData.append(param.name, param.value);
+    });
+    formData.append("file", file);
+
+    const uploadResponse = await fetch(target.url, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      throw new Error(`Failed to upload file to Shopify: ${uploadResponse.status} ${uploadResponse.statusText} ${errorText}`);
+    }
+
+    return target.resourceUrl;
+  }
+
   async getMetafieldDefinitions(ownerType: "PRODUCT" | "PRODUCTVARIANT", namespace?: string) {
     const query = `
       query GetMetafieldDefinitions($ownerType: MetafieldOwnerType!, $namespace: String) {
@@ -494,9 +569,10 @@ export class ShopifyClient {
       ];
     }
 
-    // Add images if provided
+    // Prepare media separately
+    let mediaInput: any = undefined;
     if (images && images.length > 0) {
-      createInput.media = images.map((img) => ({
+      mediaInput = images.map((img) => ({
         originalSource: img.src,
         mediaContentType: "IMAGE",
       }));
@@ -513,8 +589,8 @@ export class ShopifyClient {
     }
 
     const mutation = `
-      mutation CreateProduct($input: ProductInput!) {
-        productCreate(input: $input) {
+      mutation CreateProduct($input: ProductInput!, $media: [CreateMediaInput!]) {
+        productCreate(input: $input, media: $media) {
           product {
             id
             title
@@ -561,12 +637,17 @@ export class ShopifyClient {
         };
         userErrors: Array<{ field: string[]; message: string }>;
       };
-    }>(mutation, { input: createInput });
+    }>(mutation, { input: createInput, media: mediaInput });
 
     if (response.data?.productCreate.userErrors.length > 0) {
-      throw new Error(
-        `Failed to create product: ${response.data.productCreate.userErrors.map((e) => e.message).join(", ")}`
-      );
+      const errors = response.data.productCreate.userErrors;
+      const criticalErrors = errors.filter(e => !e.message.toLowerCase().includes("media processing"));
+
+      if (criticalErrors.length > 0) {
+        throw new Error(`Failed to create product: ${criticalErrors.map((e) => e.message).join(", ")}`);
+      } else {
+        console.warn(`[Shopify Client] Product created, but media failed: ${errors.map(e => e.message).join(", ")}`);
+      }
     }
 
     const product = response.data?.productCreate.product;
@@ -581,20 +662,33 @@ export class ShopifyClient {
         }
       }
 
-      const updates = variants
-        .map((variant, index) => {
-          const variantId =
-            (variant.title ? byLicenseValue.get(variant.title) : undefined) ||
-            product.variants.edges[index]?.node.id;
-          if (!variantId) return null;
-          return {
+      const updates: any[] = [];
+      const creates: any[] = [];
+
+      variants.forEach((variant, index) => {
+        const variantId =
+          (variant.title ? byLicenseValue.get(variant.title) : undefined) ||
+          product.variants.edges[index]?.node.id;
+
+        if (variantId) {
+          updates.push({
             id: variantId,
             price: variant.price,
             compareAtPrice: variant.compareAtPrice,
             metafields: variant.metafields,
-          };
-        })
-        .filter((v): v is NonNullable<typeof v> => v !== null);
+          });
+        } else {
+          creates.push({
+            price: variant.price,
+            compareAtPrice: variant.compareAtPrice,
+            inventoryPolicy: "CONTINUE",
+            optionValues: [
+              { optionName: "License", name: variant.title },
+            ],
+            // Metafields can be specified but we actually set them manually later in productCreator
+          });
+        }
+      });
 
       if (updates.length > 0) {
         const updateMutation = `
@@ -640,7 +734,7 @@ export class ShopifyClient {
           );
         }
 
-        const updatedByLicenseValue = new Map<string, { id: string; title: string; price: string }>();
+        const updatedByLicenseValue = new Map<string, { id: string; title: string; price: string; selectedOptions: Array<{name: string, value: string}> }>();
         for (const variant of updateResponse.data?.productVariantsBulkUpdate.productVariants || []) {
           const selected = variant.selectedOptions.find((opt) => opt.name === "License");
           if (selected?.value) {
@@ -648,7 +742,66 @@ export class ShopifyClient {
               id: variant.id,
               title: variant.title,
               price: variant.price,
+              selectedOptions: variant.selectedOptions
             });
+          }
+        }
+
+        // Now handle creations
+        if (creates.length > 0) {
+          const createMutation = `
+            mutation ProductVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+              productVariantsBulkCreate(productId: $productId, variants: $variants) {
+                productVariants {
+                  id
+                  title
+                  price
+                  selectedOptions {
+                    name
+                    value
+                  }
+                }
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }
+          `;
+          
+          const createResponse = await this.query<{
+            productVariantsBulkCreate: {
+              productVariants: Array<{
+                id: string;
+                title: string;
+                price: string;
+                selectedOptions: Array<{ name: string; value: string }>;
+              }>;
+              userErrors: Array<{ field: string[]; message: string }>;
+            };
+          }>(createMutation, {
+            productId: product.id,
+            variants: creates,
+          });
+
+          if (createResponse.data?.productVariantsBulkCreate.userErrors.length) {
+            throw new Error(
+              `Failed to create product variants: ${createResponse.data.productVariantsBulkCreate.userErrors
+                .map((e) => e.message)
+                .join(", ")}`
+            );
+          }
+
+          for (const variant of createResponse.data?.productVariantsBulkCreate.productVariants || []) {
+            const selected = variant.selectedOptions.find((opt) => opt.name === "License");
+            if (selected?.value) {
+              updatedByLicenseValue.set(selected.value, {
+                id: variant.id,
+                title: variant.title,
+                price: variant.price,
+                selectedOptions: variant.selectedOptions
+              });
+            }
           }
         }
 
@@ -660,7 +813,7 @@ export class ShopifyClient {
             }
             return product.variants.edges[index];
           })
-          .filter((edge): edge is { node: { id: string; title: string; price: string } } => !!edge);
+          .filter((edge): edge is { node: { id: string; title: string; price: string; selectedOptions: Array<{name: string, value: string}> } } => !!edge);
 
         return {
           ...product,

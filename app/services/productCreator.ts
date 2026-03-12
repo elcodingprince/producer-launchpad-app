@@ -46,6 +46,10 @@ export class ProductCreatorService {
     this.client = createShopifyClient(session, admin);
   }
 
+  async uploadImageToShopify(file: File): Promise<string> {
+    return this.client.uploadImage(file);
+  }
+
   async createBeatProduct(data: BeatProductData): Promise<{
     productId: string;
     variants: Array<{ id: string; price: string; licenseId: string }>;
@@ -136,7 +140,6 @@ export class ProductCreatorService {
         ? license.compareAtPrice.toFixed(2)
         : undefined,
       inventoryPolicy: "CONTINUE",
-      inventoryManagement: null,
     }));
 
     // Create the product

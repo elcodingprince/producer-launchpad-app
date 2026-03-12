@@ -450,10 +450,12 @@ export function LicenseFileAssignment({
                   return (
                     <tr key={tier.id} style={{ borderBottom: isNotLast ? '1px solid var(--p-color-border)' : 'none' }}>
                       <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
-                        <InlineStack gap="300" blockAlign="center">
-                          <Box background="bg-surface" borderWidth="025" borderColor="border" borderRadius="200" padding="150">
-                            <Icon source={meta.icon} tone={meta.tint} />
-                          </Box>
+                        <InlineStack gap="300" blockAlign="center" wrap={false}>
+                          <div>
+                            <Box background="bg-surface" borderWidth="025" borderColor="border" borderRadius="200" padding="150">
+                              <Icon source={meta.icon} tone={meta.tint} />
+                            </Box>
+                          </div>
                           <Text variant="bodyMd" as="span" fontWeight="medium">{tier.name}</Text>
                         </InlineStack>
                         {meta.recommendedFiles.length > 0 && (

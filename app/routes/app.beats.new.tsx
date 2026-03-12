@@ -42,12 +42,7 @@ const keyOptions = [
   "A# major", "A# minor", "B major", "B minor",
 ];
 
-// License tier configuration
-const LICENSE_TIERS = [
-  { id: "basic", name: "Basic", price: 29.99, compareAtPrice: 39.99 },
-  { id: "premium", name: "Premium", price: 49.99, compareAtPrice: 69.99 },
-  { id: "unlimited", name: "Unlimited", price: 99.99, compareAtPrice: 149.99 },
-];
+
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -154,8 +149,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
+    // Get actual license GIDs from the database
+    const dbLicenses = await productService.getLicenseMetaobjects();
+    const licenseTiers = dbLicenses.map(l => l.licenseId);
+    
     // Validate each license tier has at least one file
-    const licenseTiers = ["basic", "premium", "unlimited"];
     const missingAssignments: string[] = [];
     
     for (const tier of licenseTiers) {
@@ -249,6 +247,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let coverArtUrl: string | undefined;
     let previewUrl: string | undefined;
     
+    // Upload cover art to Shopify's CDN directly to prevent "Media processing failed" timeouts
+    const coverEntry = fileEntries.find(e => e.purpose === "cover" || e.file.type.startsWith('image/'));
+    let shopifyCoverResourceUrl: string | undefined;
+
+    if (coverEntry) {
+      console.info("[upload] uploading cover art directly to Shopify CDN via stagedUploadsCreate");
+      try {
+        shopifyCoverResourceUrl = await productService.uploadImageToShopify(coverEntry.file);
+      } catch (err) {
+        console.error("Failed to upload cover art to Shopify:", err);
+      }
+    }
+
     for (let i = 0; i < fileEntries.length; i++) {
       const entry = fileEntries[i];
       const result = uploadResults[i];
@@ -262,7 +273,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Get actual license GIDs from the database
-    const licenses = await productService.getLicenseMetaobjects();
+    const licenses = dbLicenses;
     const licenseMap = new Map(licenses.map((l) => [l.licenseId, l.id]));
 
     // === CREATE SHOPIFY PRODUCT ===
@@ -270,7 +281,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     
     // Prepare license file bundles for the product creator
     const licenseFileBundles = licenseTiers.map(tier => {
-      const tierConfig = LICENSE_TIERS.find(t => t.id === tier)!;
+      const tierConfig = licenses.find(t => t.licenseId === tier)!;
       const tempFileIdsForTier = licenseFilesData[tier] || [];
       const filesForTier = tempFileIdsForTier
         .map((tempId: string) => {
@@ -289,20 +300,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       
       return {
         tierId: tier,
-        tierName: tierConfig.name,
+        tierName: tierConfig.licenseName,
         files: filesForTier,
       };
     });
 
     // Prepare license prices
-    const licensePrices = LICENSE_TIERS.map(lp => {
-      const customPriceStr = licensePricesData[lp.id];
-      const customPrice = customPriceStr ? parseFloat(customPriceStr) : lp.price;
+    const licensePrices = licenses.map(lp => {
+      const customPriceStr = licensePricesData[lp.licenseId];
+      const customPrice = customPriceStr ? parseFloat(customPriceStr) : 0;
       return {
-        licenseId: lp.id,
-        licenseGid: licenseMap.get(lp.id) || "",
-        price: isNaN(customPrice) ? lp.price : customPrice,
-        compareAtPrice: lp.compareAtPrice,
+        licenseId: lp.licenseId,
+        licenseGid: lp.id,
+        price: isNaN(customPrice) ? 0 : customPrice,
+        compareAtPrice: undefined,
       };
     });
 
@@ -316,7 +327,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       producerAlias: producerAlias || undefined,
       licenseFileBundles,
       licenses: licensePrices,
-      coverArtUrl,
+      coverArtUrl: shopifyCoverResourceUrl || coverArtUrl,
       previewUrl,
     });
 
@@ -401,15 +412,15 @@ export default function NewBeatPage() {
 
   // License file assignment state
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [licenseFiles, setLicenseFiles] = useState<LicenseFiles>({
-    basic: [],
-    premium: [],
-    unlimited: [],
+  const [licenseFiles, setLicenseFiles] = useState<LicenseFiles>(() => {
+    const obj: LicenseFiles = {};
+    if (licenses) licenses.filter(Boolean).forEach(l => obj[l!.licenseId] = []);
+    return obj;
   });
-  const [licensePrices, setLicensePrices] = useState<Record<string, string>>({
-    basic: "29.99",
-    premium: "49.99",
-    unlimited: "99.99",
+  const [licensePrices, setLicensePrices] = useState<Record<string, string>>(() => {
+    const obj: Record<string, string> = {};
+    if (licenses) licenses.filter(Boolean).forEach(l => obj[l!.licenseId] = "");
+    return obj;
   });
   const [previewFile, setPreviewFile] = useState<UploadedFile | null>(null);
   const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(null);
@@ -466,6 +477,7 @@ export default function NewBeatPage() {
 
   // Check if form is valid
   const isFormValid = () => {
+    const hasAllLicenseFiles = licenses.filter(Boolean).every(l => licenseFiles[l!.licenseId] && licenseFiles[l!.licenseId].length > 0);
     return (
       title &&
       bpm &&
@@ -473,9 +485,7 @@ export default function NewBeatPage() {
       genreGids.length > 0 &&
       producerGids.length > 0 &&
       previewFile &&
-      licenseFiles.basic.length > 0 &&
-      licenseFiles.premium.length > 0 &&
-      licenseFiles.unlimited.length > 0
+      hasAllLicenseFiles
     );
   };
 
@@ -546,11 +556,12 @@ export default function NewBeatPage() {
   };
 
   // Map licenses to tier format for LicenseFileAssignment
-  const licenseTiers = [
-    { id: "basic", name: "Basic", price: "$29.99", description: "MP3 for personal use" },
-    { id: "premium", name: "Premium", price: "$49.99", description: "MP3 + WAV for commercial use" },
-    { id: "unlimited", name: "Unlimited", price: "$99.99", description: "Full package + stems" },
-  ];
+  const dynamicLicenseTiers = licenses.filter(Boolean).map(l => ({
+    id: l!.licenseId,
+    name: l!.licenseName,
+    price: licensePrices[l!.licenseId] ? `$${licensePrices[l!.licenseId]}` : "Not set",
+    description: l!.displayName
+  }));
 
   const genreOptions = genres.filter(Boolean).map((g) => ({
     label: g!.title,
@@ -654,9 +665,8 @@ export default function NewBeatPage() {
               </BlockStack>
             </Card>
 
-            {/* License File Assignment */}
             <LicenseFileAssignment
-              licenses={licenseTiers}
+              licenses={dynamicLicenseTiers}
               uploadedFiles={uploadedFiles}
               licenseFiles={licenseFiles}
               licensePrices={licensePrices}

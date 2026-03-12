@@ -22,7 +22,7 @@ const shopify = shopifyApp({
   apiVersion: LATEST_API_VERSION,
   scopes: (
     process.env.SHOPIFY_APP_SCOPES ||
-    "read_products,write_products,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions"
+    "read_products,write_products,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_orders,write_orders"
   ).split(","),
   isEmbeddedApp: true,
   authPathPrefix: "/auth",
@@ -34,6 +34,10 @@ const shopify = shopifyApp({
     APP_UNINSTALLED: {
       deliveryMethod: DeliveryMethod.Http,
       callbackUrl: "/webhooks",
+    },
+    ORDERS_CREATE: {
+      deliveryMethod: DeliveryMethod.Http,
+      callbackUrl: "/webhooks/orders-create",
     },
   },
   hooks: {
