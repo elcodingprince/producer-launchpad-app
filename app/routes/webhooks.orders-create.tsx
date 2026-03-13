@@ -4,7 +4,7 @@ import prisma from "~/db.server";
 import crypto from "crypto";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { payload, shop, topic, session, admin } = await authenticate.webhook(request);
+  const { payload, shop, topic } = await authenticate.webhook(request);
 
   if (topic !== "ORDERS_CREATE") {
     return new Response("Unhandled webhook", { status: 200 });
@@ -66,40 +66,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     console.log(`[Webhook] Created automated delivery portal for Order #${orderNumber}`);
-
-    // Reaching back out to Shopify to save this token on the order metafield
-    // It requires an Admin API connection. We use the offline session for the shop.
-    if (admin) {
-      const portalUrl = `https://${process.env.APP_URL || process.env.HOST}/downloads/${token}`;
-      
-      const metafieldResponse = await admin.graphql(
-        `#graphql
-        mutation createOrderMetafield($input: MetafieldsSetInput!) {
-          metafieldsSet(metafields: [$input]) {
-            metafields { id value }
-            userErrors { field message }
-          }
-        }`,
-        {
-          variables: {
-            input: {
-              ownerId: `gid://shopify/Order/${orderId}`,
-              namespace: "producer_launchpad",
-              key: "download_url",
-              type: "url",
-              value: portalUrl,
-            }
-          }
-        }
-      );
-      
-      const metaResponseJson = await metafieldResponse.json();
-      if (metaResponseJson.data?.metafieldsSet?.userErrors?.length > 0) {
-        console.error("Failed to set order metafield:", metaResponseJson.data.metafieldsSet.userErrors);
-      } else {
-        console.log(`[Webhook] Successfully stamped download URL onto Shopify Order #${orderNumber}`);
-      }
-    }
 
     return new Response("Processing complete", { status: 200 });
 
