@@ -3,6 +3,11 @@ import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import crypto from "crypto";
 
+function normalizeShopifyResourceId(id: string) {
+  const match = id.match(/\/(\d+)$/);
+  return match ? match[1] : id;
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { payload, shop } = await authenticate.webhook(request);
 
@@ -34,8 +39,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (item.product_id && item.variant_id) {
         orderItems.push({
           shopifyLineId: item.id.toString(),
-          productId: item.product_id.toString(),
-          variantId: item.variant_id.toString(),
+          productId: normalizeShopifyResourceId(item.product_id.toString()),
+          variantId: normalizeShopifyResourceId(item.variant_id.toString()),
           beatTitle: item.title,
           licenseName: item.variant_title || "Standard License", // The variant title is the License Name from our setup
         });

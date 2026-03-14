@@ -11,6 +11,8 @@ It focuses on:
 - order webhook persistence
 - checkout thank-you block behavior
 - tokenized download portal flow
+- secure file delivery through the app
+- portal re-entry and delivery recovery strategy
 
 It does not focus on final PDF/legal template design. That work is tracked separately in [LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md](/Users/winter/repos/producer-launchpad-app/LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md).
 
@@ -106,7 +108,8 @@ The tokenized download portal resolves files by:
 
 - loading the order from Prisma by `downloadToken`
 - reading each `OrderItem.variantId`
-- loading matching `LicenseFileMapping` rows by `variantId`
+- loading matching `LicenseFileMapping` rows by normalized `variantId`
+- tolerating both numeric Shopify IDs and legacy GraphQL GID-style IDs during lookup
 
 Key file:
 
@@ -128,6 +131,42 @@ Key file:
 
 - [app/routes/api.checkout.delivery-status.tsx](/Users/winter/repos/producer-launchpad-app/app/routes/api.checkout.delivery-status.tsx)
 
+### 6. Public portal access and secure file delivery now work end to end
+
+Current behavior:
+
+- checkout block opens the tokenized portal successfully
+- portal preview audio loads through the app
+- purchased MP3 files download through the app
+- private managed R2 objects are no longer exposed directly to the browser
+
+Important implementation detail:
+
+- the app now proxies/token-authorizes file delivery instead of linking buyers to raw `r2.cloudflarestorage.com` object URLs
+- purchased file authorization remains variant-based
+- preview authorization remains product-level
+
+Key files:
+
+- [app/routes/api.files.$token.$fileId.tsx](/Users/payan/producer-launchpad-app/app/routes/api.files.$token.$fileId.tsx)
+- [app/services/r2.server.ts](/Users/payan/producer-launchpad-app/app/services/r2.server.ts)
+- [app/routes/downloads.$token.tsx](/Users/payan/producer-launchpad-app/app/routes/downloads.$token.tsx)
+
+### 7. New uploads are now publishing to the live store
+
+Current behavior:
+
+- upload status is wired through product creation
+- active products attempt Online Store publication automatically
+- newly uploaded products have been verified to appear live on the storefront
+
+Key files:
+
+- [app/routes/app.beats.new.tsx](/Users/payan/producer-launchpad-app/app/routes/app.beats.new.tsx)
+- [app/services/productCreator.ts](/Users/payan/producer-launchpad-app/app/services/productCreator.ts)
+- [app/services/shopify.ts](/Users/payan/producer-launchpad-app/app/services/shopify.ts)
+- [app/shopify.server.ts](/Users/payan/producer-launchpad-app/app/shopify.server.ts)
+
 ---
 
 ## What Has Been Verified
@@ -148,115 +187,144 @@ Known example:
 
 This confirmed the Phase 1 data model change worked.
 
+### Checkout + portal delivery flow
+
+End-to-end verification now shows:
+
+- checkout block reaches ready state
+- checkout button opens the tokenized portal
+- portal renders the purchased item
+- preview audio streams correctly
+- purchased MP3 downloads successfully
+- generated license PDF downloads successfully
+
+This confirms the core delivery loop is working for at least one real purchase.
+
 ---
 
 ## Current Open Bugs / Active Work
 
-### 1. Checkout button navigation
+### 1. Portal re-entry / recovery path
 
 Observed behavior:
 
-- checkout block reaches ready state
-- clicking the button previously did nothing or opened a Shopify CDN 404
+- the checkout block gives an instant post-purchase path into the portal
+- but if the buyer leaves, there is no reliable customer recovery path yet
 
-Current fix:
+Current product direction:
 
-- the checkout extension now uses a checkout-safe external link control:
-  - `Link href={downloadUrl} target="_blank"`
-- the backend now returns an absolute portal URL built from app origin, not a relative path
+- keep the checkout block for instant access
+- also add email delivery so buyers can return later
+- treat checkout block and email as complementary, not either/or
 
-Files:
+Needed work:
 
-- [extensions/download-portal-block/src/ThankYouBlock.tsx](/Users/winter/repos/producer-launchpad-app/extensions/download-portal-block/src/ThankYouBlock.tsx)
-- [app/routes/api.checkout.delivery-status.tsx](/Users/winter/repos/producer-launchpad-app/app/routes/api.checkout.delivery-status.tsx)
+- decide when the email is sent:
+  - immediately after webhook persistence
+  - after portal readiness is confirmed
+- define the email contents:
+  - secure portal link
+  - fallback support messaging
+  - optional order summary
+- ensure emailed links reuse the same secure token/recovery flow
 
-Status:
-
-- needs re-test after extension bundle refresh / new checkout
-
-### 2. New uploads are not showing on the storefront by default
+### 2. Public portal should not render the merchant app shell
 
 Observed behavior:
 
-- older `test` product appears in storefront
-- newer uploaded products often do not
+- `/downloads/:token` currently shows the merchant app navigation/header
+- this is leaking the embedded app shell into a customer-facing route
 
-Two likely causes were identified:
+Needed work:
 
-#### 2a. Publishing
+- render `NavMenu` only for merchant `/app` routes
+- keep public delivery routes outside the merchant shell
+- ensure the portal is a clean standalone customer page
 
-Newly uploaded products were observed as:
+### 3. File download logging is incomplete
 
-- `Not included in any sales channels`
+Observed behavior:
 
-If a product is not published to Online Store, it will not appear in the storefront.
+- PDF downloads increment `OrderItem.downloadCount`
+- secure file downloads currently do not provide equivalent audit logging
 
-#### 2b. Inventory behavior
+Needed work:
 
-Newly uploaded variants were observed as:
+- increment counters for file downloads in [app/routes/api.files.$token.$fileId.tsx](/Users/payan/producer-launchpad-app/app/routes/api.files.$token.$fileId.tsx)
+- decide whether counts should be:
+  - per order item only
+  - per file + per order item
+- store enough evidence to answer:
+  - did the customer gain access
+  - which file was downloaded
+  - how many times
 
-- `0 available`
-- or `0 in stock for 3 variants`
+### 4. Portal failure states are still too thin
 
-whereas the older working product showed:
+Observed behavior:
 
-- `Inventory is not stocked at Shop location`
+- several delivery failures were only diagnosable by inspecting Prisma or raw browser errors
 
-This suggests digital variants need explicit non-blocking inventory behavior.
+Needed work:
 
-Current partial fix:
+- add clearer customer-facing messages for:
+  - missing file mappings
+  - delayed webhook/order readiness
+  - storage delivery failures
+- add clearer merchant/admin diagnostics for:
+  - variant mismatch
+  - missing storage URL
+  - authorization failure to storage
+  - missing order recovery path
 
-- the Shopify variant bulk update path now also carries `inventoryPolicy: "CONTINUE"`
+### 5. Token lifecycle and support recovery remain open
 
-Key file:
+Needed work:
 
-- [app/services/shopify.ts](/Users/winter/repos/producer-launchpad-app/app/services/shopify.ts)
-
-Status:
-
-- still needs explicit storefront publication fix
-- may still need explicit inventory tracking disable if `CONTINUE` is not sufficient
+- define whether `downloadToken`s expire
+- add token regeneration/reissue flow for support
+- decide whether portal access should remain indefinite or time-bounded
+- define how customer support should resend access when requested
 
 ---
 
 ## Immediate Next Phase
 
-## Phase 2: Make Uploaded Products Reliably Buyable and Visible
+## Phase 4: Make Delivery Recoverable and Auditable
 
 ### Goal
 
-Ensure every newly uploaded product:
-
-- is published to the Online Store
-- is purchasable as a digital product
-- is not blocked by inventory defaults
+Keep the instant checkout portal, but make delivery resilient after the customer leaves checkout.
 
 ### Tasks
 
-1. Inspect Shopify product creation path and publish products to the correct sales channels after creation.
-2. Confirm whether publication should happen through:
-   - publication API
-   - product status + channel availability API
-   - theme/storefront defaults already available in this app config
-3. Ensure digital license variants are not blocked by inventory:
-   - continue selling when out of stock
-   - possibly disable tracking if Shopify requires that for digital behavior
-4. Upload a fresh product and verify:
-   - appears in admin as available to Online Store
-   - appears in storefront catalog
-   - can be checked out
+1. Add post-purchase email delivery using the same secure portal token.
+2. Keep checkout block delivery as the instant-access path.
+3. Add token recovery/regeneration design so customers can regain access later.
+4. Add file download logging/auditing for secure file routes.
+5. Remove merchant app shell/nav from public tokenized portal pages.
+6. Improve customer-visible and merchant-visible error states.
 
 ---
 
 ## Next Delivery Verification Phase
 
-## Phase 3: End-to-End Order Delivery Validation
+## Phase 5: Delivery Reliability and Operations
 
 ### Goal
 
-Verify the complete flow from purchase to portal resolution.
+Make the delivery system supportable and explainable when something breaks.
 
 ### Tasks
+
+1. Add structured logs around:
+   - order webhook processing
+   - checkout delivery status polling
+   - portal access
+   - secure file download attempts
+2. Surface actionable diagnostics for missing mappings or storage failures.
+3. Add download auditing that proves whether a customer accessed downloadable files.
+4. Revisit rate limiting / abuse protection later once recovery and logging are stable.
 
 1. Place a test order for a known variant.
 2. Confirm webhook creates:

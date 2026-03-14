@@ -161,31 +161,35 @@ Target state is:
 
 ### Phase 1: Variant-Based Entitlement Resolution
 
-- [ ] Refactor Prisma delivery mappings so the primary key is `variantId`, not `licenseName` or `license_id`.
-- [ ] Keep `productId` on order items for beat identity and debugging.
-- [ ] Keep `licenseName` only for display and legacy compatibility.
-- [ ] Add legacy fallback behavior only where necessary during migration.
+- [x] Refactor Prisma delivery mappings so the primary key is `variantId`, not `licenseName` or `license_id`.
+- [x] Keep `productId` on order items for beat identity and debugging.
+- [x] Keep `licenseName` only for display and legacy compatibility.
+- [x] Add legacy fallback behavior only where necessary during migration.
 
 ### Phase 2: Order Persistence and Portal Readiness
 
-- [ ] Ensure `orders/create` persists `Order` and `OrderItem` rows idempotently.
-- [ ] Ensure each order item includes the purchased `variantId`.
-- [ ] Generate and store a secure download token on order creation.
-- [ ] Return portal readiness from Prisma-backed state only.
+- [x] Ensure `orders/create` persists `Order` and `OrderItem` rows idempotently.
+- [x] Ensure each order item includes the purchased `variantId`.
+- [x] Generate and store a secure download token on order creation.
+- [x] Return portal readiness from Prisma-backed state only.
 
 ### Phase 3: Checkout Thank You Delivery Flow
 
-- [ ] Keep the current extension architecture: order confirmation context -> authenticated backend lookup -> polling until ready.
-- [ ] Require exact order identifiers on backend lookup rather than loose matching.
-- [ ] Keep Shopify order metafield mirroring optional for admin/debug/email use only.
-- [ ] Remove any delivery-critical dependency on order metafield propagation.
+- [x] Keep the current extension architecture: order confirmation context -> authenticated backend lookup -> polling until ready.
+- [x] Require exact order identifiers on backend lookup rather than loose matching.
+- [x] Keep Shopify order metafield mirroring optional for admin/debug/email use only.
+- [x] Remove any delivery-critical dependency on order metafield propagation.
 
 ### Phase 4: Portal Resolution and File Delivery
 
-- [ ] Resolve purchased files by `variantId`.
-- [ ] Keep preview files at the beat/product level where appropriate.
+- [x] Resolve purchased files by `variantId`.
+- [x] Keep preview files at the beat/product level where appropriate.
 - [ ] Improve portal handling for missing mappings or partial mappings.
-- [ ] Decide later whether file URLs should remain direct or move to signed/proxied delivery.
+- [x] Decide later whether file URLs should remain direct or move to signed/proxied delivery.
+
+Current note:
+
+- delivery now uses token-protected app proxy routes for private managed R2 files instead of exposing raw storage URLs to the browser
 
 ### Phase 5: Legacy Migration and Backward Compatibility
 
@@ -199,7 +203,7 @@ Target state is:
 
 ### Phase 6: Checkout Delivery Productionization
 
-- [ ] Replace the merchant-facing `app_url` checkout block setting with a stable production app domain.
+- [ ] Replace the merchant-facing `app_url` checkout block setting with a stable production app domain or non-merchant-managed configuration.
 - [ ] Remove dev tunnel assumptions from the checkout extension flow.
 - [ ] Verify checkout delivery on a stable hosted domain.
 - [ ] Confirm polling and webhook timing under real production conditions.
@@ -218,6 +222,9 @@ Target state is:
 - [ ] Add monitoring/alerting for failed portal creation and unresolved file mappings.
 - [ ] Add token expiration, regeneration, and recovery workflows.
 - [ ] Add abuse protection/rate limiting for public token-based endpoints.
+- [ ] Add file download logging that proves which downloadable files were accessed and when.
+- [ ] Add a customer recovery path so buyers can regain portal access after leaving checkout.
+- [ ] Add email delivery as a second delivery channel using the same secure portal link/token flow.
 
 ### Phase 9: UX and Failure Handling
 
@@ -225,6 +232,7 @@ Target state is:
 - [ ] Improve portal messaging for partial success or unresolved mappings.
 - [ ] Add merchant/admin recovery paths for orders that exist but have broken file mappings.
 - [ ] Add customer-facing support fallback copy for delayed or failed delivery.
+- [ ] Remove merchant app shell/navigation from the public tokenized portal.
 
 ### Phase 10: Multi-Store Onboarding
 
@@ -254,6 +262,8 @@ Target state is:
 - [ ] Confirm checkout block resolves backend delivery state correctly.
 - [ ] Confirm portal loads correctly with token.
 - [ ] Confirm files shown in the portal match the purchased `variantId`.
+- [ ] Confirm secure file proxy delivery works for private managed R2 objects.
+- [ ] Confirm customer can regain access after leaving checkout via the intended recovery path.
 - [ ] Confirm legacy fallback behavior still works for any pre-existing mapped products/orders.
 
 ---

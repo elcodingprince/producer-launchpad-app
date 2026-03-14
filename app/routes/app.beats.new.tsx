@@ -42,6 +42,11 @@ const keyOptions = [
   "A# major", "A# minor", "B major", "B minor",
 ];
 
+function normalizeShopifyResourceId(id: string) {
+  const match = id.match(/\/(\d+)$/);
+  return match ? match[1] : id;
+}
+
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -119,6 +124,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const genreGids = JSON.parse((formData.get("genreGids") as string) || "[]");
     const producerGids = JSON.parse((formData.get("producerGids") as string) || "[]");
     const producerAlias = (formData.get("producerAlias") as string) || "";
+    const statusValue = (formData.get("status") as string) || "active";
+    const productStatus = statusValue === "draft" ? "DRAFT" : "ACTIVE";
 
     // Extract license file assignments (maps tier -> array of temp file IDs)
     const licenseFilesData = JSON.parse((formData.get("licenseFiles") as string) || "{}");
@@ -321,6 +328,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       title,
       bpm,
       key,
+      status: productStatus,
       genreGids,
       producerGids,
       producerNames,
@@ -374,6 +382,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!variantId) {
         throw new Error(`Missing Shopify variant mapping for license tier "${tier}"`);
       }
+      const normalizedVariantId = normalizeShopifyResourceId(variantId);
 
       const tempFileIdsForTier = licenseFilesData[tier] || [];
       
@@ -384,7 +393,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (dbFileId) {
           await prisma.licenseFileMapping.create({
             data: {
-              variantId,
+              variantId: normalizedVariantId,
               fileId: dbFileId,
               sortOrder,
             },
@@ -419,6 +428,7 @@ export default function NewBeatPage() {
   const [genreGids, setGenreGids] = useState<string[]>(genres[0]?.id ? [genres[0].id] : []);
   const [producerGids, setProducerGids] = useState<string[]>(producers[0]?.id ? [producers[0].id] : []);
   const [producerAlias, setProducerAlias] = useState("");
+  const [status, setStatus] = useState("active");
 
   // License file assignment state
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -508,6 +518,7 @@ export default function NewBeatPage() {
     formData.append("genreGids", JSON.stringify(genreGids));
     formData.append("producerGids", JSON.stringify(producerGids));
     formData.append("producerAlias", producerAlias);
+    formData.append("status", status);
     formData.append("licenseFiles", JSON.stringify(licenseFiles));
     formData.append("licensePrices", JSON.stringify(licensePrices));
     
@@ -717,8 +728,8 @@ export default function NewBeatPage() {
                     { label: "Active", value: "active" },
                     { label: "Draft", value: "draft" }
                   ]}
-                  value="draft"
-                  onChange={() => {}}
+                  value={status}
+                  onChange={setStatus}
                 />
                 
                 {!isFormValid() && (

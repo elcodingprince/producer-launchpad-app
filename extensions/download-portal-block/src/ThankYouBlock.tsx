@@ -118,7 +118,7 @@ function ThankYouBlock() {
             Download your high-quality audio files and customized license agreement
             instantly.
           </Text>
-          <Link href={downloadUrl} target="_blank">
+          <Link to={downloadUrl} external>
             Access Download Portal
           </Link>
         </BlockStack>

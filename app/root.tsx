@@ -35,11 +35,11 @@ export default function App() {
       <body>
         <AppProvider apiKey={apiKey} i18n={enTranslations} isEmbeddedApp>
           <NavMenu>
-            <a href="/app">Dashboard</a>
             <a href="/app/setup">Setup</a>
             <a href="/app/storage">Storage & Delivery</a>
             <a href="/app/beats">My Beats</a>
             <a href="/app/beats/new">Upload Beat</a>
+            <a href="/app/deliveries">Deliveries</a>
             <a href="/app/licenses">Licenses</a>
           </NavMenu>
           <Outlet />

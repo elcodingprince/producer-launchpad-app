@@ -3,6 +3,11 @@ import { useLoaderData } from "@remix-run/react";
 import type { BeatFile, LicenseFileMapping, OrderItem } from "@prisma/client";
 import prisma from "~/db.server";
 
+function normalizeShopifyResourceId(id: string) {
+  const match = id.match(/\/(\d+)$/);
+  return match ? match[1] : id;
+}
+
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   const { token } = params;
 
@@ -28,10 +33,18 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   
   const enrichedItems = await Promise.all(
     order.items.map(async (item: OrderItem) => {
+      const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
+
       // Resolve files directly from the purchased Shopify variant ID.
       const fileMappings = await prisma.licenseFileMapping.findMany({
         where: {
-          variantId: item.variantId,
+          variantId: {
+            in: [
+              item.variantId,
+              normalizedVariantId,
+              `gid://shopify/ProductVariant/${normalizedVariantId}`,
+            ],
+          },
         },
         include: {
           beatFile: true,
@@ -51,6 +64,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
 
       return {
         ...item,
+        previewFileId: previewFile?.id || null,
         previewUrl: previewFile?.storageUrl || null,
         files: fileMappings.map((mapping: LicenseFileMapping & { beatFile: BeatFile }): BeatFile => mapping.beatFile)
       };
@@ -101,8 +115,12 @@ export default function DownloadPortalPage() {
                   <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937' }}>{item.beatTitle}</h3>
                   <p style={{ fontSize: '14px', color: '#6b7280', marginTop: '4px' }}>{item.licenseName}</p>
                 </div>
-                {item.previewUrl && (
-                  <audio controls src={item.previewUrl} style={{ height: '36px' }} />
+                {item.previewFileId && (
+                  <audio
+                    controls
+                    src={`/api/files/${order.downloadToken}/${item.previewFileId}`}
+                    style={{ height: '36px' }}
+                  />
                 )}
               </div>
 
@@ -131,10 +149,7 @@ export default function DownloadPortalPage() {
                 {item.files.map((file: BeatFile) => (
                   <a
                     key={file.id}
-                    href={file.storageUrl}
-                    download={file.filename}
-                    target="_blank"
-                    rel="noreferrer"
+                    href={`/api/files/${order.downloadToken}/${file.id}`}
                     style={{
                       backgroundColor: '#e5e7eb',
                       color: '#374151',

@@ -526,6 +526,7 @@ export class ShopifyClient {
   async createProduct(input: {
     title: string;
     descriptionHtml?: string;
+    status?: "ACTIVE" | "DRAFT";
     vendor?: string;
     productType?: string;
     tags?: string[];
@@ -816,12 +817,15 @@ export class ShopifyClient {
           })
           .filter((edge): edge is { node: { id: string; title: string; price: string; selectedOptions: Array<{name: string, value: string}> } } => !!edge);
 
-        return {
+        const updatedProduct = {
           ...product,
           variants: {
             edges: orderedEdges,
           },
         };
+
+        await this.publishProductIfNeeded(updatedProduct.id, input.status);
+        return updatedProduct;
       }
     }
 
@@ -836,7 +840,7 @@ export class ShopifyClient {
       })
       .filter((edge): edge is { node: { id: string; title: string; price: string; selectedOptions: Array<{ name: string; value: string }> } } => !!edge);
 
-    return {
+    const orderedProduct = {
       ...product,
       variants: {
         edges: orderedEdges.map((edge) => ({
@@ -848,6 +852,91 @@ export class ShopifyClient {
         })),
       },
     };
+
+    await this.publishProductIfNeeded(orderedProduct.id, input.status);
+    return orderedProduct;
+  }
+
+  private async publishProductIfNeeded(productId: string, status?: "ACTIVE" | "DRAFT") {
+    if (status !== "ACTIVE") return;
+
+    try {
+      const onlineStorePublicationId = await this.getOnlineStorePublicationId();
+
+      if (!onlineStorePublicationId) {
+        console.warn(
+          `[Shopify Client] Product ${productId} created as ACTIVE, but no Online Store publication was found.`
+        );
+        return;
+      }
+
+      await this.publishProduct(productId, onlineStorePublicationId);
+    } catch (error) {
+      console.warn(
+        `[Shopify Client] Product ${productId} created as ACTIVE, but Online Store publication failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  async getOnlineStorePublicationId(): Promise<string | null> {
+    const query = `
+      query GetPublications {
+        publications(first: 20) {
+          nodes {
+            id
+            name
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      publications: {
+        nodes: Array<{
+          id: string;
+          name: string;
+        }>;
+      };
+    }>(query);
+
+    const publications = response.data?.publications.nodes || [];
+    const onlineStore = publications.find(
+      (publication) => publication.name.trim().toLowerCase() === "online store"
+    );
+
+    return onlineStore?.id || null;
+  }
+
+  async publishProduct(productId: string, publicationId: string) {
+    const mutation = `
+      mutation PublishablePublish($id: ID!, $input: [PublicationInput!]!) {
+        publishablePublish(id: $id, input: $input) {
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      publishablePublish: {
+        userErrors: Array<{ field: string[]; message: string }>;
+      };
+    }>(mutation, {
+      id: productId,
+      input: [{ publicationId }],
+    });
+
+    if (response.data?.publishablePublish.userErrors.length) {
+      throw new Error(
+        `Failed to publish product: ${response.data.publishablePublish.userErrors
+          .map((error) => error.message)
+          .join(", ")}`
+      );
+    }
   }
 
   async setMetafields(

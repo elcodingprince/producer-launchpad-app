@@ -25,6 +25,14 @@ export interface R2UploadInput {
   body: ArrayBuffer;
 }
 
+export interface R2DownloadInput {
+  accountId: string;
+  bucketName: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  key: string;
+}
+
 function sha256Hex(payload: string): string {
   return crypto.createHash("sha256").update(payload, "utf8").digest("hex");
 }
@@ -41,7 +49,7 @@ function buildSigningKey(secretAccessKey: string, date: string) {
 }
 
 function createSignedHeaders(input: {
-  method: "PUT" | "DELETE";
+  method: "GET" | "PUT" | "DELETE";
   host: string;
   canonicalUri: string;
   accessKeyId: string;
@@ -116,7 +124,7 @@ function classifyR2Error(error: unknown): { message: string; type: StorageErrorT
 }
 
 async function signedR2Request(params: {
-  method: "PUT" | "DELETE";
+  method: "GET" | "PUT" | "DELETE";
   accountId: string;
   bucketName: string;
   accessKeyId: string;
@@ -190,6 +198,42 @@ export async function uploadR2Object(input: R2UploadInput) {
       const responseText = await response.text().catch(() => "");
       throw new Error(`R2 PUT failed: ${response.status} ${response.statusText} ${responseText}`.trim());
     }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function downloadR2Object(input: R2DownloadInput) {
+  const host = `${input.accountId}.r2.cloudflarestorage.com`;
+  const canonicalUri = `/${input.bucketName}/${input.key}`;
+  const url = `https://${host}${canonicalUri}`;
+  const emptyPayloadHash = sha256Hex("");
+
+  const headers = createSignedHeaders({
+    method: "GET",
+    host,
+    canonicalUri,
+    accessKeyId: input.accessKeyId,
+    secretAccessKey: input.secretAccessKey,
+    payloadHash: emptyPayloadHash,
+  });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => "");
+      throw new Error(`R2 GET failed: ${response.status} ${response.statusText} ${responseText}`.trim());
+    }
+
+    return response;
   } finally {
     clearTimeout(timeout);
   }

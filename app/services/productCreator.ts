@@ -23,6 +23,7 @@ export interface BeatProductData {
   descriptionHtml?: string;
   bpm: number;
   key: string;
+  status: "ACTIVE" | "DRAFT";
   genreGids: string[];
   producerGids: string[];
   producerNames: string[];
@@ -146,6 +147,7 @@ export class ProductCreatorService {
     const product = await this.client.createProduct({
       title: data.title,
       descriptionHtml: data.descriptionHtml || `<p>${data.title} - ${data.bpm} BPM ${data.key}</p>`,
+      status: data.status,
       vendor: data.producerNames[0] || "Unknown Producer",
       productType: "Beat",
       tags: data.tags || ["beat", "instrumental"],
