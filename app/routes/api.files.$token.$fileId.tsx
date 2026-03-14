@@ -39,7 +39,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   const { token, fileId } = params;
 
   if (!token || !fileId) {
-    return new Response("Invalid request", { status: 400 });
+    return new Response("This download request is not valid.", { status: 400 });
   }
 
   const order = await prisma.order.findUnique({
@@ -48,7 +48,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   });
 
   if (!order) {
-    return new Response("Unauthorized", { status: 403 });
+    return new Response("This download link is no longer valid.", { status: 403 });
   }
 
   const file = await prisma.beatFile.findUnique({
@@ -59,7 +59,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   });
 
   if (!file) {
-    return new Response("File not found", { status: 404 });
+    return new Response("This file is no longer available from this link.", { status: 404 });
   }
 
   const authorizedVariantIds = new Set(
@@ -84,7 +84,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   });
 
   if (!hasAccess) {
-    return new Response("Unauthorized", { status: 403 });
+    return new Response("This file is not available from this download link.", { status: 403 });
   }
 
   const storageConfig = await getStorageConfig(order.shop);
@@ -94,7 +94,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       : getManagedR2Credentials();
 
   if (!creds) {
-    return new Response("Storage is not configured", { status: 500 });
+    return new Response("We couldn't prepare this download right now. Please contact support.", { status: 500 });
   }
 
   const key = getObjectKeyFromUrl(file.storageUrl, creds.bucketName);
@@ -132,6 +132,9 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     });
   } catch (error) {
     console.error("Failed to download file from R2:", error);
-    return new Response("Failed to download file", { status: 500 });
+    return new Response(
+      "We couldn't retrieve this file right now. Please try again in a moment or contact support.",
+      { status: 500 },
+    );
   }
 };

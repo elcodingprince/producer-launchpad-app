@@ -1,5 +1,5 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { isRouteErrorResponse, useLoaderData, useRouteError } from "@remix-run/react";
 import type { BeatFile, LicenseFileMapping, OrderItem } from "@prisma/client";
 import prisma from "~/db.server";
 
@@ -25,6 +25,14 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
 
   if (!order) {
     throw new Response("Order not found or link has expired", { status: 404 });
+  }
+
+  if (order.items.length === 0) {
+    return json({
+      order,
+      items: [],
+      portalStatus: "no_downloadable_items" as const,
+    });
   }
 
   // To build the portal we will also need the actual beat files from Prisma
@@ -66,16 +74,46 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
         ...item,
         previewFileId: previewFile?.id || null,
         previewUrl: previewFile?.storageUrl || null,
-        files: fileMappings.map((mapping: LicenseFileMapping & { beatFile: BeatFile }): BeatFile => mapping.beatFile)
+        files: fileMappings.map((mapping: LicenseFileMapping & { beatFile: BeatFile }): BeatFile => mapping.beatFile),
+        deliveryStatus: fileMappings.length > 0 ? "ready" : "missing_files",
       };
     })
   );
 
-  return json({ order, items: enrichedItems });
+  const readyItemCount = enrichedItems.filter((item) => item.deliveryStatus === "ready").length;
+
+  let portalStatus: "ready" | "partial" | "missing_files" | "no_downloadable_items" = "ready";
+
+  if (readyItemCount === 0) {
+    portalStatus = "missing_files";
+  } else if (readyItemCount < enrichedItems.length) {
+    portalStatus = "partial";
+  }
+
+  return json({ order, items: enrichedItems, portalStatus });
 };
 
 export default function DownloadPortalPage() {
-  const { order, items } = useLoaderData<typeof loader>();
+  const { order, items, portalStatus } = useLoaderData<typeof loader>();
+
+  const portalNotice =
+    portalStatus === "partial"
+      ? {
+          title: "Some files are ready",
+          body: "You can download the files that are available now. If anything is missing, please contact support and share your order number.",
+          background: "#fff7ed",
+          border: "#fdba74",
+          text: "#9a3412",
+        }
+      : portalStatus === "missing_files" || portalStatus === "no_downloadable_items"
+        ? {
+            title: "We found your order, but your files are not available yet",
+            body: "Your order was received, but we could not prepare the downloadable files from this link. Please contact support and share your order number.",
+            background: "#fef2f2",
+            border: "#fca5a5",
+            text: "#991b1b",
+          }
+        : null;
 
   return (
     <div style={{
@@ -94,6 +132,25 @@ export default function DownloadPortalPage() {
             Order #{order.orderNumber} • {new Date(order.createdAt).toLocaleDateString()}
           </p>
         </div>
+
+        {portalNotice && (
+          <div
+            style={{
+              marginBottom: '24px',
+              padding: '16px',
+              borderRadius: '12px',
+              border: `1px solid ${portalNotice.border}`,
+              backgroundColor: portalNotice.background,
+            }}
+          >
+            <h2 style={{ margin: 0, marginBottom: '8px', fontSize: '16px', fontWeight: 600, color: portalNotice.text }}>
+              {portalNotice.title}
+            </h2>
+            <p style={{ margin: 0, color: portalNotice.text, lineHeight: 1.5 }}>
+              {portalNotice.body}
+            </p>
+          </div>
+        )}
 
         {/* Beats Block */}
         <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}>
@@ -164,6 +221,12 @@ export default function DownloadPortalPage() {
                   </a>
                 ))}
 
+                {item.deliveryStatus === "missing_files" && (
+                  <p style={{ margin: 0, color: '#991b1b', fontSize: '14px' }}>
+                    Download files are not available for this license yet. Please contact support.
+                  </p>
+                )}
+
               </div>
             </div>
           ))}
@@ -181,6 +244,52 @@ export default function DownloadPortalPage() {
           <p>This is a secure page. Keep this link completely private.</p>
         </div>
 
+      </div>
+    </div>
+  );
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+
+  let title = "We couldn't open this download page";
+  let body =
+    "Something unexpected happened while preparing your downloads. Please try again in a moment or contact support and share your order details.";
+
+  if (isRouteErrorResponse(error) && error.status === 404) {
+    title = "This download link is no longer valid";
+    body =
+      "This link may have expired or been replaced. Please contact support for a new access link.";
+  }
+
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#f3f4f6',
+        fontFamily: 'Inter, system-ui, sans-serif',
+        padding: '24px',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: '640px',
+          width: '100%',
+          backgroundColor: 'white',
+          borderRadius: '12px',
+          padding: '32px',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+        }}
+      >
+        <h1 style={{ margin: 0, marginBottom: '12px', fontSize: '28px', color: '#111827' }}>
+          {title}
+        </h1>
+        <p style={{ margin: 0, color: '#4b5563', lineHeight: 1.6 }}>
+          {body}
+        </p>
       </div>
     </div>
   );
