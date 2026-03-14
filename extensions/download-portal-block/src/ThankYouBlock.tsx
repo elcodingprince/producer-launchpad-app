@@ -2,6 +2,7 @@ import {
   Banner,
   BlockStack,
   Button,
+  Link,
   Spinner,
   Text,
   reactExtension,
@@ -32,7 +33,7 @@ function ThankYouBlock() {
   const appUrl = settings.app_url?.trim();
 
   useEffect(() => {
-    if (editor || !appUrl || (!orderId && !orderNumber)) return;
+    if (editor || !appUrl || !orderId || !orderNumber) return;
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -40,18 +41,12 @@ function ThankYouBlock() {
     const maxAttempts = 12;
 
     async function pollDeliveryStatus() {
-      if (!appUrl || (!orderId && !orderNumber)) return;
+      if (!appUrl || !orderId || !orderNumber) return;
       try {
         const token = await sessionToken.get();
         const requestUrl = new URL('/api/checkout/delivery-status', appUrl);
-
-        if (orderId) {
-          requestUrl.searchParams.set('orderId', orderId);
-        }
-
-        if (orderNumber) {
-          requestUrl.searchParams.set('orderNumber', orderNumber);
-        }
+        requestUrl.searchParams.set('orderId', orderId);
+        requestUrl.searchParams.set('orderNumber', orderNumber);
 
         const response = await fetch(
           requestUrl.toString(),
@@ -123,9 +118,9 @@ function ThankYouBlock() {
             Download your high-quality audio files and customized license agreement
             instantly.
           </Text>
-          <Button to={downloadUrl} kind="primary">
+          <Link href={downloadUrl} target="_blank">
             Access Download Portal
-          </Button>
+          </Link>
         </BlockStack>
       </Banner>
     );

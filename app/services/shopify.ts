@@ -675,13 +675,14 @@ export class ShopifyClient {
             id: variantId,
             price: variant.price,
             compareAtPrice: variant.compareAtPrice,
+            inventoryPolicy: variant.inventoryPolicy || "CONTINUE",
             metafields: variant.metafields,
           });
         } else {
           creates.push({
             price: variant.price,
             compareAtPrice: variant.compareAtPrice,
-            inventoryPolicy: "CONTINUE",
+            inventoryPolicy: variant.inventoryPolicy || "CONTINUE",
             optionValues: [
               { optionName: "License", name: variant.title },
             ],

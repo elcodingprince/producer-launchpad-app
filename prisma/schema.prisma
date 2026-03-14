@@ -63,8 +63,7 @@ model BeatFile {
 
 model LicenseFileMapping {
   id           String   @id @default(cuid())
-  beatId       String   // Shopify product ID
-  licenseTier  String   // basic, premium, unlimited
+  variantId    String   // Shopify product variant ID
   fileId       String
   sortOrder    Int      @default(0)
   createdAt    DateTime @default(now())
@@ -73,7 +72,7 @@ model LicenseFileMapping {
   // Relations
   beatFile     BeatFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
 
-  @@index([beatId, licenseTier])
+  @@index([variantId])
   @@index([fileId])
 }
 

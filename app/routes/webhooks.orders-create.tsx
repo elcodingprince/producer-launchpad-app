@@ -4,11 +4,7 @@ import prisma from "~/db.server";
 import crypto from "crypto";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { payload, shop, topic } = await authenticate.webhook(request);
-
-  if (topic !== "ORDERS_CREATE") {
-    return new Response("Unhandled webhook", { status: 200 });
-  }
+  const { payload, shop } = await authenticate.webhook(request);
 
   const orderId = payload.id.toString();
   const orderNumber = payload.order_number?.toString() || orderId;
@@ -51,7 +47,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Save order in our DB
-    const newOrder = await prisma.order.create({
+    await prisma.order.create({
       data: {
         shop,
         shopifyOrderId: orderId,

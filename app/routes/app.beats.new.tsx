@@ -362,8 +362,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Create a map from tempId to database BeatFile id
     const tempIdToDbId = new Map(beatFileRecords.map(r => [r.tempId, r.id]));
     
-    // Create LicenseFileMapping records for each tier
+    const licenseIdToVariantId = new Map(
+      result.variants
+        .filter((variant) => variant.id && variant.licenseId)
+        .map((variant) => [variant.licenseId, variant.id])
+    );
+
+    // Create LicenseFileMapping records for each created Shopify variant
     for (const tier of licenseTiers) {
+      const variantId = licenseIdToVariantId.get(tier);
+      if (!variantId) {
+        throw new Error(`Missing Shopify variant mapping for license tier "${tier}"`);
+      }
+
       const tempFileIdsForTier = licenseFilesData[tier] || [];
       
       for (let sortOrder = 0; sortOrder < tempFileIdsForTier.length; sortOrder++) {
@@ -373,8 +384,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (dbFileId) {
           await prisma.licenseFileMapping.create({
             data: {
-              beatId: productId,
-              licenseTier: tier,
+              variantId,
               fileId: dbFileId,
               sortOrder,
             },

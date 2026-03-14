@@ -20,6 +20,19 @@ function normalizeOrderId(orderId: string | null) {
   return match ? match[1] : orderId;
 }
 
+function getAppOrigin(request: Request) {
+  const rawHost =
+    process.env.SHOPIFY_APP_URL || process.env.APP_URL || process.env.HOST;
+
+  if (rawHost) {
+    return rawHost.startsWith("http://") || rawHost.startsWith("https://")
+      ? rawHost
+      : `https://${rawHost}`;
+  }
+
+  return new URL(request.url).origin;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Handle CORS preflight (OPTIONS) — no auth needed for preflight
   if (request.method === "OPTIONS") {
@@ -60,13 +73,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
   const body = await request.json();
   const normalizedOrderId = normalizeOrderId(body?.orderId ?? null);
-  const orderNumber =
-    typeof body?.orderNumber === "string" ? body.orderNumber : null;
 
-  if (!normalizedOrderId && !orderNumber) {
+  if (!normalizedOrderId) {
     return cors(
       json(
-        { status: "failed", message: "Missing orderId or orderNumber" },
+        { status: "failed", message: "orderId is required" },
         { status: 400 }
       )
     );
@@ -77,10 +88,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const order = await prisma.order.findFirst({
     where: {
       shop,
-      OR: [
-        ...(orderNumber ? [{ orderNumber }] : []),
-        ...(normalizedOrderId ? [{ shopifyOrderId: normalizedOrderId }] : []),
-      ],
+      shopifyOrderId: normalizedOrderId,
     },
     select: {
       downloadToken: true,
@@ -98,7 +106,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return cors(
     json({
       status: "ready",
-      downloadUrl: `/downloads/${order.downloadToken}`,
+      downloadUrl: `${getAppOrigin(request)}/downloads/${order.downloadToken}`,
     })
   );
 };

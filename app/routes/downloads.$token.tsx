@@ -1,5 +1,6 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
+import type { BeatFile, LicenseFileMapping, OrderItem } from "@prisma/client";
 import prisma from "~/db.server";
 
 export const loader = async ({ params }: LoaderFunctionArgs) => {
@@ -26,14 +27,11 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   // Then we can find exactly which files map to the purchased license tier.
   
   const enrichedItems = await Promise.all(
-    order.items.map(async (item) => {
-      // Find the beat files in the database associated with this product
-      // that mapped specifically to the license they just purchased.
-      
+    order.items.map(async (item: OrderItem) => {
+      // Resolve files directly from the purchased Shopify variant ID.
       const fileMappings = await prisma.licenseFileMapping.findMany({
         where: {
-          beatId: `gid://shopify/Product/${item.productId}`, // Make sure we match the GID format used in upload
-          licenseTier: item.licenseName.toLowerCase().replace(/ license$/i, '').trim(), // Trying to map "Basic License" -> "basic" based on previous behavior
+          variantId: item.variantId,
         },
         include: {
           beatFile: true,
@@ -54,7 +52,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       return {
         ...item,
         previewUrl: previewFile?.storageUrl || null,
-        files: fileMappings.map(m => m.beatFile)
+        files: fileMappings.map((mapping: LicenseFileMapping & { beatFile: BeatFile }): BeatFile => mapping.beatFile)
       };
     })
   );
@@ -130,7 +128,7 @@ export default function DownloadPortalPage() {
                 </a>
 
                 {/* The Actual Beat Audio Files */}
-                {item.files.map((file) => (
+                {item.files.map((file: BeatFile) => (
                   <a
                     key={file.id}
                     href={file.storageUrl}
