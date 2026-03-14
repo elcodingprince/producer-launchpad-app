@@ -222,7 +222,7 @@ Current note:
 - [ ] Add monitoring/alerting for failed portal creation and unresolved file mappings.
 - [ ] Add token expiration, regeneration, and recovery workflows.
 - [ ] Add abuse protection/rate limiting for public token-based endpoints.
-- [ ] Add file download logging that proves which downloadable files were accessed and when.
+- [x] Add file download logging that proves which downloadable files were accessed and when.
 - [ ] Add a customer recovery path so buyers can regain portal access after leaving checkout.
 - [ ] Add email delivery as a second delivery channel using the same secure portal link/token flow.
 
@@ -232,7 +232,7 @@ Current note:
 - [ ] Improve portal messaging for partial success or unresolved mappings.
 - [ ] Add merchant/admin recovery paths for orders that exist but have broken file mappings.
 - [ ] Add customer-facing support fallback copy for delayed or failed delivery.
-- [ ] Remove merchant app shell/navigation from the public tokenized portal.
+- [x] Remove merchant app shell/navigation from the public tokenized portal.
 
 ### Phase 10: Multi-Store Onboarding
 
@@ -263,6 +263,9 @@ Current note:
 - [ ] Confirm portal loads correctly with token.
 - [ ] Confirm files shown in the portal match the purchased `variantId`.
 - [ ] Confirm secure file proxy delivery works for private managed R2 objects.
+- [ ] Confirm merchant can copy the current portal link from the Deliveries page.
+- [ ] Confirm merchant can regenerate a portal link and invalidate the old token.
+- [ ] Confirm purchased file downloads increment tracked download counts.
 - [ ] Confirm customer can regain access after leaving checkout via the intended recovery path.
 - [ ] Confirm legacy fallback behavior still works for any pre-existing mapped products/orders.
 

@@ -74,6 +74,14 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   const hasPreviewAccess =
     file.filePurpose === "preview" && authorizedProductIds.has(normalizedBeatId);
   const hasAccess = hasMappedAccess || hasPreviewAccess;
+  const matchedOrderItems = order.items.filter((item) => {
+    const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
+
+    return file.licenseMappings.some((mapping) => {
+      const normalizedMappingVariantId = normalizeShopifyResourceId(mapping.variantId);
+      return normalizedMappingVariantId === normalizedVariantId;
+    });
+  });
 
   if (!hasAccess) {
     return new Response("Unauthorized", { status: 403 });
@@ -99,6 +107,20 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       secretAccessKey: creds.secretAccessKey,
       key,
     });
+
+    // Preview streaming should not count as delivered purchase-file access.
+    if (file.filePurpose !== "preview" && matchedOrderItems.length > 0) {
+      await prisma.orderItem.updateMany({
+        where: {
+          id: {
+            in: matchedOrderItems.map((item) => item.id),
+          },
+        },
+        data: {
+          downloadCount: { increment: 1 },
+        },
+      });
+    }
 
     return new Response(upstream.body, {
       status: 200,

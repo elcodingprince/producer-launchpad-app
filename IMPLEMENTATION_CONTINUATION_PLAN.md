@@ -139,6 +139,7 @@ Current behavior:
 - portal preview audio loads through the app
 - purchased MP3 files download through the app
 - private managed R2 objects are no longer exposed directly to the browser
+- successful purchased-file downloads now increment tracked delivery counts
 
 Important implementation detail:
 
@@ -166,6 +167,20 @@ Key files:
 - [app/services/productCreator.ts](/Users/payan/producer-launchpad-app/app/services/productCreator.ts)
 - [app/services/shopify.ts](/Users/payan/producer-launchpad-app/app/services/shopify.ts)
 - [app/shopify.server.ts](/Users/payan/producer-launchpad-app/app/shopify.server.ts)
+
+### 8. Merchant recovery tooling now exists in the embedded app
+
+Current behavior:
+
+- merchants can open a Deliveries screen inside the embedded app
+- merchants can copy the current portal link for an order
+- merchants can regenerate the access token for an order
+- regenerating a token invalidates the previous portal link immediately
+
+Key files:
+
+- [app/routes/app.deliveries.tsx](/Users/payan/producer-launchpad-app/app/routes/app.deliveries.tsx)
+- [app/root.tsx](/Users/payan/producer-launchpad-app/app/root.tsx)
 
 ---
 
@@ -197,6 +212,8 @@ End-to-end verification now shows:
 - preview audio streams correctly
 - purchased MP3 downloads successfully
 - generated license PDF downloads successfully
+- merchant recovery via copied/regenerated portal links works
+- regenerated tokens invalidate the previous portal URL as expected
 
 This confirms the core delivery loop is working for at least one real purchase.
 
@@ -204,16 +221,18 @@ This confirms the core delivery loop is working for at least one real purchase.
 
 ## Current Open Bugs / Active Work
 
-### 1. Portal re-entry / recovery path
+### 1. Portal re-entry / customer recovery path
 
 Observed behavior:
 
 - the checkout block gives an instant post-purchase path into the portal
-- but if the buyer leaves, there is no reliable customer recovery path yet
+- merchant-side recovery now exists through the Deliveries page
+- but there is still no customer self-serve recovery path yet
 
 Current product direction:
 
 - keep the checkout block for instant access
+- keep merchant-side recovery inside the app
 - also add email delivery so buyers can return later
 - treat checkout block and email as complementary, not either/or
 
@@ -228,38 +247,7 @@ Needed work:
   - optional order summary
 - ensure emailed links reuse the same secure token/recovery flow
 
-### 2. Public portal should not render the merchant app shell
-
-Observed behavior:
-
-- `/downloads/:token` currently shows the merchant app navigation/header
-- this is leaking the embedded app shell into a customer-facing route
-
-Needed work:
-
-- render `NavMenu` only for merchant `/app` routes
-- keep public delivery routes outside the merchant shell
-- ensure the portal is a clean standalone customer page
-
-### 3. File download logging is incomplete
-
-Observed behavior:
-
-- PDF downloads increment `OrderItem.downloadCount`
-- secure file downloads currently do not provide equivalent audit logging
-
-Needed work:
-
-- increment counters for file downloads in [app/routes/api.files.$token.$fileId.tsx](/Users/payan/producer-launchpad-app/app/routes/api.files.$token.$fileId.tsx)
-- decide whether counts should be:
-  - per order item only
-  - per file + per order item
-- store enough evidence to answer:
-  - did the customer gain access
-  - which file was downloaded
-  - how many times
-
-### 4. Portal failure states are still too thin
+### 2. Portal failure states are still too thin
 
 Observed behavior:
 
@@ -277,7 +265,7 @@ Needed work:
   - authorization failure to storage
   - missing order recovery path
 
-### 5. Token lifecycle and support recovery remain open
+### 3. Token lifecycle remains open
 
 Needed work:
 
@@ -301,9 +289,7 @@ Keep the instant checkout portal, but make delivery resilient after the customer
 1. Add post-purchase email delivery using the same secure portal token.
 2. Keep checkout block delivery as the instant-access path.
 3. Add token recovery/regeneration design so customers can regain access later.
-4. Add file download logging/auditing for secure file routes.
-5. Remove merchant app shell/nav from public tokenized portal pages.
-6. Improve customer-visible and merchant-visible error states.
+4. Improve customer-visible and merchant-visible error states.
 
 ---
 

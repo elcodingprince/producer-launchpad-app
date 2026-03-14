@@ -7,6 +7,7 @@ import {
   Scripts,
   ScrollRestoration,
   useLoaderData,
+  useLocation,
 } from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
@@ -23,6 +24,8 @@ export const loader = () => {
 
 export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
+  const location = useLocation();
+  const isMerchantRoute = location.pathname.startsWith("/app");
 
   return (
     <html lang="en">
@@ -33,17 +36,21 @@ export default function App() {
         <Links />
       </head>
       <body>
-        <AppProvider apiKey={apiKey} i18n={enTranslations} isEmbeddedApp>
-          <NavMenu>
-            <a href="/app/setup">Setup</a>
-            <a href="/app/storage">Storage & Delivery</a>
-            <a href="/app/beats">My Beats</a>
-            <a href="/app/beats/new">Upload Beat</a>
-            <a href="/app/deliveries">Deliveries</a>
-            <a href="/app/licenses">Licenses</a>
-          </NavMenu>
+        {isMerchantRoute ? (
+          <AppProvider apiKey={apiKey} i18n={enTranslations} isEmbeddedApp>
+            <NavMenu>
+              <a href="/app/setup">Setup</a>
+              <a href="/app/storage">Storage & Delivery</a>
+              <a href="/app/beats">My Beats</a>
+              <a href="/app/beats/new">Upload Beat</a>
+              <a href="/app/deliveries">Deliveries</a>
+              <a href="/app/licenses">Licenses</a>
+            </NavMenu>
+            <Outlet />
+          </AppProvider>
+        ) : (
           <Outlet />
-        </AppProvider>
+        )}
         <ScrollRestoration />
         <Scripts />
       </body>
