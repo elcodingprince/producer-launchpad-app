@@ -77,7 +77,9 @@ Deferred:
 - long-term license metaobject schema design
 - contract snapshot strategy
 
-Reference: [LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md](/Users/winter/repos/producer-launchpad-app/LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md)
+Reference: [LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md](/Users/payan/producer-launchpad-app/LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md)
+
+Delivery email implementation details are tracked in [RESEND_EMAIL_IMPLEMENTATION_PLAN.md](/Users/payan/producer-launchpad-app/RESEND_EMAIL_IMPLEMENTATION_PLAN.md).
 
 ---
 
@@ -184,7 +186,7 @@ Target state is:
 
 - [x] Resolve purchased files by `variantId`.
 - [x] Keep preview files at the beat/product level where appropriate.
-- [ ] Improve portal handling for missing mappings or partial mappings.
+- [x] Improve portal handling for missing mappings or partial mappings.
 - [x] Decide later whether file URLs should remain direct or move to signed/proxied delivery.
 
 Current note:
@@ -223,15 +225,16 @@ Current note:
 - [ ] Add token expiration, regeneration, and recovery workflows.
 - [ ] Add abuse protection/rate limiting for public token-based endpoints.
 - [x] Add file download logging that proves which downloadable files were accessed and when.
-- [ ] Add a customer recovery path so buyers can regain portal access after leaving checkout.
+- [x] Add a merchant-assisted recovery path so buyers can regain portal access after leaving checkout.
+- [ ] Add an app-owned email recovery channel using the same secure portal link/token flow.
 - [ ] Add email delivery as a second delivery channel using the same secure portal link/token flow.
 
 ### Phase 9: UX and Failure Handling
 
 - [ ] Refine checkout block states for loading, ready, delayed, and failed.
-- [ ] Improve portal messaging for partial success or unresolved mappings.
-- [ ] Add merchant/admin recovery paths for orders that exist but have broken file mappings.
-- [ ] Add customer-facing support fallback copy for delayed or failed delivery.
+- [x] Improve portal messaging for partial success or unresolved mappings.
+- [x] Add merchant/admin recovery paths for orders that exist but have broken file mappings.
+- [x] Add customer-facing support fallback copy for delayed or failed delivery.
 - [x] Remove merchant app shell/navigation from the public tokenized portal.
 
 ### Phase 10: Multi-Store Onboarding

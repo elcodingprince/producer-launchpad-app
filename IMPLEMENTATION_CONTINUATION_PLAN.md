@@ -14,7 +14,9 @@ It focuses on:
 - secure file delivery through the app
 - portal re-entry and delivery recovery strategy
 
-It does not focus on final PDF/legal template design. That work is tracked separately in [LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md](/Users/winter/repos/producer-launchpad-app/LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md).
+It does not focus on final PDF/legal template design. That work is tracked separately in [LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md](/Users/payan/producer-launchpad-app/LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md).
+
+Email implementation details are tracked separately in [RESEND_EMAIL_IMPLEMENTATION_PLAN.md](/Users/payan/producer-launchpad-app/RESEND_EMAIL_IMPLEMENTATION_PLAN.md).
 
 ---
 
@@ -227,7 +229,7 @@ Observed behavior:
 
 - the checkout block gives an instant post-purchase path into the portal
 - merchant-side recovery now exists through the Deliveries page
-- but there is still no customer self-serve recovery path yet
+- but there is still no durable app-owned customer recovery channel yet
 
 Current product direction:
 
@@ -238,14 +240,7 @@ Current product direction:
 
 Needed work:
 
-- decide when the email is sent:
-  - immediately after webhook persistence
-  - after portal readiness is confirmed
-- define the email contents:
-  - secure portal link
-  - fallback support messaging
-  - optional order summary
-- ensure emailed links reuse the same secure token/recovery flow
+- implement the app-owned delivery email system described in [RESEND_EMAIL_IMPLEMENTATION_PLAN.md](/Users/payan/producer-launchpad-app/RESEND_EMAIL_IMPLEMENTATION_PLAN.md)
 
 ### 2. Portal failure states are still too thin
 
