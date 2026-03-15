@@ -31,6 +31,20 @@ function getOptionalEnv(name: "DELIVERY_EMAIL_REPLY_TO" | "DELIVERY_EMAIL_BRAND_
   return process.env[name] || null;
 }
 
+export function isResendWebhookTrackingEnabled() {
+  return process.env.RESEND_WEBHOOKS_ENABLED === "true";
+}
+
+export function getResendWebhookSecret() {
+  const value = process.env.RESEND_WEBHOOK_SECRET;
+
+  if (!value) {
+    throw new Error("RESEND_WEBHOOK_SECRET is not configured");
+  }
+
+  return value;
+}
+
 function getEmailProvider() {
   return new ResendEmailProvider(getEnv("RESEND_API_KEY"));
 }

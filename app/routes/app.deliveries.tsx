@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
-import type { DeliveryAccess, Order, OrderItem } from "@prisma/client";
+import type { BeatFile, DeliveryAccess, LicenseFileMapping, Order, OrderItem } from "@prisma/client";
 import type { IndexFiltersProps } from "@shopify/polaris";
 import {
   Banner,
@@ -20,25 +20,35 @@ import {
   IndexTable,
   Layout,
   Page,
+  Popover,
   Text,
   useIndexResourceState,
   useSetIndexFiltersMode,
 } from "@shopify/polaris";
-import { buildDownloadPortalUrl } from "~/services/appUrl.server";
+import { buildDownloadPortalUrl, formatStoreName } from "~/services/appUrl.server";
+import { isResendWebhookTrackingEnabled, sendDeliveryEmail } from "~/services/email.server";
 
 interface DeliverySummary {
   id: string;
   orderNumber: string;
   customerEmail: string;
   customerName: string | null;
+  customerLastName: string | null;
   createdAt: string;
   status: string;
   downloadToken: string;
   portalUrl: string;
   itemCount: number;
   itemSummary: string;
+  itemDetails: {
+    id: string;
+    beatTitle: string;
+    licenseName: string;
+    includedFiles: string[];
+  }[];
   totalDownloadCount: number;
   deliveryEmailStatus: string;
+  deliveryEmailConfirmedStatus: string | null;
 }
 
 type DeliveryOrder = Order & { items: OrderItem[]; deliveryAccess: DeliveryAccess | null };
@@ -55,12 +65,14 @@ type DeliverySortValue =
 type ActionData =
   | {
       success: true;
+      intent: "regenerate_token" | "resend_email";
       orderId: string;
       orderNumber: string;
-      portalUrl: string;
+      portalUrl?: string;
     }
   | {
       success: false;
+      intent: "regenerate_token" | "resend_email" | "unknown";
       error: string;
     };
 
@@ -74,8 +86,82 @@ function formatDate(value: Date | string) {
   });
 }
 
+function getCustomerLastName(customerName: string | null) {
+  if (!customerName) return null;
+
+  const segments = customerName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  return segments.length > 0 ? segments[segments.length - 1] : null;
+}
+
+function getDeliveryEmailBadgeTone(status: string): "success" | "critical" | "attention" | undefined {
+  if (status === "sent" || status === "delivered") return "success";
+  if (status === "failed") return "critical";
+  if (status === "bounced" || status === "complained") return "critical";
+  if (status === "skipped" || status === "pending" || status === "delayed") return "attention";
+
+  return undefined;
+}
+
+function getDeliveryEmailBadgeLabel(status: string) {
+  if (status === "sent") return "Sent";
+  if (status === "delivered") return "Delivered";
+  if (status === "failed") return "Failed";
+  if (status === "bounced") return "Bounced";
+  if (status === "complained") return "Complained";
+  if (status === "delayed") return "Delayed";
+  if (status === "skipped") return "Skipped";
+  if (status === "pending") return "Pending";
+
+  return "Unknown";
+}
+
+function getDisplayedDeliveryEmailStatus(
+  sendStatus: string,
+  confirmedStatus: string | null,
+  confirmationEnabled: boolean,
+) {
+  if (!confirmationEnabled) {
+    return sendStatus;
+  }
+
+  if (sendStatus === "failed" || sendStatus === "skipped") {
+    return sendStatus;
+  }
+
+  if (confirmedStatus) {
+    return confirmedStatus;
+  }
+
+  if (sendStatus === "sent") {
+    return "pending";
+  }
+
+  return sendStatus;
+}
+
+function normalizeShopifyResourceId(id: string) {
+  const match = id.match(/\/(\d+)$/);
+  return match ? match[1] : id;
+}
+
+function getIncludedFileLabel(file: BeatFile) {
+  if (file.filePurpose === "mp3") return "MP3";
+  if (file.filePurpose === "wav") return "WAV";
+  if (file.filePurpose === "stems") return "STEMS";
+  if (file.filePurpose === "license_pdf") return "PDF";
+  if (file.filePurpose === "cover") return "Cover";
+  if (file.filePurpose === "preview") return "Preview";
+
+  return file.filePurpose.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
+  const emailConfirmationEnabled = isResendWebhookTrackingEnabled();
 
   const orders = await prisma.order.findMany({
     orderBy: { createdAt: "desc" },
@@ -86,12 +172,50 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
+  const variantIds = Array.from(
+    new Set(
+      orders.flatMap((order: DeliveryOrder) =>
+        order.items.flatMap((item: OrderItem) => {
+          const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
+          return [
+            item.variantId,
+            normalizedVariantId,
+            `gid://shopify/ProductVariant/${normalizedVariantId}`,
+          ];
+        }),
+      ),
+    ),
+  );
+
+  const licenseMappings = variantIds.length
+    ? await prisma.licenseFileMapping.findMany({
+        where: {
+          variantId: { in: variantIds },
+        },
+        include: {
+          beatFile: true,
+        },
+        orderBy: {
+          sortOrder: "asc",
+        },
+      })
+    : [];
+
+  const filesByVariantId = new Map<string, BeatFile[]>();
+
+  for (const mapping of licenseMappings as Array<LicenseFileMapping & { beatFile: BeatFile }>) {
+    const existingFiles = filesByVariantId.get(mapping.variantId) || [];
+    existingFiles.push(mapping.beatFile);
+    filesByVariantId.set(mapping.variantId, existingFiles);
+  }
+
   return json({
     deliveries: orders.map((order: DeliveryOrder): DeliverySummary => ({
       id: order.id,
       orderNumber: order.orderNumber,
       customerEmail: order.deliveryAccess?.customerEmail || "",
       customerName: order.deliveryAccess?.customerName || null,
+      customerLastName: getCustomerLastName(order.deliveryAccess?.customerName || null),
       createdAt: order.createdAt.toISOString(),
       status: order.status,
       downloadToken: order.deliveryAccess?.downloadToken || "",
@@ -102,12 +226,38 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       itemSummary: order.items
         .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
         .join(", "),
+      itemDetails: order.items.map((item: OrderItem) => {
+        const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
+        const includedFiles = [
+          ...(filesByVariantId.get(item.variantId) || []),
+          ...(filesByVariantId.get(normalizedVariantId) || []),
+          ...(filesByVariantId.get(`gid://shopify/ProductVariant/${normalizedVariantId}`) || []),
+        ];
+
+        const uniqueIncludedFiles = Array.from(
+          new Set(
+            includedFiles
+              .filter((file) => !["preview", "cover"].includes(file.filePurpose))
+              .map((file) => getIncludedFileLabel(file)),
+          ),
+        );
+
+        return {
+          id: item.id,
+          beatTitle: item.beatTitle,
+          licenseName: item.licenseName,
+          includedFiles: uniqueIncludedFiles,
+        };
+      }),
       totalDownloadCount: order.items.reduce(
         (sum: number, item: OrderItem) => sum + item.downloadCount,
         0,
       ),
       deliveryEmailStatus: order.deliveryAccess?.deliveryEmailStatus || "missing",
+      deliveryEmailConfirmedStatus:
+        order.deliveryAccess?.deliveryEmailConfirmedStatus || null,
     })),
+    emailConfirmationEnabled,
   });
 };
 
@@ -118,43 +268,139 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const intent = String(formData.get("intent") || "");
   const orderId = String(formData.get("orderId") || "");
 
-  if (intent !== "regenerate_token" || !orderId) {
+  if ((intent !== "regenerate_token" && intent !== "resend_email") || !orderId) {
     return json(
-      { success: false, error: "Invalid delivery action." },
+      { success: false, intent: "unknown", error: "Invalid delivery action." },
       { status: 400 },
     );
   }
 
-  const nextToken = `dl_${crypto.randomBytes(16).toString("hex")}`;
-  const updatedAccess = await prisma.deliveryAccess.update({
+  if (intent === "regenerate_token") {
+    const nextToken = `dl_${crypto.randomBytes(16).toString("hex")}`;
+    const updatedAccess = await prisma.deliveryAccess.update({
+      where: { orderId },
+      data: { downloadToken: nextToken },
+      select: {
+        orderId: true,
+        downloadToken: true,
+        order: {
+          select: {
+            orderNumber: true,
+          },
+        },
+      },
+    });
+
+    return json({
+      success: true,
+      intent: "regenerate_token",
+      orderId: updatedAccess.orderId,
+      orderNumber: updatedAccess.order.orderNumber,
+      portalUrl: buildDownloadPortalUrl(updatedAccess.downloadToken, request),
+    });
+  }
+
+  const deliveryAccess = await prisma.deliveryAccess.findUnique({
     where: { orderId },
-    data: { downloadToken: nextToken },
-    select: {
-      orderId: true,
-      downloadToken: true,
+    include: {
       order: {
-        select: {
-          orderNumber: true,
+        include: {
+          items: true,
         },
       },
     },
   });
 
-  return json({
-    success: true,
-    orderId: updatedAccess.orderId,
-    orderNumber: updatedAccess.order.orderNumber,
-    portalUrl: buildDownloadPortalUrl(updatedAccess.downloadToken, request),
-  });
+  if (!deliveryAccess) {
+    return json(
+      {
+        success: false,
+        intent: "resend_email",
+        error: "No delivery record was found for this order.",
+      },
+      { status: 404 },
+    );
+  }
+
+  if (!deliveryAccess.customerEmail) {
+    return json(
+      {
+        success: false,
+        intent: "resend_email",
+        error: "This order does not have a customer email to send to.",
+      },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const emailResult = await sendDeliveryEmail({
+      to: deliveryAccess.customerEmail,
+      portalUrl: buildDownloadPortalUrl(deliveryAccess.downloadToken, request),
+      storeName: formatStoreName(deliveryAccess.order.shop),
+      customerFirstName:
+        deliveryAccess.customerName?.trim().split(/\s+/).filter(Boolean)[0] || null,
+      orderNumber: deliveryAccess.order.orderNumber,
+      itemSummary: deliveryAccess.order.items
+        .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
+        .join(", "),
+    });
+
+    await prisma.deliveryAccess.update({
+      where: { orderId },
+      data: {
+        deliveryEmailStatus: "sent",
+        deliveryEmailSentAt: new Date(),
+        deliveryEmailRecipient: deliveryAccess.customerEmail,
+        deliveryEmailMessageId: emailResult.messageId,
+        deliveryEmailError: null,
+        deliveryEmailConfirmedStatus: isResendWebhookTrackingEnabled() ? "pending" : null,
+        deliveryEmailConfirmedAt: null,
+        deliveryEmailConfirmedError: null,
+        deliveryEmailLastEvent: null,
+        deliveryEmailLastEventAt: null,
+      },
+    });
+
+    return json({
+      success: true,
+      intent: "resend_email",
+      orderId,
+      orderNumber: deliveryAccess.order.orderNumber,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown email resend error";
+
+    await prisma.deliveryAccess.update({
+      where: { orderId },
+      data: {
+        deliveryEmailStatus: "failed",
+        deliveryEmailRecipient: deliveryAccess.customerEmail,
+        deliveryEmailError: message,
+      },
+    });
+
+    return json(
+      {
+        success: false,
+        intent: "resend_email",
+        error: message,
+      },
+      { status: 500 },
+    );
+  }
 };
 
 export default function DeliveriesPage() {
-  const { deliveries } = useLoaderData<typeof loader>();
+  const { deliveries, emailConfirmationEnabled } = useLoaderData<typeof loader>();
   const actionData = useActionData<ActionData>();
   const submit = useSubmit();
   const shopify = useAppBridge();
   const { mode, setMode } = useSetIndexFiltersMode();
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+  const [activeCustomerPopoverId, setActiveCustomerPopoverId] = useState<string | null>(null);
+  const [activeItemsPopoverId, setActiveItemsPopoverId] = useState<string | null>(null);
   const [queryValue, setQueryValue] = useState("");
   const [selectedView, setSelectedView] = useState(0);
   const [sortSelected, setSortSelected] = useState<string[]>(["createdAt desc"]);
@@ -271,7 +517,14 @@ export default function DeliveriesPage() {
 
   useEffect(() => {
     if (!actionData?.success) return;
-    shopify.toast.show(`Access link regenerated for order #${actionData.orderNumber}`);
+    if (actionData.intent === "regenerate_token") {
+      shopify.toast.show(`Access link regenerated for order #${actionData.orderNumber}`);
+      return;
+    }
+
+    if (actionData.intent === "resend_email") {
+      shopify.toast.show(`Delivery email resent for order #${actionData.orderNumber}`);
+    }
   }, [actionData, shopify]);
 
   const handleCopy = useCallback(async (orderId: string, portalUrl: string) => {
@@ -299,7 +552,26 @@ export default function DeliveriesPage() {
     [clearSelection, submit],
   );
 
+  const handleResendEmail = useCallback(
+    (orderId: string) => {
+      const formData = new FormData();
+      formData.append("intent", "resend_email");
+      formData.append("orderId", orderId);
+      submit(formData, { method: "post" });
+      clearSelection();
+    },
+    [clearSelection, submit],
+  );
+
   const handleQueryValueRemove = useCallback(() => setQueryValue(""), []);
+
+  const handleCustomerPopoverToggle = useCallback((deliveryId: string) => {
+    setActiveCustomerPopoverId((current) => (current === deliveryId ? null : deliveryId));
+  }, []);
+
+  const handleItemsPopoverToggle = useCallback((deliveryId: string) => {
+    setActiveItemsPopoverId((current) => (current === deliveryId ? null : deliveryId));
+  }, []);
 
   const filters = [
     {
@@ -346,7 +618,14 @@ export default function DeliveriesPage() {
       <Layout>
         {actionData && !actionData.success && actionData.error && (
           <Layout.Section>
-            <Banner tone="critical" title="Could not update access link">
+            <Banner
+              tone="critical"
+              title={
+                actionData.intent === "resend_email"
+                  ? "Could not resend delivery email"
+                  : "Could not update access link"
+              }
+            >
               <p>{actionData.error}</p>
             </Banner>
           </Layout.Section>
@@ -412,13 +691,19 @@ export default function DeliveriesPage() {
                           content: "Regenerate access link",
                           onAction: () => handleRegenerate(selectedDelivery.id),
                         },
+                        {
+                          content: "Resend delivery email",
+                          onAction: () => handleResendEmail(selectedDelivery.id),
+                        },
                       ]
                     : []
                 }
                 headings={[
                   { title: "Order" },
+                  { title: "Date" },
                   { title: "Customer" },
                   { title: "Items" },
+                  { title: "Delivery email" },
                   { title: "Token access" },
                   { title: "Downloads" },
                 ]}
@@ -426,6 +711,11 @@ export default function DeliveriesPage() {
                 {filteredDeliveries.map((delivery: DeliverySummary, index: number) => {
                   const portalUrl =
                     portalUrlOverrides.get(delivery.id) || delivery.portalUrl;
+                  const displayedDeliveryEmailStatus = getDisplayedDeliveryEmailStatus(
+                    delivery.deliveryEmailStatus,
+                    delivery.deliveryEmailConfirmedStatus,
+                    emailConfirmationEnabled,
+                  );
 
                   return (
                     <IndexTable.Row
@@ -435,34 +725,94 @@ export default function DeliveriesPage() {
                       selected={selectedResources.includes(delivery.id)}
                     >
                       <IndexTable.Cell>
-                        <BlockStack gap="100">
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">
-                            Order #{delivery.orderNumber}
-                          </Text>
-                          <Text as="span" tone="subdued">
-                            {formatDate(delivery.createdAt)}
-                          </Text>
-                        </BlockStack>
+                        <Text as="span" variant="bodyMd" fontWeight="semibold">
+                          Order #{delivery.orderNumber}
+                        </Text>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
-                        <BlockStack gap="100">
-                          <Text as="span">
-                            {delivery.customerName || "Customer"}
-                          </Text>
-                          <Text as="span" tone="subdued">
-                            {delivery.customerEmail}
-                          </Text>
-                        </BlockStack>
+                        <Text as="span">
+                          {formatDate(delivery.createdAt)}
+                        </Text>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
-                        <BlockStack gap="100">
-                          <Text as="span">
-                            {delivery.itemSummary}
-                          </Text>
-                          <Text as="span" tone="subdued">
-                            {delivery.itemCount} item{delivery.itemCount === 1 ? "" : "s"}
-                          </Text>
-                        </BlockStack>
+                        <Popover
+                          active={activeCustomerPopoverId === delivery.id}
+                          autofocusTarget="first-node"
+                          preferredAlignment="left"
+                          preferredPosition="below"
+                          onClose={() => setActiveCustomerPopoverId(null)}
+                          activator={
+                            <Button
+                              disclosure
+                              variant="monochromePlain"
+                              size="slim"
+                              textAlign="left"
+                              onClick={() => handleCustomerPopoverToggle(delivery.id)}
+                            >
+                              {delivery.customerLastName || delivery.customerName || "Customer"}
+                            </Button>
+                          }
+                        >
+                          <div style={{ minWidth: "240px", padding: "16px" }}>
+                            <BlockStack gap="200">
+                              <Text as="p" variant="headingSm" fontWeight="semibold">
+                                {delivery.customerName || "Customer"}
+                              </Text>
+                              {delivery.customerEmail ? (
+                                <Text as="p" tone="subdued">
+                                  {delivery.customerEmail}
+                                </Text>
+                              ) : (
+                                <Text as="p" tone="subdued">
+                                  No customer email available
+                                </Text>
+                              )}
+                            </BlockStack>
+                          </div>
+                        </Popover>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Popover
+                          active={activeItemsPopoverId === delivery.id}
+                          autofocusTarget="first-node"
+                          preferredAlignment="left"
+                          preferredPosition="below"
+                          onClose={() => setActiveItemsPopoverId(null)}
+                          activator={
+                            <Button
+                              disclosure={delivery.itemCount > 0 ? "down" : undefined}
+                              variant="monochromePlain"
+                              size="slim"
+                              textAlign="left"
+                              onClick={() => handleItemsPopoverToggle(delivery.id)}
+                            >
+                              {`${delivery.itemCount} item${delivery.itemCount === 1 ? "" : "s"}`}
+                            </Button>
+                          }
+                        >
+                          <div style={{ minWidth: "320px", padding: "16px" }}>
+                            <BlockStack gap="300">
+                              {delivery.itemDetails.map((item) => (
+                                <BlockStack key={item.id} gap="100">
+                                  <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                    {item.beatTitle}
+                                  </Text>
+                                  <Text as="p" tone="subdued">
+                                    {item.licenseName}
+                                  </Text>
+                                  <Text as="p" tone="subdued">
+                                    Includes {item.includedFiles.length > 0 ? item.includedFiles.join(", ") : "no mapped files yet"}
+                                  </Text>
+                                </BlockStack>
+                              ))}
+                            </BlockStack>
+                          </div>
+                        </Popover>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Badge tone={getDeliveryEmailBadgeTone(displayedDeliveryEmailStatus)}>
+                          {getDeliveryEmailBadgeLabel(displayedDeliveryEmailStatus)}
+                        </Badge>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Badge tone={delivery.status === "active" ? "success" : undefined}>

@@ -3,7 +3,7 @@ import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import crypto from "crypto";
 import type { OrderItem } from "@prisma/client";
-import { sendDeliveryEmail } from "~/services/email.server";
+import { isResendWebhookTrackingEnabled, sendDeliveryEmail } from "~/services/email.server";
 import { buildDownloadPortalUrl, formatStoreName } from "~/services/appUrl.server";
 
 function normalizeShopifyResourceId(id: string) {
@@ -11,15 +11,37 @@ function normalizeShopifyResourceId(id: string) {
   return match ? match[1] : id;
 }
 
+function buildCustomerName(payload: any) {
+  const nameCandidates = [
+    payload.customer,
+    payload.billing_address,
+    payload.shipping_address,
+    payload.default_address,
+  ];
+
+  for (const candidate of nameCandidates) {
+    if (!candidate) continue;
+
+    const firstName = String(candidate.first_name || "").trim();
+    const lastName = String(candidate.last_name || "").trim();
+    const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+
+    if (fullName) {
+      return fullName;
+    }
+  }
+
+  return null;
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { payload, shop } = await authenticate.webhook(request);
+  const webhookTrackingEnabled = isResendWebhookTrackingEnabled();
 
   const orderId = payload.id.toString();
   const orderNumber = payload.order_number?.toString() || orderId;
   const customerEmail = payload.contact_email || payload.email || "";
-  const customerName = payload.customer?.first_name 
-    ? `${payload.customer.first_name} ${payload.customer.last_name || ''}`.trim() 
-    : "Producer";
+  const customerName = buildCustomerName(payload);
 
   // Double check if we already processed it
   const existingOrder = await prisma.order.findUnique({
@@ -98,7 +120,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         to: customerEmail,
         portalUrl: buildDownloadPortalUrl(token, request),
         storeName: formatStoreName(shop),
-        customerFirstName: payload.customer?.first_name || customerName || null,
+        customerFirstName:
+          String(payload.customer?.first_name || payload.billing_address?.first_name || payload.shipping_address?.first_name || "")
+            .trim() || null,
         orderNumber,
         itemSummary: createdOrder.items
           .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
@@ -113,6 +137,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           deliveryEmailRecipient: customerEmail,
           deliveryEmailMessageId: emailResult.messageId,
           deliveryEmailError: null,
+          deliveryEmailConfirmedStatus: webhookTrackingEnabled ? "pending" : null,
+          deliveryEmailConfirmedAt: null,
+          deliveryEmailConfirmedError: null,
+          deliveryEmailLastEvent: null,
+          deliveryEmailLastEventAt: null,
         },
       });
 

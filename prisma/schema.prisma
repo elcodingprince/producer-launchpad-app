@@ -121,6 +121,11 @@ model DeliveryAccess {
   deliveryEmailError    String?
   deliveryEmailRecipient String?
   deliveryEmailMessageId String?
+  deliveryEmailConfirmedStatus String?
+  deliveryEmailConfirmedAt     DateTime?
+  deliveryEmailConfirmedError  String?
+  deliveryEmailLastEvent       String?
+  deliveryEmailLastEventAt     DateTime?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 

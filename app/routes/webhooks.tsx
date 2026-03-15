@@ -100,6 +100,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               deliveryEmailRecipient: null,
               deliveryEmailError: null,
               deliveryEmailMessageId: null,
+              deliveryEmailConfirmedStatus: null,
+              deliveryEmailConfirmedAt: null,
+              deliveryEmailConfirmedError: null,
+              deliveryEmailLastEvent: null,
+              deliveryEmailLastEventAt: null,
             },
           });
         }
