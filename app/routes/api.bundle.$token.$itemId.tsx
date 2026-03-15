@@ -54,14 +54,16 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     return new Response("This download request is not valid.", { status: 400 });
   }
 
-  const order = await prisma.order.findUnique({
+  const deliveryAccess = await prisma.deliveryAccess.findUnique({
     where: { downloadToken: token },
-    include: { items: true },
+    include: { order: { include: { items: true } } },
   });
 
-  if (!order) {
+  if (!deliveryAccess) {
     return new Response("This download link is no longer valid.", { status: 403 });
   }
+
+  const { order } = deliveryAccess;
 
   const item = order.items.find((orderItem: OrderItem) => orderItem.id === itemId);
 

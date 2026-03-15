@@ -81,17 +81,14 @@ model Order {
   shop            String
   shopifyOrderId  String   @unique
   orderNumber     String
-  customerEmail   String
-  customerName    String?
-  downloadToken   String   @unique
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   status          String   @default("active")
 
   items           OrderItem[]
+  deliveryAccess  DeliveryAccess?
 
   @@index([shop, shopifyOrderId])
-  @@index([downloadToken])
 }
 
 model OrderItem {
@@ -110,4 +107,25 @@ model OrderItem {
 
   @@index([orderId])
   @@index([variantId])
+}
+
+model DeliveryAccess {
+  id                    String   @id @default(cuid())
+  orderId               String   @unique
+  shop                  String
+  customerEmail         String
+  customerName          String?
+  downloadToken         String   @unique
+  deliveryEmailStatus   String   @default("pending")
+  deliveryEmailSentAt   DateTime?
+  deliveryEmailError    String?
+  deliveryEmailRecipient String?
+  deliveryEmailMessageId String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  order                 Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([shop])
+  @@index([downloadToken])
 }

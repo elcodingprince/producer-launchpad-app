@@ -10,19 +10,24 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   }
 
   // Very strict security check: ensure the item actually belongs to the token
-  const order = await prisma.order.findUnique({
+  const deliveryAccess = await prisma.deliveryAccess.findUnique({
     where: { downloadToken: token },
     include: {
-      items: {
-        where: { id: itemId }
-      }
-    }
+      order: {
+        include: {
+          items: {
+            where: { id: itemId }
+          }
+        }
+      },
+    },
   });
 
-  if (!order || order.items.length === 0) {
+  if (!deliveryAccess || deliveryAccess.order.items.length === 0) {
     return new Response("Unauthorized", { status: 403 });
   }
 
+  const { order } = deliveryAccess;
   const item = order.items[0];
 
   // We need to fetch the actual license metaobject rules from Shopify
@@ -31,7 +36,7 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   const licenseData = {
     licenseName: item.licenseName,
     producerName: "Future Soundwaves", // In production we get this from the app config or metafield
-    customerName: order.customerName || order.customerEmail,
+    customerName: deliveryAccess.customerName || deliveryAccess.customerEmail,
     beatTitle: item.beatTitle,
     date: new Date(order.createdAt).toLocaleDateString("en-US", { year: 'numeric', month: 'long', day: 'numeric' }),
     orderNumber: order.orderNumber,

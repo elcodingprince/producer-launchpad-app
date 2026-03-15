@@ -10,9 +10,14 @@ async function main() {
       shop: 'producer-launchpad.myshopify.com',
       shopifyOrderId: `test_order_${randomId}`,
       orderNumber: '1055-TEST',
-      customerEmail: 'customer@example.com',
-      customerName: 'A$AP Rocky',
-      downloadToken: token,
+      deliveryAccess: {
+        create: {
+          shop: 'producer-launchpad.myshopify.com',
+          customerEmail: 'customer@example.com',
+          customerName: 'A$AP Rocky',
+          downloadToken: token,
+        },
+      },
       items: {
         create: [
           {

@@ -2,6 +2,9 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import crypto from "crypto";
+import type { OrderItem } from "@prisma/client";
+import { sendDeliveryEmail } from "~/services/email.server";
+import { buildDownloadPortalUrl, formatStoreName } from "~/services/appUrl.server";
 
 function normalizeShopifyResourceId(id: string) {
   const match = id.match(/\/(\d+)$/);
@@ -52,19 +55,83 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Save order in our DB
-    await prisma.order.create({
+    const createdOrder = await prisma.order.create({
       data: {
         shop,
         shopifyOrderId: orderId,
         orderNumber,
-        customerEmail,
-        customerName,
-        downloadToken: token,
         items: {
           create: orderItems
-        }
-      }
+        },
+        deliveryAccess: {
+          create: {
+            shop,
+            customerEmail,
+            customerName,
+            downloadToken: token,
+          },
+        },
+      },
+      include: {
+        items: true,
+        deliveryAccess: true,
+      },
     });
+
+    if (!customerEmail) {
+      await prisma.deliveryAccess.update({
+        where: { orderId: createdOrder.id },
+        data: {
+          deliveryEmailStatus: "skipped",
+          deliveryEmailError: "Missing customer email",
+        },
+      });
+
+      console.log(`[Webhook] Skipped delivery email for Order #${orderNumber}: missing customer email`);
+      console.log(`[Webhook] Created automated delivery portal for Order #${orderNumber}`);
+
+      return new Response("Processing complete", { status: 200 });
+    }
+
+    try {
+      const emailResult = await sendDeliveryEmail({
+        to: customerEmail,
+        portalUrl: buildDownloadPortalUrl(token, request),
+        storeName: formatStoreName(shop),
+        customerFirstName: payload.customer?.first_name || customerName || null,
+        orderNumber,
+        itemSummary: createdOrder.items
+          .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
+          .join(", "),
+      });
+
+      await prisma.deliveryAccess.update({
+        where: { orderId: createdOrder.id },
+        data: {
+          deliveryEmailStatus: "sent",
+          deliveryEmailSentAt: new Date(),
+          deliveryEmailRecipient: customerEmail,
+          deliveryEmailMessageId: emailResult.messageId,
+          deliveryEmailError: null,
+        },
+      });
+
+      console.log(`[Webhook] Sent delivery email for Order #${orderNumber}`);
+    } catch (emailError) {
+      const message =
+        emailError instanceof Error ? emailError.message : "Unknown email delivery error";
+
+      await prisma.deliveryAccess.update({
+        where: { orderId: createdOrder.id },
+        data: {
+          deliveryEmailStatus: "failed",
+          deliveryEmailRecipient: customerEmail,
+          deliveryEmailError: message,
+        },
+      });
+
+      console.error(`[Webhook] Failed to send delivery email for Order #${orderNumber}:`, emailError);
+    }
 
     console.log(`[Webhook] Created automated delivery portal for Order #${orderNumber}`);
 

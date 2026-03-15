@@ -28,20 +28,27 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   }
 
   // Find the exact order by the token securely attached to it
-  const order = await prisma.order.findUnique({
+  const deliveryAccess = await prisma.deliveryAccess.findUnique({
     where: { downloadToken: token },
     include: {
-      items: true,
+      order: {
+        include: {
+          items: true,
+        },
+      },
     },
   });
 
-  if (!order) {
+  if (!deliveryAccess) {
     throw new Response("Order not found or link has expired", { status: 404 });
   }
+
+  const { order } = deliveryAccess;
 
   if (order.items.length === 0) {
     return json({
       order,
+      deliveryAccess,
       items: [],
       portalStatus: "no_downloadable_items" as const,
     });
@@ -102,11 +109,11 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     portalStatus = "partial";
   }
 
-  return json({ order, items: enrichedItems, portalStatus });
+  return json({ order, deliveryAccess, items: enrichedItems, portalStatus });
 };
 
 export default function DownloadPortalPage() {
-  const { order, items, portalStatus } = useLoaderData<typeof loader>();
+  const { order, deliveryAccess, items, portalStatus } = useLoaderData<typeof loader>();
 
   const portalNotice =
     portalStatus === "partial"
@@ -138,7 +145,7 @@ export default function DownloadPortalPage() {
         {/* Header Block */}
         <div style={{ textAlign: 'center', marginBottom: '40px' }}>
           <h1 style={{ fontSize: '28px', fontWeight: 'bold', color: '#111827', marginBottom: '8px' }}>
-            Thanks for your order, {order.customerName || 'Producer'}!
+            Thanks for your order, {deliveryAccess.customerName || 'Producer'}!
           </h1>
           <p style={{ color: '#4b5563', fontSize: '16px' }}>
             Order #{order.orderNumber} • {new Date(order.createdAt).toLocaleDateString()}
@@ -193,7 +200,7 @@ export default function DownloadPortalPage() {
                 {item.previewFileId && (
                   <audio
                     controls
-                    src={`/api/files/${order.downloadToken}/${item.previewFileId}`}
+                    src={`/api/files/${deliveryAccess.downloadToken}/${item.previewFileId}`}
                     style={{ height: '36px' }}
                   />
                 )}
@@ -203,7 +210,7 @@ export default function DownloadPortalPage() {
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                 {/* Dynamically Generated PDF Contract Button */}
                 <a
-                  href={`/api/pdf/${order.downloadToken}/${item.id}`}
+                  href={`/api/pdf/${deliveryAccess.downloadToken}/${item.id}`}
                   target="_blank"
                   rel="noreferrer"
                   style={{
@@ -221,7 +228,7 @@ export default function DownloadPortalPage() {
 
                 {hasBundle && (
                   <a
-                    href={`/api/bundle/${order.downloadToken}/${item.id}`}
+                    href={`/api/bundle/${deliveryAccess.downloadToken}/${item.id}`}
                     style={{
                       backgroundColor: '#e5e7eb',
                       color: '#374151',
@@ -238,7 +245,7 @@ export default function DownloadPortalPage() {
 
                 {!hasBundle && singleAudioFile && (
                   <a
-                    href={`/api/files/${order.downloadToken}/${singleAudioFile.id}`}
+                    href={`/api/files/${deliveryAccess.downloadToken}/${singleAudioFile.id}`}
                     style={{
                       backgroundColor: '#e5e7eb',
                       color: '#374151',

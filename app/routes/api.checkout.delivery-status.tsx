@@ -2,6 +2,7 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import prisma from "~/db.server";
 import { authenticate } from "~/shopify.server";
+import { buildDownloadPortalUrl } from "~/services/appUrl.server";
 
 function normalizeShopDomain(dest?: string) {
   if (!dest) return "";
@@ -18,19 +19,6 @@ function normalizeOrderId(orderId: string | null) {
 
   const match = orderId.match(/\/(\d+)$/);
   return match ? match[1] : orderId;
-}
-
-function getAppOrigin(request: Request) {
-  const rawHost =
-    process.env.SHOPIFY_APP_URL || process.env.APP_URL || process.env.HOST;
-
-  if (rawHost) {
-    return rawHost.startsWith("http://") || rawHost.startsWith("https://")
-      ? rawHost
-      : `https://${rawHost}`;
-  }
-
-  return new URL(request.url).origin;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -85,17 +73,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const shop = normalizeShopDomain(sessionToken.dest);
 
-  const order = await prisma.order.findFirst({
+  const access = await prisma.deliveryAccess.findFirst({
     where: {
       shop,
-      shopifyOrderId: normalizedOrderId,
+      order: {
+        shopifyOrderId: normalizedOrderId,
+      },
     },
     select: {
       downloadToken: true,
     },
   });
 
-  if (!order?.downloadToken) {
+  if (!access?.downloadToken) {
     return cors(
       json({
         status: "loading",
@@ -106,7 +96,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return cors(
     json({
       status: "ready",
-      downloadUrl: `${getAppOrigin(request)}/downloads/${order.downloadToken}`,
+      downloadUrl: buildDownloadPortalUrl(access.downloadToken, request),
     })
   );
 };

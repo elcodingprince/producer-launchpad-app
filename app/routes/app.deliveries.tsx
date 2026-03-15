@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
-import type { Order, OrderItem } from "@prisma/client";
+import type { DeliveryAccess, Order, OrderItem } from "@prisma/client";
 import type { IndexFiltersProps } from "@shopify/polaris";
 import {
   Banner,
@@ -24,6 +24,7 @@ import {
   useIndexResourceState,
   useSetIndexFiltersMode,
 } from "@shopify/polaris";
+import { buildDownloadPortalUrl } from "~/services/appUrl.server";
 
 interface DeliverySummary {
   id: string;
@@ -37,9 +38,10 @@ interface DeliverySummary {
   itemCount: number;
   itemSummary: string;
   totalDownloadCount: number;
+  deliveryEmailStatus: string;
 }
 
-type DeliveryOrder = Order & { items: OrderItem[] };
+type DeliveryOrder = Order & { items: OrderItem[]; deliveryAccess: DeliveryAccess | null };
 
 type DeliveryStatusFilter = "all" | "active" | "expired";
 type DeliverySortValue =
@@ -62,19 +64,6 @@ type ActionData =
       error: string;
     };
 
-function getAppOrigin(request: Request) {
-  const rawHost =
-    process.env.SHOPIFY_APP_URL || process.env.APP_URL || process.env.HOST;
-
-  if (rawHost) {
-    return rawHost.startsWith("http://") || rawHost.startsWith("https://")
-      ? rawHost
-      : `https://${rawHost}`;
-  }
-
-  return new URL(request.url).origin;
-}
-
 function formatDate(value: Date | string) {
   return new Date(value).toLocaleString("en-US", {
     month: "short",
@@ -88,12 +77,12 @@ function formatDate(value: Date | string) {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
 
-  const appOrigin = getAppOrigin(request);
   const orders = await prisma.order.findMany({
     orderBy: { createdAt: "desc" },
     take: 50,
     include: {
       items: true,
+      deliveryAccess: true,
     },
   });
 
@@ -101,12 +90,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     deliveries: orders.map((order: DeliveryOrder): DeliverySummary => ({
       id: order.id,
       orderNumber: order.orderNumber,
-      customerEmail: order.customerEmail,
-      customerName: order.customerName,
+      customerEmail: order.deliveryAccess?.customerEmail || "",
+      customerName: order.deliveryAccess?.customerName || null,
       createdAt: order.createdAt.toISOString(),
       status: order.status,
-      downloadToken: order.downloadToken,
-      portalUrl: `${appOrigin}/downloads/${order.downloadToken}`,
+      downloadToken: order.deliveryAccess?.downloadToken || "",
+      portalUrl: order.deliveryAccess
+        ? buildDownloadPortalUrl(order.deliveryAccess.downloadToken, request)
+        : "",
       itemCount: order.items.length,
       itemSummary: order.items
         .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
@@ -115,6 +106,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         (sum: number, item: OrderItem) => sum + item.downloadCount,
         0,
       ),
+      deliveryEmailStatus: order.deliveryAccess?.deliveryEmailStatus || "missing",
     })),
   });
 };
@@ -134,21 +126,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   const nextToken = `dl_${crypto.randomBytes(16).toString("hex")}`;
-  const updatedOrder = await prisma.order.update({
-    where: { id: orderId },
+  const updatedAccess = await prisma.deliveryAccess.update({
+    where: { orderId },
     data: { downloadToken: nextToken },
     select: {
-      id: true,
-      orderNumber: true,
+      orderId: true,
       downloadToken: true,
+      order: {
+        select: {
+          orderNumber: true,
+        },
+      },
     },
   });
 
   return json({
     success: true,
-    orderId: updatedOrder.id,
-    orderNumber: updatedOrder.orderNumber,
-    portalUrl: `${getAppOrigin(request)}/downloads/${updatedOrder.downloadToken}`,
+    orderId: updatedAccess.orderId,
+    orderNumber: updatedAccess.order.orderNumber,
+    portalUrl: buildDownloadPortalUrl(updatedAccess.downloadToken, request),
   });
 };
 
