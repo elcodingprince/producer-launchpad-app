@@ -7,12 +7,8 @@ import {
   Scripts,
   ScrollRestoration,
   useLoaderData,
-  useLocation,
 } from "@remix-run/react";
-import { AppProvider } from "@shopify/shopify-app-remix/react";
-import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
-import enTranslations from "@shopify/polaris/locales/en.json";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: polarisStyles },
@@ -24,33 +20,19 @@ export const loader = () => {
 
 export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
-  const location = useLocation();
-  const isMerchantRoute = location.pathname.startsWith("/app");
 
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <meta name="shopify-api-key" content={apiKey} />
+        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
         <Meta />
         <Links />
       </head>
       <body>
-        {isMerchantRoute ? (
-          <AppProvider apiKey={apiKey} i18n={enTranslations} isEmbeddedApp>
-            <NavMenu>
-              <a href="/app/setup">Setup</a>
-              <a href="/app/storage">Storage & Delivery</a>
-              <a href="/app/beats">My Beats</a>
-              <a href="/app/beats/new">Upload Beat</a>
-              <a href="/app/deliveries">Deliveries</a>
-              <a href="/app/licenses">Licenses</a>
-            </NavMenu>
-            <Outlet />
-          </AppProvider>
-        ) : (
-          <Outlet />
-        )}
+        <Outlet />
         <ScrollRestoration />
         <Scripts />
       </body>

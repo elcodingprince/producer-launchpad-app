@@ -3,19 +3,9 @@ import { createShopifyClient, ShopifyClient } from "./shopify";
 export interface LicensePricing {
   licenseId: string;
   licenseGid: string;
+  licenseName: string;
   price: number;
   compareAtPrice?: number;
-}
-
-export interface LicenseFileBundle {
-  tierId: string;
-  tierName: string;
-  files: {
-    id: string;
-    name: string;
-    storageUrl: string;
-    fileType: string;
-  }[];
 }
 
 export interface BeatProductData {
@@ -28,7 +18,6 @@ export interface BeatProductData {
   producerGids: string[];
   producerNames: string[];
   producerAlias?: string;
-  licenseFileBundles: LicenseFileBundle[]; // License-specific file bundles
   licenses: LicensePricing[];
   tags?: string[];
   coverArtUrl?: string;
@@ -113,29 +102,9 @@ export class ProductCreatorService {
       });
     }
 
-    // Store license file bundles as a JSON metafield for each license tier
-    // This allows the storefront to know which files belong to which tier
-    for (const bundle of data.licenseFileBundles) {
-      const filesForTier = bundle.files.map(f => ({
-        id: f.id,
-        name: f.name,
-        url: f.storageUrl,
-        type: f.fileType,
-      }));
-      
-      productMetafields.push({
-        namespace: "custom",
-        key: `license_files_${bundle.tierId}`,
-        value: JSON.stringify(filesForTier),
-        type: "json",
-      });
-    }
-
     // Build variants array - one per license
     const variants = data.licenses.map((license) => ({
-      title:
-        data.licenseFileBundles.find((bundle) => bundle.tierId === license.licenseId)?.tierName ||
-        license.licenseId,
+      title: license.licenseName || license.licenseId,
       price: license.price.toFixed(2),
       compareAtPrice: license.compareAtPrice
         ? license.compareAtPrice.toFixed(2)

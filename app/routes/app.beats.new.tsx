@@ -286,32 +286,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // === CREATE SHOPIFY PRODUCT ===
     console.info("[upload] creating Shopify product");
     
-    // Prepare license file bundles for the product creator
-    const licenseFileBundles = licenseTiers.map(tier => {
-      const tierConfig = licenses.find(t => t.licenseId === tier)!;
-      const tempFileIdsForTier = licenseFilesData[tier] || [];
-      const filesForTier = tempFileIdsForTier
-        .map((tempId: string) => {
-          const result = tempIdToResult.get(tempId);
-          const metadata = fileMetadata[tempId] || {};
-          if (!result) return null;
-          return {
-            id: result.id,
-            name: metadata.name || result.originalName,
-            storageUrl: result.storageUrl,
-            fileType: result.fileType,
-            purpose: metadata.purpose || result.fileType,
-          };
-        })
-        .filter(Boolean);
-      
-      return {
-        tierId: tier,
-        tierName: tierConfig.licenseName,
-        files: filesForTier,
-      };
-    });
-
     // Prepare license prices
     const licensePrices = licenses.map(lp => {
       const customPriceStr = licensePricesData[lp.licenseId];
@@ -319,6 +293,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return {
         licenseId: lp.licenseId,
         licenseGid: lp.id,
+        licenseName: lp.licenseName,
         price: isNaN(customPrice) ? 0 : customPrice,
         compareAtPrice: undefined,
       };
@@ -333,7 +308,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       producerGids,
       producerNames,
       producerAlias: producerAlias || undefined,
-      licenseFileBundles,
       licenses: licensePrices,
       coverArtUrl: shopifyCoverResourceUrl || coverArtUrl,
       previewUrl,
@@ -610,10 +584,10 @@ export default function NewBeatPage() {
 
   return (
     <Page 
-      title="Upload New Beat" 
-      backAction={{ content: "Dashboard", url: "/app" }}
+      title="Upload beat"
+      backAction={{ content: "Beats", url: "/app/beats" }}
       primaryAction={{
-        content: isUploading ? "Uploading..." : "Save product",
+        content: isUploading ? "Uploading..." : "Upload beat",
         onAction: handleSubmit,
         disabled: !isFormValid() || isUploading,
       }}
