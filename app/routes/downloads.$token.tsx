@@ -8,6 +8,18 @@ function normalizeShopifyResourceId(id: string) {
   return match ? match[1] : id;
 }
 
+function isAudioDeliverable(file: BeatFile) {
+  return !["preview", "license_pdf", "cover"].includes(file.filePurpose);
+}
+
+function getFileLabel(file: BeatFile) {
+  if (file.filePurpose === "stems") return "STEMS";
+  if (file.filePurpose === "wav") return "WAV";
+  if (file.filePurpose === "mp3") return "MP3";
+
+  return file.fileType.toUpperCase().replace("AUDIO/", "");
+}
+
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   const { token } = params;
 
@@ -159,14 +171,20 @@ export default function DownloadPortalPage() {
           </h2>
 
           {items.map((item) => (
-            <div key={item.id} style={{ 
-              marginBottom: '24px', 
-              padding: '16px', 
-              border: '1px solid #e5e7eb', 
+            <div key={item.id} style={{
+              marginBottom: '24px',
+              padding: '16px',
+              border: '1px solid #e5e7eb',
               borderRadius: '8px',
               backgroundColor: '#f8fafc'
             }}>
-              
+              {(() => {
+                const audioFiles = item.files.filter((file: BeatFile) => isAudioDeliverable(file));
+                const hasBundle = audioFiles.length > 1;
+                const singleAudioFile = audioFiles.length === 1 ? audioFiles[0] : null;
+
+                return (
+                  <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
                   <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937' }}>{item.beatTitle}</h3>
@@ -183,11 +201,10 @@ export default function DownloadPortalPage() {
 
               {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                
                 {/* Dynamically Generated PDF Contract Button */}
-                <a 
-                  href={`/api/pdf/${order.downloadToken}/${item.id}`} // We will build this handler next
-                  target="_blank" 
+                <a
+                  href={`/api/pdf/${order.downloadToken}/${item.id}`}
+                  target="_blank"
                   rel="noreferrer"
                   style={{
                     backgroundColor: '#111827',
@@ -202,11 +219,9 @@ export default function DownloadPortalPage() {
                   📄 License Agreement (PDF)
                 </a>
 
-                {/* The Actual Beat Audio Files */}
-                {item.files.map((file: BeatFile) => (
+                {hasBundle && (
                   <a
-                    key={file.id}
-                    href={`/api/files/${order.downloadToken}/${file.id}`}
+                    href={`/api/bundle/${order.downloadToken}/${item.id}`}
                     style={{
                       backgroundColor: '#e5e7eb',
                       color: '#374151',
@@ -217,9 +232,26 @@ export default function DownloadPortalPage() {
                       fontWeight: '500'
                     }}
                   >
-                    🎵 Download {file.fileType.toUpperCase().replace('AUDIO/', '')}
+                    🎵 Download Audio Package (ZIP)
                   </a>
-                ))}
+                )}
+
+                {!hasBundle && singleAudioFile && (
+                  <a
+                    href={`/api/files/${order.downloadToken}/${singleAudioFile.id}`}
+                    style={{
+                      backgroundColor: '#e5e7eb',
+                      color: '#374151',
+                      padding: '8px 16px',
+                      borderRadius: '6px',
+                      textDecoration: 'none',
+                      fontSize: '14px',
+                      fontWeight: '500'
+                    }}
+                  >
+                    🎵 Download {getFileLabel(singleAudioFile)}
+                  </a>
+                )}
 
                 {item.deliveryStatus === "missing_files" && (
                   <p style={{ margin: 0, color: '#991b1b', fontSize: '14px' }}>
@@ -227,7 +259,15 @@ export default function DownloadPortalPage() {
                   </p>
                 )}
 
+                {hasBundle && (
+                  <p style={{ margin: 0, width: '100%', color: '#6b7280', fontSize: '13px' }}>
+                    Includes {audioFiles.map((file: BeatFile) => getFileLabel(file)).join(", ")} in one ZIP download.
+                  </p>
+                )}
               </div>
+                  </>
+                );
+              })()}
             </div>
           ))}
 
