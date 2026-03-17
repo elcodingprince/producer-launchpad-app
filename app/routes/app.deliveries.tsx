@@ -645,7 +645,7 @@ export default function DeliveriesPage() {
               </EmptyState>
             </Card>
           ) : (
-            <Card>
+            <Card padding="0">
               <IndexFilters
                 queryValue={queryValue}
                 queryPlaceholder="Search by order number, customer, email, or item"

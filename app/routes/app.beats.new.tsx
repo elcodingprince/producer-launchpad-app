@@ -17,8 +17,8 @@ import {
   Text,
   FormLayout,
 } from "@shopify/polaris";
-import { createMetafieldSetupService } from "../services/metafieldSetup";
 import { createProductCreatorService } from "../services/productCreator";
+import { getAppReadiness } from "~/services/appReadiness.server";
 import {
   getStorageConfigForDisplay,
   shouldHardBlockUpload,
@@ -51,20 +51,18 @@ function normalizeShopifyResourceId(id: string) {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
-  const setupService = createMetafieldSetupService(session, admin);
   const productService = createProductCreatorService(session, admin);
 
   try {
-    const setupStatus = await setupService.checkSetupStatus();
-    const storageConfig = await getStorageConfigForDisplay(session.shop);
+    const readiness = await getAppReadiness(session, admin);
+    const storageConfig = readiness.storageConfig;
 
-    // Redirect to setup if incomplete
-    if (!setupStatus.isComplete) {
-      return redirect("/app/setup");
+    if (readiness.needsProfile || readiness.needsCoreSetup) {
+      return redirect(readiness.onboardingRoute);
     }
 
     if (shouldHardBlockUpload(storageConfig)) {
-      return redirect("/app/storage");
+      return redirect(readiness.settingsRoute);
     }
 
     // Load upload dependencies
@@ -75,7 +73,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ]);
 
     if (producers.length === 0) {
-      return redirect("/app/setup");
+      return redirect(readiness.onboardingRoute);
     }
 
     return json({
@@ -107,7 +105,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const storageConfig = await getStorageConfigForDisplay(session.shop);
 
   if (shouldHardBlockUpload(storageConfig)) {
-    return redirect("/app/storage");
+    return redirect("/app/settings");
   }
 
   try {

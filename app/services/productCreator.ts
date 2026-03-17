@@ -173,6 +173,14 @@ export class ProductCreatorService {
       licenseId: string;
       licenseName: string;
       displayName: string;
+      streamLimit: string;
+      copyLimit: string;
+      termYears: string;
+      fileFormats: string;
+      includesStems: boolean;
+      supportsStemsAddon: boolean;
+      featuresShort: string;
+      terms: string[];
     }>
   > {
     const metaobjects = await this.client.getMetaobjects("beat_license");
@@ -184,7 +192,22 @@ export class ProductCreatorService {
         handle: obj.handle,
         licenseId: fields.get("license_id") || "",
         licenseName: fields.get("license_name") || "",
-        displayName: fields.get("display_name") || fields.get("license_name") || "",
+        displayName: fields.get("license_name") || "",
+        streamLimit: fields.get("stream_limit") || "",
+        copyLimit: fields.get("copy_limit") || "",
+        termYears: fields.get("term_years") || "",
+        fileFormats: fields.get("file_formats") || "",
+        includesStems: fields.get("includes_stems") === "true",
+        supportsStemsAddon: fields.get("supports_stems_addon") === "true",
+        featuresShort: fields.get("features_short") || "",
+        terms: [
+          fields.get("term_1") || "",
+          fields.get("term_2") || "",
+          fields.get("term_3") || "",
+          fields.get("term_4") || "",
+          fields.get("term_5") || "",
+          fields.get("term_6") || "",
+        ],
       };
     });
   }

@@ -19,6 +19,7 @@ export default function AppLayout() {
         <a href="/app/beats">Beats</a>
         <a href="/app/deliveries">Deliveries</a>
         <a href="/app/licenses">Licenses</a>
+        <a href="/app/settings">Settings</a>
       </NavMenu>
       <Outlet />
     </AppProvider>

@@ -267,6 +267,7 @@ export class ShopifyClient {
           id
           name
           type
+          displayNameKey
           fieldDefinitions {
             key
             name
@@ -284,6 +285,7 @@ export class ShopifyClient {
         id: string;
         name: string;
         type: string;
+        displayNameKey?: string | null;
         fieldDefinitions: Array<{
           key: string;
           name: string;
@@ -296,17 +298,32 @@ export class ShopifyClient {
     return response.data?.metaobjectDefinitionByType;
   }
 
-  async addMetaobjectDefinitionFields(
-    definitionId: string,
-    fields: Array<{
+  async updateMetaobjectDefinition(input: {
+    id: string;
+    displayNameKey?: string;
+    createFields?: Array<{
       key: string;
       name: string;
       type: string;
       required?: boolean;
       validations?: Array<{ name: string; value: string }>;
-    }>
-  ) {
-    if (fields.length === 0) return;
+    }>;
+    deleteFieldKeys?: string[];
+  }) {
+    const fieldDefinitions = [
+      ...(input.createFields?.map((field) => ({
+        create: {
+          key: field.key,
+          name: field.name,
+          required: field.required ?? false,
+          type: field.type,
+          ...(field.validations?.length ? { validations: field.validations } : {}),
+        },
+      })) || []),
+      ...(input.deleteFieldKeys?.map((key) => ({
+        delete: { key },
+      })) || []),
+    ];
 
     const mutation = `
       mutation UpdateMetaobjectDefinition($id: ID!, $definition: MetaobjectDefinitionUpdateInput!) {
@@ -323,15 +340,15 @@ export class ShopifyClient {
       }
     `;
 
-    const fieldDefinitions = fields.map((field) => ({
-      create: {
-        key: field.key,
-        name: field.name,
-        required: field.required ?? false,
-        type: field.type,
-        ...(field.validations?.length ? { validations: field.validations } : {}),
-      },
-    }));
+    const definition: Record<string, unknown> = {};
+
+    if (typeof input.displayNameKey === "string") {
+      definition.displayNameKey = input.displayNameKey;
+    }
+
+    if (fieldDefinitions.length > 0) {
+      definition.fieldDefinitions = fieldDefinitions;
+    }
 
     const response = await this.query<{
       metaobjectDefinitionUpdate: {
@@ -339,8 +356,8 @@ export class ShopifyClient {
         userErrors: Array<{ field: string[]; message: string; code?: string }>;
       };
     }>(mutation, {
-      id: definitionId,
-      definition: { fieldDefinitions },
+      id: input.id,
+      definition,
     });
 
     if (response.data?.metaobjectDefinitionUpdate.userErrors.length) {
@@ -352,9 +369,27 @@ export class ShopifyClient {
     }
   }
 
+  async addMetaobjectDefinitionFields(
+    definitionId: string,
+    fields: Array<{
+      key: string;
+      name: string;
+      type: string;
+      required?: boolean;
+      validations?: Array<{ name: string; value: string }>;
+    }>
+  ) {
+    if (fields.length === 0) return;
+    await this.updateMetaobjectDefinition({
+      id: definitionId,
+      createFields: fields,
+    });
+  }
+
   async createMetaobjectDefinition(input: {
     name: string;
     type: string;
+    displayNameKey?: string;
     fieldDefinitions: Array<{
       key: string;
       name: string;

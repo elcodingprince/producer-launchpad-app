@@ -79,10 +79,10 @@ export const REQUIRED_VARIANT_METAFIELDS = [
 export const BEAT_LICENSE_DEFINITION = {
   name: "Beat License",
   type: "beat_license",
+  displayNameKey: "license_name",
   fieldDefinitions: [
     { key: "license_id", name: "License ID", type: "single_line_text_field", required: true },
     { key: "license_name", name: "License Name", type: "single_line_text_field", required: true },
-    { key: "display_name", name: "Display Name", type: "single_line_text_field", required: false },
     { key: "stream_limit", name: "Stream Limit", type: "number_integer", required: false },
     { key: "copy_limit", name: "Copy Limit", type: "number_integer", required: false },
     { key: "term_years", name: "Term (Years)", type: "number_integer", required: false },
@@ -201,7 +201,6 @@ export const DEFAULT_LICENSES = [
     fields: [
       { key: "license_id", value: "basic" },
       { key: "license_name", value: "Basic License" },
-      { key: "display_name", value: "Basic" },
       { key: "stream_limit", value: "10000" },
       { key: "copy_limit", value: "2500" },
       { key: "term_years", value: "1" },
@@ -216,7 +215,6 @@ export const DEFAULT_LICENSES = [
     fields: [
       { key: "license_id", value: "premium" },
       { key: "license_name", value: "Premium License" },
-      { key: "display_name", value: "Premium" },
       { key: "stream_limit", value: "100000" },
       { key: "copy_limit", value: "10000" },
       { key: "term_years", value: "2" },
@@ -231,7 +229,6 @@ export const DEFAULT_LICENSES = [
     fields: [
       { key: "license_id", value: "unlimited" },
       { key: "license_name", value: "Unlimited License" },
-      { key: "display_name", value: "Unlimited" },
       { key: "stream_limit", value: "0" },
       { key: "copy_limit", value: "0" },
       { key: "term_years", value: "0" },
@@ -559,6 +556,58 @@ export class MetafieldSetupService {
     }
   }
 
+  async ensureBeatLicenseDefinitionSchema(): Promise<void> {
+    const definition = await this.client.getMetaobjectDefinitionByType("beat_license");
+    if (!definition) return;
+
+    const expectedByKey = new Map(
+      BEAT_LICENSE_DEFINITION.fieldDefinitions.map((field) => [field.key, field])
+    );
+    const existingByKey = new Map(definition.fieldDefinitions.map((field) => [field.key, field]));
+
+    const missingFields: Array<{
+      key: string;
+      name: string;
+      type: string;
+      required?: boolean;
+      validations?: Array<{ name: string; value: string }>;
+    }> = [];
+
+    for (const [key, expected] of expectedByKey) {
+      const existing = existingByKey.get(key);
+      if (!existing) {
+        missingFields.push({
+          key: expected.key,
+          name: expected.name,
+          type: expected.type,
+          required: expected.required,
+        });
+        continue;
+      }
+
+      if (existing.type.name !== expected.type) {
+        throw new Error(
+          `Beat license field ${key} has type ${existing.type.name} but expected ${expected.type}. Update this field in Shopify Admin.`
+        );
+      }
+    }
+
+    const needsDisplayNameKey =
+      definition.displayNameKey !== BEAT_LICENSE_DEFINITION.displayNameKey;
+    const hasLegacyDisplayNameField = existingByKey.has("display_name");
+
+    if (!needsDisplayNameKey && !hasLegacyDisplayNameField && missingFields.length === 0) {
+      return;
+    }
+
+    await this.client.updateMetaobjectDefinition({
+      id: definition.id,
+      displayNameKey: BEAT_LICENSE_DEFINITION.displayNameKey,
+      createFields: missingFields,
+      deleteFieldKeys: hasLegacyDisplayNameField ? ["display_name"] : [],
+    });
+  }
+
   async ensureProducerDefinitionSchema(): Promise<void> {
     const definition = await this.client.getMetaobjectDefinitionByType("producer");
     if (!definition) return;
@@ -735,6 +784,7 @@ export class MetafieldSetupService {
     try {
       // Step 1: Create metaobject definitions first (needed for metafield references)
       result.created.metaobjectDefinitions = await this.createMissingMetaobjectDefinitions();
+      await this.ensureBeatLicenseDefinitionSchema();
       await this.ensureGenreDefinitionSchema();
       await this.ensureProducerDefinitionSchema();
     } catch (error) {

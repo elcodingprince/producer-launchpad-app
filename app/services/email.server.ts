@@ -17,6 +17,15 @@ export interface SendDeliveryEmailResult {
   messageId: string | null;
 }
 
+export interface DeliveryEmailConfigSummary {
+  provider: "resend";
+  status: "configured" | "needs_setup";
+  from: string | null;
+  replyTo: string | null;
+  brandName: string;
+  trackingEnabled: boolean;
+}
+
 function getEnv(name: "RESEND_API_KEY" | "DELIVERY_EMAIL_FROM") {
   const value = process.env[name];
 
@@ -33,6 +42,23 @@ function getOptionalEnv(name: "DELIVERY_EMAIL_REPLY_TO" | "DELIVERY_EMAIL_BRAND_
 
 export function isResendWebhookTrackingEnabled() {
   return process.env.RESEND_WEBHOOKS_ENABLED === "true";
+}
+
+export function getDeliveryEmailConfigSummary(): DeliveryEmailConfigSummary {
+  const apiKey = process.env.RESEND_API_KEY?.trim() || "";
+  const from = process.env.DELIVERY_EMAIL_FROM?.trim() || null;
+  const replyTo = process.env.DELIVERY_EMAIL_REPLY_TO?.trim() || null;
+  const brandName =
+    process.env.DELIVERY_EMAIL_BRAND_NAME?.trim() || "Producer Launchpad";
+
+  return {
+    provider: "resend",
+    status: apiKey && from ? "configured" : "needs_setup",
+    from,
+    replyTo,
+    brandName,
+    trackingEnabled: isResendWebhookTrackingEnabled(),
+  };
 }
 
 export function getResendWebhookSecret() {
