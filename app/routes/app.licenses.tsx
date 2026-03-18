@@ -30,6 +30,7 @@ import {
   Tooltip,
 } from "@shopify/polaris";
 import { CheckCircleIcon, CollectionIcon } from "@shopify/polaris-icons";
+import { FileFormatBadge } from "~/components/FileFormatBadge";
 import { DEFAULT_LICENSES } from "~/services/metafieldSetup";
 import { createProductCreatorService } from "~/services/productCreator";
 import { createShopifyClient } from "~/services/shopify";
@@ -70,6 +71,10 @@ type LicenseFormState = {
   featuresShort: string;
   terms: string[];
 };
+
+type PackageFormat = "MP3" | "WAV" | "STEMS";
+
+const PACKAGE_FORMAT_ORDER: PackageFormat[] = ["MP3", "WAV", "STEMS"];
 
 const STARTER_HANDLES = new Set(DEFAULT_LICENSES.map((license) => license.handle));
 
@@ -148,6 +153,35 @@ function parseFileFormatBadges(value: string) {
     .split(",")
     .map((format) => format.trim())
     .filter(Boolean);
+}
+
+function normalizePackageFormat(value: string): PackageFormat | null {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "MP3") return "MP3";
+  if (normalized === "WAV") return "WAV";
+  if (normalized === "STEMS" || normalized === "STEMS ZIP" || normalized === "ZIP") {
+    return "STEMS";
+  }
+  return null;
+}
+
+function getSelectedPackageFormats(fileFormats: string, includesStems: boolean) {
+  const selected = new Set<PackageFormat>();
+
+  parseFileFormatBadges(fileFormats).forEach((format) => {
+    const normalized = normalizePackageFormat(format);
+    if (normalized) selected.add(normalized);
+  });
+
+  if (includesStems) {
+    selected.add("STEMS");
+  }
+
+  return PACKAGE_FORMAT_ORDER.filter((format) => selected.has(format));
+}
+
+function formatPackageFormats(formats: string[]) {
+  return PACKAGE_FORMAT_ORDER.filter((format) => formats.includes(format)).join(", ");
 }
 
 function getLicenseStatus(
@@ -470,6 +504,10 @@ export default function LicensesPage() {
     const previewFeatures = parseFeatureLines(licenseForm.featuresShort);
     const fileBadges = parseFileFormatBadges(licenseForm.fileFormats);
     const customTermCount = countCustomTerms(licenseForm.terms);
+    const selectedPackageFormats = getSelectedPackageFormats(
+      licenseForm.fileFormats,
+      licenseForm.includesStems,
+    );
     const isStarter = editorLicense?.isStarter || false;
     const previewStatus =
       editorMode === "create"
@@ -616,30 +654,37 @@ export default function LicensesPage() {
                   </BlockStack>
 
                   <FormLayout>
-                    <TextField
-                      label="Included file formats"
-                      value={licenseForm.fileFormats}
-                      onChange={(value) =>
-                        setLicenseForm((current) => ({ ...current, fileFormats: value }))
-                      }
-                      helpText="Example: MP3, WAV, STEMS"
-                      autoComplete="off"
-                    />
-
                     <ChoiceList
-                      title="Includes stems"
+                      title="Included files"
+                      allowMultiple
                       choices={[
-                        { label: "Yes, stems are included in this license", value: "true" },
-                        { label: "No, stems are not included", value: "false" },
+                        { label: "MP3", value: "MP3" },
+                        { label: "WAV", value: "WAV" },
+                        { label: "STEMS ZIP", value: "STEMS" },
                       ]}
-                      selected={[String(licenseForm.includesStems)]}
-                      onChange={([value]) =>
+                      selected={selectedPackageFormats}
+                      onChange={(selected) =>
                         setLicenseForm((current) => ({
                           ...current,
-                          includesStems: value === "true",
+                          fileFormats: formatPackageFormats(selected),
+                          includesStems: selected.includes("STEMS"),
                         }))
                       }
                     />
+
+                    <TextField
+                      label="File formats"
+                      value={licenseForm.fileFormats}
+                      autoComplete="off"
+                      readOnly
+                      helpText="Locked to the delivery package above so storefront messaging matches what is actually delivered."
+                    />
+
+                    <Text as="p" tone="subdued">
+                      {licenseForm.includesStems
+                        ? "Stems are included in this package."
+                        : "Stems are not included in this package."}
+                    </Text>
 
                     <ChoiceList
                       title="Stems add-on availability"
@@ -735,7 +780,7 @@ export default function LicensesPage() {
                   {fileBadges.length > 0 ? (
                     <InlineStack gap="200">
                       {fileBadges.map((format) => (
-                        <Badge key={format}>{format}</Badge>
+                        <FileFormatBadge key={format} format={format} />
                       ))}
                     </InlineStack>
                   ) : (
@@ -993,7 +1038,7 @@ export default function LicensesPage() {
                                 {fileBadges.length > 0 ? (
                                   <InlineStack gap="200">
                                     {fileBadges.map((format) => (
-                                      <Badge key={format}>{format}</Badge>
+                                      <FileFormatBadge key={format} format={format} />
                                     ))}
                                   </InlineStack>
                                 ) : (

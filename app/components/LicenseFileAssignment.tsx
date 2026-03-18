@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, memo } from 'react';
 import {
+  Badge,
   Card,
   Button,
   DropZone,
@@ -9,49 +10,20 @@ import {
   Banner,
   Spinner,
   Icon,
-  Popover,
-  OptionList,
   Box,
   Divider,
-  Tag,
   TextField,
 } from '@shopify/polaris';
 import {
   XIcon,
-  SoundIcon,
-  PlayCircleIcon,
   AlertDiamondIcon,
-  PackageIcon,
   StarFilledIcon,
   CheckCircleIcon,
   ImageIcon,
   PlusIcon,
 } from '@shopify/polaris-icons';
 import { validateUploadFile, ALLOWED_FILE_TYPES } from '../services/bunnyCdn';
-
-// ── File type icon badge — Polaris-native pattern from setup wizard ──────────
-const FileTypeChip = memo(({ type, purpose }: { type: string; purpose?: string }) => {
-  type BgType = 'bg-surface-success' | 'bg-surface-warning' | 'bg-surface-magic' | 'bg-surface-secondary';
-  type IconTone = 'success' | 'caution' | 'magic' | 'base';
-  const MAP: Record<string, { bg: BgType; tone: IconTone; label: string; icon: any }> = {
-    mp3:     { bg: 'bg-surface-success',   tone: 'success', label: 'MP3',     icon: SoundIcon },
-    wav:     { bg: 'bg-surface-secondary', tone: 'base',    label: 'WAV',     icon: SoundIcon },
-    stems:   { bg: 'bg-surface-warning',   tone: 'caution', label: 'Stems',   icon: PackageIcon },
-    cover:   { bg: 'bg-surface-magic',     tone: 'magic',   label: 'Cover',   icon: ImageIcon },
-    preview: { bg: 'bg-surface-magic',     tone: 'magic',   label: 'Preview', icon: PlayCircleIcon },
-    other:   { bg: 'bg-surface-secondary', tone: 'base',    label: 'File',    icon: SoundIcon },
-  };
-  const c = MAP[purpose || type] || MAP.other;
-  return (
-    <InlineStack gap="150" blockAlign="center">
-      <Box background={c.bg} padding="150" borderRadius="100">
-        <Icon source={c.icon} tone={c.tone} />
-      </Box>
-      <Text as="span" variant="bodySm" fontWeight="semibold">{c.label}</Text>
-    </InlineStack>
-  );
-});
-FileTypeChip.displayName = 'FileTypeChip';
+import { FileFormatBadge, getFileFormatLabel } from "./FileFormatBadge";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,7 +33,7 @@ export interface LicenseTier {
   price: string;
   description?: string;
   color?: string;
-  recommendedFiles?: string[];
+  packageFormats?: Array<'mp3' | 'wav' | 'stems'>;
 }
 
 export interface UploadedFile {
@@ -108,7 +80,11 @@ const TIER_DEFAULTS: Record<string, { icon: any; tint: 'info' | 'warning'; recom
 
 const getTierMeta = (tier: LicenseTier) => {
   const d = TIER_DEFAULTS[tier.id.toLowerCase()] || { icon: CheckCircleIcon, tint: 'info', recommendedFiles: [] };
-  return { icon: d.icon, tint: d.tint, recommendedFiles: tier.recommendedFiles || d.recommendedFiles };
+  return {
+    icon: d.icon,
+    tint: d.tint,
+    recommendedFiles: tier.packageFormats?.length ? tier.packageFormats : d.recommendedFiles,
+  };
 };
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -133,7 +109,6 @@ export function LicenseFileAssignment({
   const [internalLicensePrices, setInternalLicensePrices] = useState<Record<string, string>>({ basic: "29.99", premium: "49.99", unlimited: "99.99" });
   const [internalPreviewFile, setInternalPreviewFile]   = useState<UploadedFile | null>(null);
   const [internalCoverArtFile, setInternalCoverArtFile] = useState<UploadedFile | null>(null);
-  const [popoverOpen, setPopoverOpen]                   = useState<string | null>(null);
   const [rejectedFiles, setRejectedFiles]               = useState<Array<{ file: File; error: string }>>([]);
   const [coverArtPreviewUrl, setCoverArtPreviewUrl]     = useState<string | null>(null);
 
@@ -143,13 +118,34 @@ export function LicenseFileAssignment({
   const previewFile   = externalPreviewFile    ?? internalPreviewFile;
   const coverArtFile  = externalCoverArtFile   ?? internalCoverArtFile;
 
+  const buildAutomaticLicenseFiles = useCallback((newFiles: UploadedFile[]) => {
+    const latestByPurpose = new Map<string, string>();
+
+    for (const file of newFiles) {
+      if (file.purpose === 'mp3' || file.purpose === 'wav' || file.purpose === 'stems') {
+        latestByPurpose.set(file.purpose, file.id);
+      }
+    }
+
+    const nextLicenseFiles: LicenseFiles = {};
+
+    licenses.forEach((tier) => {
+      const requiredFormats = getTierMeta(tier).recommendedFiles;
+      nextLicenseFiles[tier.id] = requiredFormats
+        .map((format) => latestByPurpose.get(format))
+        .filter((value): value is string => Boolean(value));
+    });
+
+    return nextLicenseFiles;
+  }, [licenses]);
+
   const updateState = useCallback((
     newFiles: UploadedFile[],
-    newLicenseFiles: LicenseFiles,
     newPreviewFile: UploadedFile | null,
     newCoverArtFile: UploadedFile | null,
     newLicensePrices: Record<string, string>,
   ) => {
+    const newLicenseFiles = buildAutomaticLicenseFiles(newFiles);
     if (onChange) {
       onChange({ uploadedFiles: newFiles, licenseFiles: newLicenseFiles, previewFile: newPreviewFile, coverArtFile: newCoverArtFile, licensePrices: newLicensePrices });
     } else {
@@ -159,7 +155,7 @@ export function LicenseFileAssignment({
       setInternalCoverArtFile(newCoverArtFile);
       setInternalLicensePrices(newLicensePrices);
     }
-  }, [onChange]);
+  }, [buildAutomaticLicenseFiles, onChange]);
 
   const detectFileType = useCallback((filename: string): UploadedFile['type'] => {
     const ext = filename.toLowerCase().split('.').pop();
@@ -187,15 +183,15 @@ export function LicenseFileAssignment({
     };
     const url = URL.createObjectURL(file);
     setCoverArtPreviewUrl(url);
-    updateState(uploadedFiles, licenseFiles, previewFile, newFile, licensePrices);
+    updateState(uploadedFiles, previewFile, newFile, licensePrices);
     setRejectedFiles([]);
-  }, [uploadedFiles, licenseFiles, previewFile, licensePrices, formatFileSize, updateState]);
+  }, [uploadedFiles, previewFile, licensePrices, formatFileSize, updateState]);
 
   const removeCoverArt = useCallback(() => {
     if (coverArtPreviewUrl) URL.revokeObjectURL(coverArtPreviewUrl);
     setCoverArtPreviewUrl(null);
-    updateState(uploadedFiles, licenseFiles, previewFile, null, licensePrices);
-  }, [uploadedFiles, licenseFiles, previewFile, licensePrices, coverArtPreviewUrl, updateState]);
+    updateState(uploadedFiles, previewFile, null, licensePrices);
+  }, [uploadedFiles, previewFile, licensePrices, coverArtPreviewUrl, updateState]);
 
   // Preview
   const handlePreviewDrop = useCallback(async (_: File[], accepted: File[], rejected: File[]) => {
@@ -211,15 +207,15 @@ export function LicenseFileAssignment({
     if (onUpload) {
       try {
         const uploaded = await onUpload([file], 'preview');
-        updateState(uploadedFiles, licenseFiles, uploaded[0] || null, coverArtFile, licensePrices);
+        updateState(uploadedFiles, uploaded[0] || null, coverArtFile, licensePrices);
       } catch (err) {
         setRejectedFiles([{ file, error: err instanceof Error ? err.message : 'Upload failed' }]);
       }
     } else {
-      updateState(uploadedFiles, licenseFiles, fileData, coverArtFile, licensePrices);
+      updateState(uploadedFiles, fileData, coverArtFile, licensePrices);
     }
     setRejectedFiles([]);
-  }, [uploadedFiles, licenseFiles, coverArtFile, licensePrices, onUpload, formatFileSize, updateState]);
+  }, [uploadedFiles, coverArtFile, licensePrices, onUpload, formatFileSize, updateState]);
 
   // License files pool
   const handleLicenseFilesDrop = useCallback(async (_: File[], accepted: File[], rejected: File[]) => {
@@ -244,24 +240,38 @@ export function LicenseFileAssignment({
     if (onUpload && validFiles.length > 0) {
       try {
         const uploaded = await onUpload(validFiles.map((f) => f.file!).filter(Boolean), 'license');
-        updateState([...uploadedFiles, ...uploaded], licenseFiles, previewFile, coverArtFile, licensePrices);
+        const mergedByPurpose = new Map<string, UploadedFile>();
+        [...uploadedFiles, ...uploaded].forEach((file) => {
+          const purposeKey =
+            file.purpose === 'mp3' || file.purpose === 'wav' || file.purpose === 'stems'
+              ? file.purpose
+              : file.id;
+          mergedByPurpose.set(purposeKey, file);
+        });
+        updateState(Array.from(mergedByPurpose.values()), previewFile, coverArtFile, licensePrices);
       } catch (err) {
         setRejectedFiles(validFiles.map((f) => ({ file: f.file!, error: err instanceof Error ? err.message : 'Upload failed' })).filter((r) => r.file));
       }
     } else {
-      updateState([...uploadedFiles, ...validFiles], licenseFiles, previewFile, coverArtFile, licensePrices);
+      const mergedByPurpose = new Map<string, UploadedFile>();
+      [...uploadedFiles, ...validFiles].forEach((file) => {
+        const purposeKey =
+          file.purpose === 'mp3' || file.purpose === 'wav' || file.purpose === 'stems'
+            ? file.purpose
+            : file.id;
+        mergedByPurpose.set(purposeKey, file);
+      });
+      updateState(Array.from(mergedByPurpose.values()), previewFile, coverArtFile, licensePrices);
     }
     setRejectedFiles([]);
-  }, [uploadedFiles, licenseFiles, previewFile, coverArtFile, licensePrices, onUpload, detectFileType, formatFileSize, updateState]);
+  }, [uploadedFiles, previewFile, coverArtFile, licensePrices, onUpload, detectFileType, formatFileSize, updateState]);
 
-  const removePreviewFile  = useCallback(() => updateState(uploadedFiles, licenseFiles, null, coverArtFile, licensePrices), [uploadedFiles, licenseFiles, coverArtFile, licensePrices, updateState]);
+  const removePreviewFile  = useCallback(() => updateState(uploadedFiles, null, coverArtFile, licensePrices), [uploadedFiles, coverArtFile, licensePrices, updateState]);
 
   const removeLicenseFile = useCallback((fileId: string) => {
     const updated = uploadedFiles.filter((f) => f.id !== fileId);
-    const updatedLF: LicenseFiles = {};
-    Object.keys(licenseFiles).forEach((tid) => { updatedLF[tid] = licenseFiles[tid].filter((id) => id !== fileId); });
-    updateState(updated, updatedLF, previewFile, coverArtFile, licensePrices);
-  }, [uploadedFiles, licenseFiles, previewFile, coverArtFile, licensePrices, updateState]);
+    updateState(updated, previewFile, coverArtFile, licensePrices);
+  }, [uploadedFiles, previewFile, coverArtFile, licensePrices, updateState]);
 
   // Handle "Add files" button click → hidden input
   const handleFileInputChange = useCallback(
@@ -351,7 +361,7 @@ export function LicenseFileAssignment({
                 ) : (
                   <Box borderWidth="025" borderColor="border" borderRadius="200" padding="300">
                     <InlineStack gap="300" blockAlign="center">
-                      <FileTypeChip type="preview" purpose="preview" />
+                          <FileFormatBadge format="preview" />
                       <BlockStack gap="0">
                         <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
                           <Text as="span" variant="bodySm" fontWeight="medium">{previewFile.name}</Text>
@@ -404,7 +414,7 @@ export function LicenseFileAssignment({
                     {uploadedFiles.map((file) => (
                       <Box key={file.id} borderWidth="025" borderColor="border" borderRadius="200" padding="300">
                         <InlineStack gap="300" blockAlign="center">
-                          <FileTypeChip type={file.type} purpose={file.purpose} />
+                          <FileFormatBadge format={file.purpose || file.type} />
                           <BlockStack gap="0">
                             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
                               <Text as="span" variant="bodySm" fontWeight="medium">{file.name}</Text>
@@ -437,15 +447,18 @@ export function LicenseFileAssignment({
                 <tr style={{ backgroundColor: 'var(--p-color-bg-surface-secondary)', borderBottom: '1px solid var(--p-color-border)' }}>
                   <th style={{ padding: '8px 16px', fontWeight: 500, fontSize: '13px', color: 'var(--p-color-text-subdued)', width: '25%' }}>Variant</th>
                   <th style={{ padding: '8px 16px', fontWeight: 500, fontSize: '13px', color: 'var(--p-color-text-subdued)', width: '25%' }}>Price</th>
-                  <th style={{ padding: '8px 16px', fontWeight: 500, fontSize: '13px', color: 'var(--p-color-text-subdued)', width: '50%' }}>Assigned license files</th>
+                  <th style={{ padding: '8px 16px', fontWeight: 500, fontSize: '13px', color: 'var(--p-color-text-subdued)', width: '50%' }}>Delivered package</th>
                 </tr>
               </thead>
               <tbody>
                 {licenses.map((tier, index) => {
                   const meta = getTierMeta(tier);
                   const isNotLast = index < licenses.length - 1;
-                  const isPopoverOpen = popoverOpen === tier.id;
                   const tierFiles = licenseFiles[tier.id] || [];
+                  const assignedFiles = tierFiles.map((fileId) => getFile(fileId)).filter(Boolean) as UploadedFile[];
+                  const missingFiles = meta.recommendedFiles.filter(
+                    (format) => !assignedFiles.some((file) => file.purpose === format)
+                  );
 
                   return (
                     <tr key={tier.id} style={{ borderBottom: isNotLast ? '1px solid var(--p-color-border)' : 'none' }}>
@@ -458,13 +471,6 @@ export function LicenseFileAssignment({
                           </div>
                           <Text variant="bodyMd" as="span" fontWeight="medium">{tier.name}</Text>
                         </InlineStack>
-                        {meta.recommendedFiles.length > 0 && (
-                          <div style={{ marginTop: '8px' }}>
-                            <Text as="span" variant="bodyXs" tone="subdued">
-                              Recommended: {meta.recommendedFiles.join(', ').toUpperCase()}
-                            </Text>
-                          </div>
-                        )}
                       </td>
                       <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
                         <div style={{ maxWidth: '140px' }}>
@@ -476,72 +482,47 @@ export function LicenseFileAssignment({
                             value={licensePrices[tier.id] || ''}
                             onChange={(val) => {
                               const updated = { ...licensePrices, [tier.id]: val };
-                              updateState(uploadedFiles, licenseFiles, previewFile, coverArtFile, updated);
+                              updateState(uploadedFiles, previewFile, coverArtFile, updated);
                             }}
                           />
                         </div>
                       </td>
                       <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
-                        <Popover
-                          active={isPopoverOpen}
-                          activator={
-                            <div
-                              onClick={() => uploadedFiles.length > 0 && setPopoverOpen(isPopoverOpen ? null : tier.id)}
-                              style={{
-                                padding: '8px 12px',
-                                border: isPopoverOpen ? '2px solid var(--p-color-border-interactive)' : '1px solid var(--p-color-border)',
-                                borderRadius: '8px',
-                                cursor: uploadedFiles.length === 0 ? 'not-allowed' : 'pointer',
-                                backgroundColor: uploadedFiles.length === 0 ? 'var(--p-color-bg-surface-disabled)' : 'var(--p-color-bg-surface)',
-                                minHeight: '36px',
-                                display: 'flex',
-                                flexWrap: 'wrap' as const,
-                                gap: '8px',
-                                alignItems: 'center',
-                              }}
-                            >
-                              {tierFiles.length > 0 ? (
-                                <InlineStack gap="200" wrap>
-                                  {tierFiles.map((fileId) => {
-                                    const file = getFile(fileId);
-                                    if (!file) return null;
-                                    return (
-                                      <Tag
-                                        key={fileId}
-                                        onRemove={() => {
-                                          const updated = { ...licenseFiles, [tier.id]: (licenseFiles[tier.id] || []).filter((id) => id !== fileId) };
-                                          updateState(uploadedFiles, updated, previewFile, coverArtFile, licensePrices);
-                                        }}
-                                      >
-                                        {file.type.toUpperCase()}
-                                      </Tag>
-                                    );
-                                  })}
-                                </InlineStack>
-                              ) : (
-                                <Text as="span" variant="bodySm" tone={uploadedFiles.length === 0 ? 'disabled' : 'subdued'}>
-                                  {uploadedFiles.length === 0 ? 'Upload license files above first' : 'Click to assign files…'}
-                                </Text>
-                              )}
-                            </div>
-                          }
-                          onClose={() => setPopoverOpen(null)}
-                          autofocusTarget="none"
-                          fullWidth
+                        <Box
+                          padding="300"
+                          borderWidth="025"
+                          borderColor="border"
+                          borderRadius="200"
+                          background={uploadedFiles.length === 0 ? 'bg-surface-disabled' : 'bg-surface'}
                         >
-                          <Box minWidth="300px">
-                            <OptionList
-                              title={`Select files for ${tier.name}`}
-                              onChange={(selectedIds) => {
-                                const updated = { ...licenseFiles, [tier.id]: selectedIds };
-                                updateState(uploadedFiles, updated, previewFile, coverArtFile, licensePrices);
-                              }}
-                              options={uploadedFiles.map((file) => ({ value: file.id, label: file.name }))}
-                              selected={tierFiles}
-                              allowMultiple
-                            />
-                          </Box>
-                        </Popover>
+                          <BlockStack gap="200">
+                            {uploadedFiles.length === 0 ? (
+                              <Text as="span" variant="bodySm" tone="disabled">
+                                Upload license files above first
+                              </Text>
+                            ) : assignedFiles.length > 0 ? (
+                                <InlineStack gap="200" wrap>
+                                  {assignedFiles.map((file) => (
+                                  <FileFormatBadge key={file.id} format={file.purpose || file.type} />
+                                ))}
+                              </InlineStack>
+                            ) : (
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                No matching package files uploaded yet
+                              </Text>
+                            )}
+
+                            {missingFiles.length > 0 ? (
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                Missing: {missingFiles.map((file) => getFileFormatLabel(file)).join(', ')}
+                              </Text>
+                            ) : uploadedFiles.length > 0 ? (
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                Auto-linked from this license template
+                              </Text>
+                            ) : null}
+                          </BlockStack>
+                        </Box>
                       </td>
                     </tr>
                   );

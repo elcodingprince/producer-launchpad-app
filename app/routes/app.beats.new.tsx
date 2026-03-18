@@ -47,6 +47,47 @@ function normalizeShopifyResourceId(id: string) {
   return match ? match[1] : id;
 }
 
+type DeliveryFormat = "mp3" | "wav" | "stems";
+
+const DELIVERY_FORMAT_ORDER: DeliveryFormat[] = ["mp3", "wav", "stems"];
+
+function normalizeDeliveryFormat(value: string): DeliveryFormat | null {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "mp3") return "mp3";
+  if (normalized === "wav") return "wav";
+  if (
+    normalized === "stems" ||
+    normalized === "stems zip" ||
+    normalized === "zip"
+  ) {
+    return "stems";
+  }
+  return null;
+}
+
+function getRequiredDeliveryFormats(license: {
+  fileFormats?: string;
+  includesStems?: boolean;
+}): DeliveryFormat[] {
+  const selected = new Set<DeliveryFormat>();
+
+  String(license.fileFormats || "")
+    .split(",")
+    .map((format) => normalizeDeliveryFormat(format))
+    .filter((format): format is DeliveryFormat => Boolean(format))
+    .forEach((format) => selected.add(format));
+
+  if (license.includesStems) {
+    selected.add("stems");
+  }
+
+  return DELIVERY_FORMAT_ORDER.filter((format) => selected.has(format));
+}
+
+function formatDeliveryFormatLabel(format: DeliveryFormat) {
+  return format === "stems" ? "STEMS ZIP" : format.toUpperCase();
+}
+
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -157,14 +198,33 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Get actual license GIDs from the database
     const dbLicenses = await productService.getLicenseMetaobjects();
     const licenseTiers = dbLicenses.map(l => l.licenseId);
-    
-    // Validate each license tier has at least one file
+
+    // Validate each license tier has the full package its template promises
     const missingAssignments: string[] = [];
-    
-    for (const tier of licenseTiers) {
-      const filesForTier = licenseFilesData[tier];
+
+    for (const license of dbLicenses) {
+      const filesForTier = licenseFilesData[license.licenseId];
+      const requiredFormats = getRequiredDeliveryFormats(license);
+
       if (!filesForTier || !Array.isArray(filesForTier) || filesForTier.length === 0) {
-        missingAssignments.push(tier);
+        missingAssignments.push(
+          `${license.licenseName}: ${requiredFormats.map(formatDeliveryFormatLabel).join(", ") || "package files"}`,
+        );
+        continue;
+      }
+
+      const assignedFormats = new Set(
+        filesForTier
+          .map((fileId: string) => fileMetadata[fileId]?.purpose || fileMetadata[fileId]?.type || "")
+          .map((format: string) => normalizeDeliveryFormat(format))
+          .filter((format: DeliveryFormat | null): format is DeliveryFormat => Boolean(format))
+      );
+
+      const missingFormats = requiredFormats.filter((format) => !assignedFormats.has(format));
+      if (missingFormats.length > 0) {
+        missingAssignments.push(
+          `${license.licenseName}: ${missingFormats.map(formatDeliveryFormatLabel).join(", ")}`,
+        );
       }
     }
 
@@ -172,7 +232,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json(
         {
           success: false,
-          error: `Each license tier must have at least one file assigned. Missing: ${missingAssignments.join(", ")}`,
+          error: `Some license packages are missing required files. ${missingAssignments.join(" | ")}`,
         },
         { status: 400 }
       );
@@ -469,7 +529,19 @@ export default function NewBeatPage() {
 
   // Check if form is valid
   const isFormValid = () => {
-    const hasAllLicenseFiles = licenses.filter(Boolean).every(l => licenseFiles[l!.licenseId] && licenseFiles[l!.licenseId].length > 0);
+    const hasAllLicenseFiles = licenses.filter(Boolean).every((license) => {
+      const requiredFormats = getRequiredDeliveryFormats(license!);
+      const assignedFileIds = licenseFiles[license!.licenseId] || [];
+      const assignedFormats = new Set(
+        assignedFileIds
+          .map((fileId) => uploadedFiles.find((file) => file.id === fileId)?.purpose || "")
+          .map((format) => normalizeDeliveryFormat(format))
+          .filter((format): format is DeliveryFormat => Boolean(format))
+      );
+
+      return requiredFormats.every((format) => assignedFormats.has(format));
+    });
+
     return (
       title &&
       bpm &&
@@ -553,7 +625,8 @@ export default function NewBeatPage() {
     id: l!.licenseId,
     name: l!.licenseName,
     price: licensePrices[l!.licenseId] ? `$${licensePrices[l!.licenseId]}` : "Not set",
-    description: l!.displayName
+    description: l!.displayName,
+    packageFormats: getRequiredDeliveryFormats(l!),
   }));
 
   const genreOptions = genres.filter(Boolean).map((g) => ({
