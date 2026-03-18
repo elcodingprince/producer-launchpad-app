@@ -26,10 +26,8 @@ import {
   CollectionIcon,
   ColorIcon,
   PlusIcon,
-  SettingsIcon,
 } from "@shopify/polaris-icons";
 import {
-  getDeliveryEmailConfigSummary,
   isResendWebhookTrackingEnabled,
 } from "~/services/email.server";
 import { createMetafieldSetupService } from "~/services/metafieldSetup";
@@ -49,11 +47,143 @@ type ActionData = {
   storageError?: string | null;
 };
 
+type AdminClient = {
+  graphql: (query: string, options?: Record<string, any>) => Promise<Response>;
+};
+
+type RecentDeliveryOverview = {
+  id: string;
+  orderNumber: string;
+  customerEmail: string;
+  createdAt: string;
+  itemSummary: string;
+  deliveryEmailStatus: string;
+  deliveryEmailConfirmedStatus: string | null;
+};
+
 function getInitialStep(nextStep: "profile" | "catalog" | "storage" | "ready") {
   if (nextStep === "profile") return 1;
   if (nextStep === "catalog") return 2;
   if (nextStep === "storage") return 3;
   return 1;
+}
+
+function buildDeliveryItemSummary(
+  items: Array<{ beatTitle: string; licenseName: string }>,
+) {
+  if (items.length === 0) return "No licensed items";
+
+  const [firstItem, ...remainingItems] = items;
+  const baseSummary = `${firstItem.beatTitle} - ${firstItem.licenseName}`;
+
+  if (remainingItems.length === 0) {
+    return baseSummary;
+  }
+
+  return `${baseSummary} + ${remainingItems.length} more`;
+}
+
+function formatHomeDate(value: string) {
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function getDisplayedDeliveryEmailStatus(
+  sendStatus: string,
+  confirmedStatus: string | null,
+  confirmationEnabled: boolean,
+) {
+  if (!confirmationEnabled) {
+    return sendStatus;
+  }
+
+  if (sendStatus === "failed" || sendStatus === "skipped") {
+    return sendStatus;
+  }
+
+  if (confirmedStatus) {
+    return confirmedStatus;
+  }
+
+  if (sendStatus === "sent") {
+    return "pending";
+  }
+
+  return sendStatus;
+}
+
+function getDeliveryEmailBadgeTone(
+  status: string,
+): "success" | "critical" | "attention" | undefined {
+  if (status === "sent" || status === "delivered") return "success";
+  if (status === "failed") return "critical";
+  if (status === "bounced" || status === "complained") return "critical";
+  if (status === "skipped" || status === "pending" || status === "delayed") {
+    return "attention";
+  }
+
+  return undefined;
+}
+
+function getDeliveryEmailBadgeLabel(status: string) {
+  if (status === "sent") return "Sent";
+  if (status === "delivered") return "Delivered";
+  if (status === "failed") return "Failed";
+  if (status === "bounced") return "Bounced";
+  if (status === "complained") return "Complained";
+  if (status === "delayed") return "Delayed";
+  if (status === "skipped") return "Skipped";
+  if (status === "pending") return "Pending";
+
+  return "Unknown";
+}
+
+async function getPublishedBeatCount(admin: AdminClient): Promise<number> {
+  let beatCount = 0;
+  let hasNextPage = true;
+  let cursor: string | null = null;
+
+  const query = `
+    query HomeBeatCount($cursor: String) {
+      products(first: 100, after: $cursor, query: "product_type:Beat") {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          status
+        }
+      }
+    }
+  `;
+
+  while (hasNextPage) {
+    const response = await admin.graphql(query, { variables: { cursor } });
+    const payload = (await response.json()) as {
+      data?: {
+        products?: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          nodes: Array<{ status: "ACTIVE" | "DRAFT" | "ARCHIVED" }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+
+    if (payload.errors?.length) {
+      throw new Error(payload.errors.map((error) => error.message).join("; "));
+    }
+
+    const connection = payload.data?.products;
+    if (!connection) break;
+
+    beatCount += connection.nodes.filter((product) => product.status === "ACTIVE").length;
+    hasNextPage = connection.pageInfo.hasNextPage;
+    cursor = connection.pageInfo.endCursor;
+  }
+
+  return beatCount;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -66,39 +196,45 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let overview: {
       licenseCount: number;
       licenseNames: string[];
-      deliveriesTotal: number;
+      publishedBeatCount: number;
+      draftBeatCount: number;
       deliveriesNeedingAttention: number;
-      latestDeliveryAt: string | null;
-      latestOrderNumber: string | null;
-      emailTrackingMode: "tracked" | "send_only";
-      deliveryEmailFrom: string | null;
-      deliveryEmailBrand: string;
+      emailTrackingEnabled: boolean;
+      recentDeliveries: RecentDeliveryOverview[];
     } | null = null;
 
     if (readiness.coreReady) {
-      const deliveryEmail = getDeliveryEmailConfigSummary();
-      const [licenses, deliveriesTotal, deliveriesNeedingAttention, latestDelivery] =
+      const [licenses, publishedBeatCount, draftBeatCount, deliveriesNeedingAttention, recentDeliveries] =
         await Promise.all([
           productService.getLicenseMetaobjects().catch(() => []),
-          prisma.deliveryAccess.count({ where: { shop: session.shop } }),
+          getPublishedBeatCount(admin).catch(() => 0),
+          prisma.beatDraft.count({ where: { shop: session.shop } }).catch(() => 0),
           prisma.deliveryAccess.count({
             where: {
               shop: session.shop,
               OR: [
                 { deliveryEmailStatus: "failed" },
+                { deliveryEmailStatus: "skipped" },
                 { deliveryEmailConfirmedStatus: "failed" },
                 { deliveryEmailConfirmedStatus: "bounced" },
+                { deliveryEmailConfirmedStatus: "complained" },
               ],
             },
           }),
-          prisma.deliveryAccess.findFirst({
+          prisma.deliveryAccess.findMany({
             where: { shop: session.shop },
             orderBy: { createdAt: "desc" },
-            select: {
-              createdAt: true,
+            take: 5,
+            include: {
               order: {
                 select: {
                   orderNumber: true,
+                  items: {
+                    select: {
+                      beatTitle: true,
+                      licenseName: true,
+                    },
+                  },
                 },
               },
             },
@@ -111,13 +247,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           .map((license) => license.licenseName)
           .filter(Boolean)
           .slice(0, 3),
-        deliveriesTotal,
+        publishedBeatCount,
+        draftBeatCount,
         deliveriesNeedingAttention,
-        latestDeliveryAt: latestDelivery?.createdAt.toISOString() ?? null,
-        latestOrderNumber: latestDelivery?.order.orderNumber ?? null,
-        emailTrackingMode: isResendWebhookTrackingEnabled() ? "tracked" : "send_only",
-        deliveryEmailFrom: deliveryEmail.from,
-        deliveryEmailBrand: deliveryEmail.brandName,
+        emailTrackingEnabled: isResendWebhookTrackingEnabled(),
+        recentDeliveries: recentDeliveries.map((delivery: {
+          id: string;
+          customerEmail: string;
+          createdAt: Date;
+          deliveryEmailStatus: string;
+          deliveryEmailConfirmedStatus: string | null;
+          order: {
+            orderNumber: string;
+            items: Array<{ beatTitle: string; licenseName: string }>;
+          };
+        }) => ({
+          id: delivery.id,
+          orderNumber: delivery.order.orderNumber,
+          customerEmail: delivery.customerEmail,
+          createdAt: delivery.createdAt.toISOString(),
+          itemSummary: buildDeliveryItemSummary(delivery.order.items),
+          deliveryEmailStatus: delivery.deliveryEmailStatus,
+          deliveryEmailConfirmedStatus: delivery.deliveryEmailConfirmedStatus,
+        })),
       };
     }
 
@@ -631,156 +783,217 @@ export default function Dashboard() {
   }
 
   const deliveriesNeedingAttention = overview?.deliveriesNeedingAttention || 0;
-  const healthTone =
-    readiness.hasStorageIssue || deliveriesNeedingAttention > 0 ? "attention" : "success";
-  const healthLabel =
-    readiness.hasStorageIssue || deliveriesNeedingAttention > 0
-      ? "Needs attention"
-      : "Healthy";
+  const publishedBeatCount = overview?.publishedBeatCount || 0;
+  const draftBeatCount = overview?.draftBeatCount || 0;
+  const recentDeliveries = overview?.recentDeliveries || [];
+  const licenseNames = overview?.licenseNames || [];
+  const emailTrackingEnabled = overview?.emailTrackingEnabled || false;
+  const isTrueInitialState = publishedBeatCount === 0 && draftBeatCount === 0;
+  const hasDraftsOnly = publishedBeatCount === 0 && draftBeatCount > 0;
+
+  const statusBanner: {
+    title: string;
+    tone: "success" | "info" | "warning";
+    message: string;
+    actionLabel?: string;
+    actionUrl?: string;
+  } = readiness.hasStorageIssue && storageConfig?.lastError
+    ? {
+        title: "Storage needs attention",
+        tone: "warning",
+        message: "Uploads and post-purchase delivery may fail until storage is fixed.",
+        actionLabel: "Open settings",
+        actionUrl: "/app/settings",
+      }
+    : deliveriesNeedingAttention > 0
+      ? {
+          title: "Delivery needs attention",
+          tone: "warning",
+          message: `${deliveriesNeedingAttention} recent deliver${
+            deliveriesNeedingAttention === 1 ? "y needs" : "ies need"
+          } review.`,
+          actionLabel: "Open deliveries",
+          actionUrl: "/app/deliveries",
+        }
+      : isTrueInitialState
+        ? {
+            title: "Upload your first beat",
+            tone: "info",
+            message: "Your licenses and delivery system are ready. Add a beat to start selling and delivering files automatically.",
+          }
+        : hasDraftsOnly
+          ? {
+              title: "Finish your first beat",
+              tone: "info",
+              message: `You have ${draftBeatCount} draft${
+                draftBeatCount === 1 ? "" : "s"
+              } saved in Producer Launchpad. Publish one to start accepting orders.`,
+            }
+          : {
+              title: "System status: Healthy",
+              tone: "success",
+              message: "Licenses, storage, and delivery are ready for new orders.",
+            };
 
   return (
     <Page
-      title="Overview"
-      subtitle="Monitor automation health, keep your licensing offer organized, and jump back into the workflows that matter."
+      title="Home"
+      subtitle="See what needs attention, publish beats, and monitor recent deliveries."
+      primaryAction={{
+        content: isTrueInitialState ? "Upload first beat" : "Upload beat",
+        icon: PlusIcon,
+        url: "/app/beats/new",
+      }}
     >
       <Layout>
-        {readiness.hasStorageIssue && storageConfig?.lastError && (
+        <Layout.Section>
+          <Banner
+            title={statusBanner.title}
+            tone={statusBanner.tone}
+            action={
+              statusBanner.actionLabel && statusBanner.actionUrl
+                ? { content: statusBanner.actionLabel, url: statusBanner.actionUrl }
+                : undefined
+            }
+          >
+            <p>{statusBanner.message}</p>
+          </Banner>
+        </Layout.Section>
+
+        {publishedBeatCount === 0 && (
           <Layout.Section>
-            <Banner title="Storage needs attention" tone="warning">
-              <p>{storageConfig.lastError}</p>
-            </Banner>
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingMd">
+                      {hasDraftsOnly ? "Finish your first beat" : "Your catalog is empty"}
+                    </Text>
+                    <Text as="p" tone="subdued">
+                      {hasDraftsOnly
+                        ? "Complete a saved draft or upload a new beat to make your storefront sellable."
+                        : "Setup is complete. Upload your first beat to create the first licensable product in your catalog."}
+                    </Text>
+                  </BlockStack>
+                  {hasDraftsOnly ? (
+                    <Badge tone="attention">
+                      {`${draftBeatCount} draft${draftBeatCount === 1 ? "" : "s"}`}
+                    </Badge>
+                  ) : null}
+                </InlineStack>
+
+                <InlineStack gap="300">
+                  {hasDraftsOnly ? (
+                    <Button variant="primary" url="/app/beats?status=draft">
+                      Review drafts
+                    </Button>
+                  ) : (
+                    <Button variant="primary" url="/app/beats/new">
+                      Upload your first beat
+                    </Button>
+                  )}
+                  <Button url="/app/licenses">Review licenses</Button>
+                </InlineStack>
+              </BlockStack>
+            </Card>
           </Layout.Section>
         )}
 
         <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingLg">
-                    Automation health
-                  </Text>
-                  <Text as="p" tone="subdued">
-                    Producer Launchpad is set up to generate agreements, deliver files, and track each order after purchase.
-                  </Text>
-                </BlockStack>
-                <Badge tone={healthTone}>{healthLabel}</Badge>
-              </InlineStack>
-
-              <BlockStack gap="200">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="span">Catalog setup</Text>
-                  <Badge tone="success">Ready</Badge>
-                </InlineStack>
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="span">Storage and delivery</Text>
-                  <Badge tone={readiness.hasStorageIssue ? "attention" : "success"}>
-                    {readiness.hasStorageIssue ? "Needs attention" : "Connected"}
-                  </Badge>
-                </InlineStack>
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="span">Delivery monitoring</Text>
-                  <Badge tone={deliveriesNeedingAttention > 0 ? "attention" : "success"}>
-                    {deliveriesNeedingAttention > 0
-                      ? `${deliveriesNeedingAttention} issue${
-                          deliveriesNeedingAttention === 1 ? "" : "s"
-                        }`
-                      : "Healthy"}
-                  </Badge>
-                </InlineStack>
-              </BlockStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
+          <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Quick actions
-                </Text>
-                <Button variant="primary" icon={PlusIcon} url="/app/beats/new">
-                  Upload beat
-                </Button>
-                <Button icon={CollectionIcon} url="/app/licenses">
-                  Manage licenses
-                </Button>
-                <Button icon={CheckCircleIcon} url="/app/deliveries">
-                  Open deliveries
-                </Button>
-                <Button icon={SettingsIcon} url="/app/settings">
-                  Open settings
-                </Button>
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Recent deliveries
+                  </Text>
+                  {recentDeliveries.length > 0 ? (
+                    <Button icon={CheckCircleIcon} url="/app/deliveries">
+                      View all
+                    </Button>
+                  ) : null}
+                </InlineStack>
+
+                {recentDeliveries.length > 0 ? (
+                  <BlockStack gap="0">
+                    {recentDeliveries.map((delivery, index) => {
+                      const displayedDeliveryEmailStatus = getDisplayedDeliveryEmailStatus(
+                        delivery.deliveryEmailStatus,
+                        delivery.deliveryEmailConfirmedStatus,
+                        emailTrackingEnabled,
+                      );
+
+                      return (
+                        <Box
+                          key={delivery.id}
+                          paddingBlockStart={index === 0 ? "0" : "300"}
+                          paddingBlockEnd={index === recentDeliveries.length - 1 ? "0" : "300"}
+                          borderColor="border"
+                          borderBlockEndWidth={index === recentDeliveries.length - 1 ? "0" : "025"}
+                        >
+                          <InlineStack align="space-between" blockAlign="start" gap="400">
+                            <BlockStack gap="100">
+                              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                Order #{delivery.orderNumber}
+                              </Text>
+                              <Text as="p" tone="subdued">
+                                {delivery.customerEmail || "No customer email"}
+                              </Text>
+                              <Text as="p" tone="subdued">
+                                {delivery.itemSummary}
+                              </Text>
+                            </BlockStack>
+
+                            <BlockStack gap="100" inlineAlign="end">
+                              <Text as="p" tone="subdued">
+                                {formatHomeDate(delivery.createdAt)}
+                              </Text>
+                              <Badge tone={getDeliveryEmailBadgeTone(displayedDeliveryEmailStatus)}>
+                                {getDeliveryEmailBadgeLabel(displayedDeliveryEmailStatus)}
+                              </Badge>
+                            </BlockStack>
+                          </InlineStack>
+                        </Box>
+                      );
+                    })}
+                  </BlockStack>
+                ) : (
+                  <BlockStack gap="200">
+                    <Text as="p" variant="headingSm">
+                      No orders yet
+                    </Text>
+                    <Text as="p" tone="subdued">
+                      {publishedBeatCount === 0
+                        ? "Recent deliveries will appear here after you publish your first beat and make a sale."
+                        : "Recent deliveries will appear here after the first customer purchase."}
+                    </Text>
+                  </BlockStack>
+                )}
               </BlockStack>
             </Card>
 
             <Card>
               <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">
-                    License templates
-                  </Text>
-                  <Badge tone="success">{overview?.licenseCount || 0} active</Badge>
-                </InlineStack>
-                <Text as="p" tone="subdued">
-                  Your reusable commercial-use offers stay ready for beat variants and agreement generation.
+                <Text as="h2" variant="headingMd">
+                  License templates
                 </Text>
-                {overview?.licenseNames?.length ? (
+                <Text as="p" tone="subdued">
+                  Used for storefront offers, variant mapping, and agreement generation.
+                </Text>
+                {licenseNames.length > 0 ? (
                   <List>
-                    {overview.licenseNames.map((licenseName) => (
+                    {licenseNames.map((licenseName) => (
                       <List.Item key={licenseName}>{licenseName}</List.Item>
                     ))}
                   </List>
                 ) : (
                   <Text as="p" tone="subdued">
-                    Default license templates will appear here after the first setup run.
+                    License templates will appear here after setup runs successfully.
                   </Text>
                 )}
-                <Button url="/app/licenses">View licenses</Button>
-              </BlockStack>
-            </Card>
-
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">
-                    Delivery automation
-                  </Text>
-                  <Badge tone={deliveriesNeedingAttention > 0 ? "attention" : "success"}>
-                    {overview?.emailTrackingMode === "tracked" ? "Tracked" : "Send status"}
-                  </Badge>
-                </InlineStack>
-                <BlockStack gap="100">
-                  <Text as="p">
-                    {overview?.deliveriesTotal || 0} delivery
-                    {overview?.deliveriesTotal === 1 ? "" : "ies"} recorded
-                  </Text>
-                  <Text as="p" tone="subdued">
-                    Sending as {overview?.deliveryEmailFrom || overview?.deliveryEmailBrand}
-                  </Text>
-                  <Text as="p" tone="subdued">
-                    {deliveriesNeedingAttention > 0
-                      ? `${deliveriesNeedingAttention} deliver${
-                          deliveriesNeedingAttention === 1 ? "y needs" : "ies need"
-                        } attention`
-                      : "No delivery issues are currently flagged"}
-                  </Text>
-                </BlockStack>
-                {overview?.latestDeliveryAt ? (
-                  <Text as="p" tone="subdued">
-                    Latest order: {overview.latestOrderNumber || "Recent order"} on{" "}
-                    {new Date(overview.latestDeliveryAt).toLocaleDateString()}
-                  </Text>
-                ) : (
-                  <Text as="p" tone="subdued">
-                    Order-by-order delivery health will appear here after the first purchase.
-                  </Text>
-                )}
-                <InlineStack gap="300">
-                  <Button url="/app/deliveries">Review deliveries</Button>
-                  <Button url="/app/settings">Email settings</Button>
-                </InlineStack>
+                <Button icon={CollectionIcon} url="/app/licenses">
+                  Manage licenses
+                </Button>
               </BlockStack>
             </Card>
           </InlineGrid>
