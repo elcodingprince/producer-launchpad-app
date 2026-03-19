@@ -12,8 +12,6 @@ import {
   BlockStack,
   TextField,
   Select,
-  ChoiceList,
-  Button,
   Text,
   FormLayout,
 } from "@shopify/polaris";
@@ -31,7 +29,6 @@ import {
   type LicenseFiles,
 } from "../components/LicenseFileAssignment";
 import { MultiSelectCombobox } from "../components/MultiSelectCombobox";
-import { UploadIcon } from "@shopify/polaris-icons";
 
 const keyOptions = [
   "C major", "C minor", "C# major", "C# minor",
@@ -88,11 +85,36 @@ function formatDeliveryFormatLabel(format: DeliveryFormat) {
   return format === "stems" ? "STEMS ZIP" : format.toUpperCase();
 }
 
+function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function dedupeFilesById(files: Array<UploadedFile | null | undefined>) {
+  const byId = new Map<string, UploadedFile>();
+  for (const file of files) {
+    if (file?.id) {
+      byId.set(file.id, file);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+function isLicenseDeliveryFile(file: UploadedFile) {
+  return file.purpose === "mp3" || file.purpose === "wav" || file.purpose === "stems";
+}
+
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const productService = createProductCreatorService(session, admin);
+  const url = new URL(request.url);
+  const draftId = url.searchParams.get("draft");
 
   try {
     const readiness = await getAppReadiness(session, admin);
@@ -117,10 +139,35 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return redirect(readiness.onboardingRoute);
     }
 
+    const draftRecord = draftId
+      ? await prisma.beatDraft.findFirst({
+          where: {
+            id: draftId,
+            shop: session.shop,
+          },
+        })
+      : null;
+
     return json({
       licenses,
       genres,
       producers,
+      draft: draftRecord
+        ? {
+            id: draftRecord.id,
+            title: draftRecord.title,
+            bpm: draftRecord.bpm ? String(draftRecord.bpm) : "",
+            key: draftRecord.key || "C minor",
+            producerAlias: draftRecord.producerAlias || "",
+            genreGids: parseJsonField<string[]>(draftRecord.genreGidsJson, []),
+            producerGids: parseJsonField<string[]>(draftRecord.producerGidsJson, []),
+            licenseFiles: parseJsonField<LicenseFiles>(draftRecord.licenseFilesJson, {}),
+            licensePrices: parseJsonField<Record<string, string>>(draftRecord.licensePricesJson, {}),
+            uploadedFiles: parseJsonField<UploadedFile[]>(draftRecord.uploadedFilesJson, []),
+            previewFile: parseJsonField<UploadedFile | null>(draftRecord.previewFileJson, null),
+            coverArtFile: parseJsonField<UploadedFile | null>(draftRecord.coverArtFileJson, null),
+          }
+        : null,
       storageWarning: shouldSoftWarnUpload(storageConfig)
         ? storageConfig?.lastError || "Storage is currently in an error state."
         : null,
@@ -133,6 +180,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         licenses: [],
         genres: [],
         producers: [],
+        draft: null,
         storageWarning: null,
         error: error instanceof Error ? error.message : "Failed to load upload page",
       },
@@ -165,10 +213,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const producerAlias = (formData.get("producerAlias") as string) || "";
     const statusValue = (formData.get("status") as string) || "active";
     const productStatus = statusValue === "draft" ? "DRAFT" : "ACTIVE";
+    const isDraft = productStatus === "DRAFT";
+    const draftId = (formData.get("draftId") as string) || null;
+    const coverArtFileId = (formData.get("coverArtFileId") as string) || null;
 
     // Extract license file assignments (maps tier -> array of temp file IDs)
     const licenseFilesData = JSON.parse((formData.get("licenseFiles") as string) || "{}");
     const licensePricesData = JSON.parse((formData.get("licensePrices") as string) || "{}");
+    const uploadedFilesStateRaw = formData.get("uploadedFilesState") as string | null;
+    const uploadedFilesState = parseJsonField<UploadedFile[]>(
+      uploadedFilesStateRaw || "[]",
+      [],
+    );
     
     // Extract preview file ID
     const previewFileId = formData.get("previewFileId") as string | null;
@@ -176,6 +232,40 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Extract file metadata (maps temp file ID -> metadata including purpose)
     const fileMetadataJson = (formData.get("fileMetadata") as string) || "{}";
     const fileMetadata = JSON.parse(fileMetadataJson);
+
+    const existingDraft = draftId
+      ? await prisma.beatDraft.findFirst({
+          where: {
+            id: draftId,
+            shop: session.shop,
+          },
+        })
+      : null;
+
+    const savedDraftUploadedFiles = existingDraft
+      ? parseJsonField<UploadedFile[]>(existingDraft.uploadedFilesJson, [])
+      : [];
+    const existingUploadedFiles =
+      uploadedFilesStateRaw !== null
+        ? uploadedFilesState
+            .map((file) =>
+              savedDraftUploadedFiles.find((savedFile) => savedFile.id === file.id) || file,
+            )
+            .filter(isLicenseDeliveryFile)
+        : savedDraftUploadedFiles;
+    const existingPreviewFile = existingDraft
+      ? parseJsonField<UploadedFile | null>(existingDraft.previewFileJson, null)
+      : null;
+    const existingCoverArtFile = existingDraft
+      ? parseJsonField<UploadedFile | null>(existingDraft.coverArtFileJson, null)
+      : null;
+    const existingFilesById = new Map(
+      dedupeFilesById([
+        ...existingUploadedFiles,
+        existingPreviewFile,
+        existingCoverArtFile,
+      ]).map((file) => [file.id, file]),
+    );
 
     // === SERVER-SIDE VALIDATION ===
     
@@ -187,8 +277,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    // Validate preview file exists
-    if (!previewFileId) {
+    // Validate preview file exists for active beats
+    if (!isDraft && !previewFileId) {
       return json(
         { success: false, error: "Please upload a preview audio file" },
         { status: 400 }
@@ -202,29 +292,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Validate each license tier has the full package its template promises
     const missingAssignments: string[] = [];
 
-    for (const license of dbLicenses) {
-      const filesForTier = licenseFilesData[license.licenseId];
-      const requiredFormats = getRequiredDeliveryFormats(license);
+    if (!isDraft) {
+      for (const license of dbLicenses) {
+        const filesForTier = licenseFilesData[license.licenseId];
+        const requiredFormats = getRequiredDeliveryFormats(license);
 
-      if (!filesForTier || !Array.isArray(filesForTier) || filesForTier.length === 0) {
-        missingAssignments.push(
-          `${license.licenseName}: ${requiredFormats.map(formatDeliveryFormatLabel).join(", ") || "package files"}`,
+        if (!filesForTier || !Array.isArray(filesForTier) || filesForTier.length === 0) {
+          missingAssignments.push(
+            `${license.licenseName}: ${requiredFormats.map(formatDeliveryFormatLabel).join(", ") || "package files"}`,
+          );
+          continue;
+        }
+
+        const assignedFormats = new Set(
+          filesForTier
+            .map((fileId: string) =>
+              fileMetadata[fileId]?.purpose ||
+              fileMetadata[fileId]?.type ||
+              existingFilesById.get(fileId)?.purpose ||
+              existingFilesById.get(fileId)?.type ||
+              "",
+            )
+            .map((format: string) => normalizeDeliveryFormat(format))
+            .filter((format: DeliveryFormat | null): format is DeliveryFormat => Boolean(format))
         );
-        continue;
-      }
 
-      const assignedFormats = new Set(
-        filesForTier
-          .map((fileId: string) => fileMetadata[fileId]?.purpose || fileMetadata[fileId]?.type || "")
-          .map((format: string) => normalizeDeliveryFormat(format))
-          .filter((format: DeliveryFormat | null): format is DeliveryFormat => Boolean(format))
-      );
-
-      const missingFormats = requiredFormats.filter((format) => !assignedFormats.has(format));
-      if (missingFormats.length > 0) {
-        missingAssignments.push(
-          `${license.licenseName}: ${missingFormats.map(formatDeliveryFormatLabel).join(", ")}`,
-        );
+        const missingFormats = requiredFormats.filter((format) => !assignedFormats.has(format));
+        if (missingFormats.length > 0) {
+          missingAssignments.push(
+            `${license.licenseName}: ${missingFormats.map(formatDeliveryFormatLabel).join(", ")}`,
+          );
+        }
       }
     }
 
@@ -248,16 +346,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    if (fileEntries.length === 0) {
+    if (!isDraft && fileEntries.length === 0 && existingFilesById.size === 0) {
       return json(
         { success: false, error: "No files were uploaded" },
         { status: 400 }
       );
     }
 
-    // Validate that all assigned files exist in uploads
+    // Validate that any assigned files actually exist in the current upload payload
     const allAssignedFileIds = new Set<string>();
-    allAssignedFileIds.add(previewFileId); // Preview is also required
+    if (previewFileId) {
+      allAssignedFileIds.add(previewFileId);
+    }
     for (const tier of licenseTiers) {
       const filesForTier = licenseFilesData[tier] || [];
       for (const fileId of filesForTier) {
@@ -266,9 +366,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     const uploadedTempIds = new Set(fileEntries.map(e => e.tempId));
-    const missingFiles = Array.from(allAssignedFileIds).filter(id => !uploadedTempIds.has(id));
-    
-    if (missingFiles.length > 0) {
+    const knownFileIds = new Set([
+      ...uploadedTempIds,
+      ...existingFilesById.keys(),
+    ]);
+    const missingFiles = Array.from(allAssignedFileIds).filter(id => !knownFileIds.has(id));
+
+    if (!isDraft && missingFiles.length > 0) {
       return json(
         {
           success: false,
@@ -287,7 +391,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // === UPLOAD FILES TO STORAGE ===
     console.info("[upload] uploading files to configured storage");
-    
+
     // Prepare files for upload with their purpose
     const filesToUpload: DynamicFileUpload[] = fileEntries.map(entry => {
       const metadata = fileMetadata[entry.tempId] || {};
@@ -300,12 +404,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     // Upload all files
-    const uploadResults = await uploadDynamicFilesForShop(session.shop, filesToUpload, beatSlug);
+    const uploadResults =
+      filesToUpload.length > 0
+        ? await uploadDynamicFilesForShop(session.shop, filesToUpload, beatSlug)
+        : [];
     
     // Create a map from tempId to upload result
     const tempIdToResult = new Map<string, UploadedFileResult>();
     for (let i = 0; i < fileEntries.length; i++) {
       tempIdToResult.set(fileEntries[i].tempId, uploadResults[i]);
+    }
+
+    const uploadedFilesWithStorage = new Map<string, UploadedFile>();
+    for (const entry of fileEntries) {
+      const result = tempIdToResult.get(entry.tempId);
+      const metadata = fileMetadata[entry.tempId] || {};
+      if (!result) continue;
+
+      uploadedFilesWithStorage.set(entry.tempId, {
+        id: entry.tempId,
+        name: metadata.name || entry.file.name,
+        type: metadata.type || entry.purpose || "other",
+        purpose: metadata.purpose || entry.purpose || "other",
+        size: metadata.size || `${result.size}`,
+        storageUrl: result.storageUrl,
+      });
     }
 
     // Track cover art and preview URLs by purpose
@@ -325,16 +448,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    for (let i = 0; i < fileEntries.length; i++) {
-      const entry = fileEntries[i];
-      const result = uploadResults[i];
-      
-      if (entry.purpose === "preview" || entry.tempId === previewFileId) {
-        previewUrl = result.storageUrl;
-      }
-      if (entry.purpose === "cover" || result.fileType === "cover") {
-        coverArtUrl = result.storageUrl;
-      }
+    const mergedPreviewFile = previewFileId
+      ? uploadedFilesWithStorage.get(previewFileId) || existingFilesById.get(previewFileId) || null
+      : null;
+    const mergedCoverArtFile = coverArtFileId
+      ? uploadedFilesWithStorage.get(coverArtFileId) || existingFilesById.get(coverArtFileId) || null
+      : null;
+
+    const mergedLicenseFilePoolByPurpose = new Map<string, UploadedFile>();
+    [...existingUploadedFiles, ...Array.from(uploadedFilesWithStorage.values()).filter(isLicenseDeliveryFile)].forEach((file) => {
+      const purposeKey = isLicenseDeliveryFile(file) ? file.purpose : file.id;
+      mergedLicenseFilePoolByPurpose.set(purposeKey, file);
+    });
+    const mergedUploadedFiles = Array.from(mergedLicenseFilePoolByPurpose.values());
+
+    previewUrl = mergedPreviewFile?.storageUrl;
+    coverArtUrl = mergedCoverArtFile?.storageUrl;
+
+    if (isDraft) {
+      const draftData = {
+        shop: session.shop,
+        title,
+        bpm: bpm || null,
+        key: key || null,
+        producerAlias: producerAlias || null,
+        genreGidsJson: JSON.stringify(genreGids),
+        producerGidsJson: JSON.stringify(producerGids),
+        licenseFilesJson: JSON.stringify(licenseFilesData),
+        licensePricesJson: JSON.stringify(licensePricesData),
+        uploadedFilesJson: JSON.stringify(mergedUploadedFiles),
+        previewFileJson: mergedPreviewFile ? JSON.stringify(mergedPreviewFile) : null,
+        coverArtFileJson: mergedCoverArtFile ? JSON.stringify(mergedCoverArtFile) : null,
+      };
+
+      const savedDraft = existingDraft
+        ? await prisma.beatDraft.update({
+            where: { id: existingDraft.id },
+            data: draftData,
+          })
+        : await prisma.beatDraft.create({
+            data: draftData,
+          });
+
+      console.info("[upload] draft saved successfully", { draftId: savedDraft.id });
+      return redirect("/app/beats?success=true&status=draft");
     }
 
     // Get actual license GIDs from the database
@@ -378,25 +535,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     
     // Create BeatFile records for each uploaded file
     const beatFileRecords: Array<{ id: string; tempId: string }> = [];
-    
-    for (const entry of fileEntries) {
-      const uploadResult = tempIdToResult.get(entry.tempId);
-      const metadata = fileMetadata[entry.tempId] || {};
-      
-      if (!uploadResult) continue;
-      
+
+    const allPersistedFiles = dedupeFilesById([
+      ...mergedUploadedFiles,
+      mergedPreviewFile,
+      mergedCoverArtFile,
+    ]).filter((file) => file.storageUrl);
+
+    for (const file of allPersistedFiles) {
+      const sizeInBytes =
+        typeof file.size === "number"
+          ? file.size
+          : Math.round(parseFloat(String(file.size).replace(/[^\d.]/g, "")) * (String(file.size).includes("MB") ? 1024 * 1024 : String(file.size).includes("KB") ? 1024 : 1));
+
       const beatFile = await prisma.beatFile.create({
         data: {
           beatId: productId,
-          filename: metadata.name || uploadResult.originalName,
-          storageUrl: uploadResult.storageUrl,
-          fileType: uploadResult.fileType,
-          filePurpose: metadata.purpose || entry.purpose || uploadResult.fileType,
-          size: uploadResult.size,
+          filename: file.name,
+          storageUrl: file.storageUrl!,
+          fileType: file.type,
+          filePurpose: file.purpose,
+          size: sizeInBytes,
         },
       });
       
-      beatFileRecords.push({ id: beatFile.id, tempId: entry.tempId });
+      beatFileRecords.push({ id: beatFile.id, tempId: file.id });
     }
     
     // Create a map from tempId to database BeatFile id
@@ -434,8 +597,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
+    if (existingDraft) {
+      await prisma.beatDraft.delete({
+        where: { id: existingDraft.id },
+      });
+    }
+
     console.info("[upload] completed successfully", { productId: result.productId });
-    return redirect("/app/beats?success=true");
+    return redirect(`/app/beats?success=true&status=${statusValue}`);
   } catch (error) {
     console.error("Upload error:", error);
     return json(
@@ -449,33 +618,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function NewBeatPage() {
-  const { licenses, genres, producers, storageWarning, error: loaderError } = useLoaderData<typeof loader>();
+  const { licenses, genres, producers, draft, storageWarning, error: loaderError } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
 
   // Form state
-  const [title, setTitle] = useState("");
-  const [bpm, setBpm] = useState("");
-  const [key, setKey] = useState("C minor");
-  const [genreGids, setGenreGids] = useState<string[]>(genres[0]?.id ? [genres[0].id] : []);
-  const [producerGids, setProducerGids] = useState<string[]>(producers[0]?.id ? [producers[0].id] : []);
-  const [producerAlias, setProducerAlias] = useState("");
-  const [status, setStatus] = useState("active");
+  const [title, setTitle] = useState(draft?.title || "");
+  const [bpm, setBpm] = useState(draft?.bpm || "");
+  const [key, setKey] = useState(draft?.key || "C minor");
+  const [genreGids, setGenreGids] = useState<string[]>(
+    draft?.genreGids?.length ? draft.genreGids : (genres[0]?.id ? [genres[0].id] : []),
+  );
+  const [producerGids, setProducerGids] = useState<string[]>(
+    draft?.producerGids?.length ? draft.producerGids : (producers[0]?.id ? [producers[0].id] : []),
+  );
+  const [producerAlias, setProducerAlias] = useState(draft?.producerAlias || "");
+  const [status, setStatus] = useState(draft ? "draft" : "active");
 
   // License file assignment state
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(draft?.uploadedFiles || []);
   const [licenseFiles, setLicenseFiles] = useState<LicenseFiles>(() => {
-    const obj: LicenseFiles = {};
-    if (licenses) licenses.filter(Boolean).forEach(l => obj[l!.licenseId] = []);
+    const obj: LicenseFiles = draft?.licenseFiles || {};
+    if (licenses) licenses.filter(Boolean).forEach(l => obj[l!.licenseId] = obj[l!.licenseId] || []);
     return obj;
   });
   const [licensePrices, setLicensePrices] = useState<Record<string, string>>(() => {
-    const obj: Record<string, string> = {};
-    if (licenses) licenses.filter(Boolean).forEach(l => obj[l!.licenseId] = "");
+    const obj: Record<string, string> = draft?.licensePrices || {};
+    if (licenses) licenses.filter(Boolean).forEach(l => obj[l!.licenseId] = obj[l!.licenseId] || "");
     return obj;
   });
-  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(null);
-  const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(null);
+  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(draft?.previewFile || null);
+  const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(draft?.coverArtFile || null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -527,8 +700,16 @@ export default function NewBeatPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  // Check if form is valid
-  const isFormValid = () => {
+  const hasRequiredBeatFields = () =>
+    Boolean(
+      title &&
+      bpm &&
+      key &&
+      genreGids.length > 0 &&
+      producerGids.length > 0,
+    );
+
+  const isReadyForActive = () => {
     const hasAllLicenseFiles = licenses.filter(Boolean).every((license) => {
       const requiredFormats = getRequiredDeliveryFormats(license!);
       const assignedFileIds = licenseFiles[license!.licenseId] || [];
@@ -542,20 +723,15 @@ export default function NewBeatPage() {
       return requiredFormats.every((format) => assignedFormats.has(format));
     });
 
-    return (
-      title &&
-      bpm &&
-      key &&
-      genreGids.length > 0 &&
-      producerGids.length > 0 &&
-      previewFile &&
-      hasAllLicenseFiles
-    );
+    return hasRequiredBeatFields() && previewFile && hasAllLicenseFiles;
   };
 
   // Handle form submission
   const handleSubmit = () => {
     const formData = new FormData();
+    if (draft?.id) {
+      formData.append("draftId", draft.id);
+    }
     formData.append("title", title);
     formData.append("bpm", bpm);
     formData.append("key", key);
@@ -565,11 +741,25 @@ export default function NewBeatPage() {
     formData.append("status", status);
     formData.append("licenseFiles", JSON.stringify(licenseFiles));
     formData.append("licensePrices", JSON.stringify(licensePrices));
+    formData.append(
+      "uploadedFilesState",
+      JSON.stringify(
+        uploadedFiles.map((file) => ({
+          id: file.id,
+          name: file.name,
+          type: file.type,
+          purpose: file.purpose,
+          size: file.size,
+          storageUrl: file.storageUrl,
+        })),
+      ),
+    );
     
     // Add preview file ID
     if (previewFile) {
       formData.append("previewFileId", previewFile.id);
     }
+    formData.append("coverArtFileId", coverArtFile?.id || "");
 
     // Build file metadata map with purpose
     const fileMetadata: Record<
@@ -658,9 +848,18 @@ export default function NewBeatPage() {
       title="Upload beat"
       backAction={{ content: "Beats", url: "/app/beats" }}
       primaryAction={{
-        content: isUploading ? "Uploading..." : "Upload beat",
+        content:
+          status === "draft"
+            ? isUploading
+              ? "Saving draft..."
+              : "Save draft"
+            : isUploading
+              ? "Saving..."
+              : "Save beat",
         onAction: handleSubmit,
-        disabled: !isFormValid() || isUploading,
+        disabled:
+          (status === "draft" ? !hasRequiredBeatFields() : !isReadyForActive()) ||
+          isUploading,
       }}
     >
       <Layout>
@@ -669,7 +868,7 @@ export default function NewBeatPage() {
             <Banner
               title="Storage warning"
               tone="warning"
-              action={{ content: "Fix storage", url: "/app/storage" }}
+              action={{ content: "Fix storage", url: "/app/settings" }}
             >
               <p>{storageWarning}</p>
             </Banner>
@@ -731,6 +930,40 @@ export default function NewBeatPage() {
               </BlockStack>
             </Card>
 
+            <Card>
+              <BlockStack gap="400">
+                <Text variant="headingMd" as="h2">
+                  Organization
+                </Text>
+
+                <FormLayout>
+                  <MultiSelectCombobox
+                    label="Producers"
+                    options={producerOptions}
+                    selectedValues={producerGids}
+                    onChange={setProducerGids}
+                    placeholder="Search producers"
+                  />
+
+                  <TextField
+                    label="Producer alias (optional)"
+                    value={producerAlias}
+                    onChange={setProducerAlias}
+                    autoComplete="off"
+                    helpText="Alternative name to display"
+                  />
+
+                  <MultiSelectCombobox
+                    label="Genres"
+                    options={genreOptions}
+                    selectedValues={genreGids}
+                    onChange={setGenreGids}
+                    placeholder="Search genres"
+                  />
+                </FormLayout>
+              </BlockStack>
+            </Card>
+
             <LicenseFileAssignment
               licenses={dynamicLicenseTiers}
               uploadedFiles={uploadedFiles}
@@ -776,47 +1009,25 @@ export default function NewBeatPage() {
                   value={status}
                   onChange={setStatus}
                 />
-                
-                {!isFormValid() && (
+
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Save as a draft while you finish preview audio and delivery files, or mark
+                  the beat active when it is ready to sell.
+                </Text>
+
+                {status === "draft" ? (
+                  <Banner tone="info">
+                    <p>Draft beats can be saved before preview audio and delivery packages are complete.</p>
+                  </Banner>
+                ) : !isReadyForActive() ? (
                   <Banner tone="warning">
-                    <p>There are missing audio files or required fields. Please complete all requirements before publishing.</p>
+                    <p>Add preview audio and finish each license package before saving this beat as active.</p>
+                  </Banner>
+                ) : (
+                  <Banner tone="success">
+                    <p>This beat is ready to save as active.</p>
                   </Banner>
                 )}
-              </BlockStack>
-            </Card>
-
-            {/* Organization Card */}
-            <Card>
-              <BlockStack gap="400">
-                <Text variant="headingMd" as="h2">
-                  Organization
-                </Text>
-                
-                <FormLayout>
-                  <MultiSelectCombobox
-                    label="Producers"
-                    options={producerOptions}
-                    selectedValues={producerGids}
-                    onChange={setProducerGids}
-                    placeholder="Search producers"
-                  />
-
-                  <TextField
-                    label="Producer alias (optional)"
-                    value={producerAlias}
-                    onChange={setProducerAlias}
-                    autoComplete="off"
-                    helpText="Alternative name to display"
-                  />
-
-                  <MultiSelectCombobox
-                    label="Genres"
-                    options={genreOptions}
-                    selectedValues={genreGids}
-                    onChange={setGenreGids}
-                    placeholder="Search genres"
-                  />
-                </FormLayout>
               </BlockStack>
             </Card>
           </BlockStack>

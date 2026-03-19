@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, memo } from 'react';
 import {
-  Badge,
   Card,
   Button,
   DropZone,
@@ -11,7 +10,6 @@ import {
   Spinner,
   Icon,
   Box,
-  Divider,
   TextField,
 } from '@shopify/polaris';
 import {
@@ -304,10 +302,10 @@ export function LicenseFileAssignment({
 
 
 
-      {/* ── Media ── */}
+      {/* ── Storefront media ── */}
       <Card>
         <BlockStack gap="500">
-          <Text variant="headingMd" as="h2">Media</Text>
+          <Text variant="headingMd" as="h2">Storefront media</Text>
 
           <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '24px', alignItems: 'start' }}>
 
@@ -325,8 +323,8 @@ export function LicenseFileAssignment({
                 </div>
               ) : (
                 <div style={{ position: 'relative', height: '160px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--p-color-border)' }}>
-                  {coverArtPreviewUrl
-                    ? <img src={coverArtPreviewUrl} alt="Cover art" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  {(coverArtPreviewUrl || coverArtFile?.storageUrl)
+                    ? <img src={coverArtPreviewUrl || coverArtFile?.storageUrl} alt="Cover art" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                     : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--p-color-bg-surface-secondary)' }}><Icon source={ImageIcon} tone="base" /></div>
                   }
                   <div style={{ position: 'absolute', top: '4px', right: '4px' }}>
@@ -336,10 +334,8 @@ export function LicenseFileAssignment({
               )}
             </BlockStack>
 
-            {/* Right — Preview + License Files */}
-            <BlockStack gap="500">
-
-              {/* Preview Audio */}
+            {/* Right — Preview */}
+            <BlockStack gap="300">
               <BlockStack gap="300">
                 <BlockStack gap="100">
                   <InlineStack gap="200" blockAlign="center">
@@ -373,71 +369,69 @@ export function LicenseFileAssignment({
                   </Box>
                 )}
               </BlockStack>
-
-              <Divider />
-
-              {/* License Files */}
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="100">
-                    <Text variant="headingSm" as="h3">License files</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Upload once, then assign to each license package below.
-                    </Text>
-                  </BlockStack>
-                  {uploadedFiles.length > 0 && !uploading && (
-                    <>
-                      <Button icon={PlusIcon} onClick={() => licenseFilesInputRef.current?.click()}>
-                        Add files
-                      </Button>
-                      <input
-                        ref={licenseFilesInputRef}
-                        type="file"
-                        multiple
-                        accept=".mp3,.wav,.zip"
-                        style={{ display: 'none' }}
-                        onChange={handleFileInputChange}
-                      />
-                    </>
-                  )}
-                </InlineStack>
-
-                {uploadedFiles.length === 0 ? (
-                  <DropZone onDrop={handleLicenseFilesDrop} accept=".mp3,.wav,.zip" type="file" allowMultiple disabled={uploading}>
-                    {uploading
-                      ? <Box padding="600"><BlockStack gap="200" inlineAlign="center"><Spinner size="large" /><Text as="p" variant="bodyMd">Uploading…</Text></BlockStack></Box>
-                      : <DropZone.FileUpload actionHint=".mp3, .wav, .zip" />
-                    }
-                  </DropZone>
-                ) : (
-                  <BlockStack gap="200">
-                    {uploadedFiles.map((file) => (
-                      <Box key={file.id} borderWidth="025" borderColor="border" borderRadius="200" padding="300">
-                        <InlineStack gap="300" blockAlign="center">
-                          <FileFormatBadge format={file.purpose || file.type} />
-                          <BlockStack gap="0">
-                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
-                              <Text as="span" variant="bodySm" fontWeight="medium">{file.name}</Text>
-                            </div>
-                            <Text as="span" variant="bodyXs" tone="subdued">{file.size}</Text>
-                          </BlockStack>
-                          <Button icon={XIcon} variant="plain" onClick={() => removeLicenseFile(file.id)} disabled={uploading} accessibilityLabel={`Remove ${file.name}`} />
-                        </InlineStack>
-                      </Box>
-                    ))}
-                  </BlockStack>
-                )}
-              </BlockStack>
-
             </BlockStack>
           </div>
         </BlockStack>
       </Card>
 
-      {/* ── License packages — Shopify Variants Table Layout ── */}
+      <Card>
+        <BlockStack gap="300">
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+              <Text variant="headingMd" as="h2">Delivery files</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Upload each master once. Your license templates automatically build the correct package below.
+              </Text>
+            </BlockStack>
+            {uploadedFiles.length > 0 && !uploading && (
+              <>
+                <Button icon={PlusIcon} onClick={() => licenseFilesInputRef.current?.click()}>
+                  Add files
+                </Button>
+                <input
+                  ref={licenseFilesInputRef}
+                  type="file"
+                  multiple
+                  accept=".mp3,.wav,.zip"
+                  style={{ display: 'none' }}
+                  onChange={handleFileInputChange}
+                />
+              </>
+            )}
+          </InlineStack>
+
+          {uploadedFiles.length === 0 ? (
+            <DropZone onDrop={handleLicenseFilesDrop} accept=".mp3,.wav,.zip" type="file" allowMultiple disabled={uploading}>
+              {uploading
+                ? <Box padding="600"><BlockStack gap="200" inlineAlign="center"><Spinner size="large" /><Text as="p" variant="bodyMd">Uploading…</Text></BlockStack></Box>
+                : <DropZone.FileUpload actionHint=".mp3, .wav, .zip" />
+              }
+            </DropZone>
+          ) : (
+            <BlockStack gap="200">
+              {uploadedFiles.map((file) => (
+                <Box key={file.id} borderWidth="025" borderColor="border" borderRadius="200" padding="300">
+                  <InlineStack gap="300" blockAlign="center">
+                    <FileFormatBadge format={file.purpose || file.type} />
+                    <BlockStack gap="0">
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
+                        <Text as="span" variant="bodySm" fontWeight="medium">{file.name}</Text>
+                      </div>
+                      <Text as="span" variant="bodyXs" tone="subdued">{file.size}</Text>
+                    </BlockStack>
+                    <Button icon={XIcon} variant="plain" onClick={() => removeLicenseFile(file.id)} disabled={uploading} accessibilityLabel={`Remove ${file.name}`} />
+                  </InlineStack>
+                </Box>
+              ))}
+            </BlockStack>
+          )}
+        </BlockStack>
+      </Card>
+
+      {/* ── License offers — Shopify Variants Table Layout ── */}
       <Card padding="0">
         <Box padding="400" paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
-          <Text variant="headingMd" as="h2">Beat licenses</Text>
+          <Text variant="headingMd" as="h2">License offers</Text>
         </Box>
 
         <Box padding="0">
