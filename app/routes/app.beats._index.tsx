@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSearchParams } from "@remix-run/react";
+import { Link, useLoaderData, useSearchParams } from "@remix-run/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "~/db.server";
@@ -16,10 +16,11 @@ import {
   Layout,
   Page,
   Text,
+  Thumbnail,
   useIndexResourceState,
   useSetIndexFiltersMode,
 } from "@shopify/polaris";
-import { PlusIcon } from "@shopify/polaris-icons";
+import { ImageIcon, PlusIcon } from "@shopify/polaris-icons";
 
 type BeatStatusFilter = "all" | "active" | "draft";
 type BeatSortValue =
@@ -54,6 +55,15 @@ function formatDate(value: string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 async function getActiveBeats(
@@ -143,7 +153,9 @@ async function getDraftBeats(shop: string): Promise<BeatListItem[]> {
     id: draft.id,
     title: draft.title || "Untitled draft",
     status: "draft" as const,
-    coverArt: null,
+    coverArt:
+      parseJsonField<{ storageUrl?: string | null } | null>(draft.coverArtFileJson, null)?.storageUrl ||
+      null,
     kind: "draft" as const,
     updatedAt: draft.updatedAt.toISOString(),
     sourceLabel: "Saved in Producer Launchpad",
@@ -395,9 +407,38 @@ export default function BeatsList() {
                     selected={selectedResources.includes(beat.id)}
                   >
                     <IndexTable.Cell>
-                      <Text as="span" variant="bodyMd" fontWeight="semibold">
-                        {beat.title}
-                      </Text>
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "44px" }}>
+                        <Thumbnail
+                          source={beat.coverArt || ImageIcon}
+                          alt={beat.title}
+                          size="small"
+                        />
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0px", lineHeight: 1.2 }}>
+                          {beat.actionExternal ? (
+                            <a
+                              href={beat.actionUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              data-primary-link
+                              style={{ color: "inherit", textDecoration: "none" }}
+                            >
+                              <Text as="span" variant="bodyMd" fontWeight="semibold">
+                                {beat.title}
+                              </Text>
+                            </a>
+                          ) : (
+                            <Link
+                              to={beat.actionUrl}
+                              data-primary-link
+                              style={{ color: "inherit", textDecoration: "none" }}
+                            >
+                              <Text as="span" variant="bodyMd" fontWeight="semibold">
+                                {beat.title}
+                              </Text>
+                            </Link>
+                          )}
+                        </div>
+                      </div>
                     </IndexTable.Cell>
                     <IndexTable.Cell>
                       <Text as="span">

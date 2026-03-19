@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useActionData, useSubmit } from "@remix-run/react";
-import { useState, useCallback } from "react";
+import { useLoaderData, useActionData, useSubmit, useNavigate, useNavigation } from "@remix-run/react";
+import { useState, useCallback, useMemo } from "react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import {
@@ -15,6 +15,7 @@ import {
   Text,
   FormLayout,
 } from "@shopify/polaris";
+import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { createProductCreatorService } from "../services/productCreator";
 import { getAppReadiness } from "~/services/appReadiness.server";
 import {
@@ -102,6 +103,22 @@ function dedupeFilesById(files: Array<UploadedFile | null | undefined>) {
     }
   }
   return Array.from(byId.values());
+}
+
+function serializeUploadedFile(file: UploadedFile | null) {
+  if (!file) return null;
+  return {
+    id: file.id,
+    name: file.name,
+    type: file.type,
+    purpose: file.purpose,
+    size: file.size,
+    storageUrl: file.storageUrl || null,
+  };
+}
+
+function serializeUploadedFiles(files: UploadedFile[]) {
+  return files.map((file) => serializeUploadedFile(file));
 }
 
 function isLicenseDeliveryFile(file: UploadedFile) {
@@ -269,10 +286,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // === SERVER-SIDE VALIDATION ===
     
+    const hasRequiredMetadata =
+      Boolean(title) &&
+      Boolean(bpm) &&
+      Boolean(key) &&
+      genreGids.length > 0 &&
+      producerGids.length > 0;
+
     // Validate required fields
-    if (!title || !bpm || !key || genreGids.length === 0 || producerGids.length === 0) {
+    if ((!isDraft && !hasRequiredMetadata) || (isDraft && !title)) {
       return json(
-        { success: false, error: "Please fill in all required fields" },
+        {
+          success: false,
+          error: isDraft
+            ? "Add a beat title before saving this draft"
+            : "Please fill in all required fields",
+        },
         { status: 400 }
       );
     }
@@ -621,34 +650,48 @@ export default function NewBeatPage() {
   const { licenses, genres, producers, draft, storageWarning, error: loaderError } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
+  const navigate = useNavigate();
+  const navigation = useNavigation();
+  const shopify = useAppBridge();
+
+  const initialTitle = draft?.title || "";
+  const initialBpm = draft?.bpm || "";
+  const initialKey = draft?.key || "C minor";
+  const initialGenreGids =
+    draft?.genreGids?.length ? draft.genreGids : (genres[0]?.id ? [genres[0].id] : []);
+  const initialProducerGids =
+    draft?.producerGids?.length ? draft.producerGids : (producers[0]?.id ? [producers[0].id] : []);
+  const initialProducerAlias = draft?.producerAlias || "";
+  const initialStatus = draft ? "draft" : "active";
+  const initialUploadedFiles = draft?.uploadedFiles || [];
+  const initialLicenseFiles = useMemo(() => {
+    const obj: LicenseFiles = draft?.licenseFiles || {};
+    if (licenses) licenses.filter(Boolean).forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || []));
+    return obj;
+  }, [draft?.licenseFiles, licenses]);
+  const initialLicensePrices = useMemo(() => {
+    const obj: Record<string, string> = draft?.licensePrices || {};
+    if (licenses) licenses.filter(Boolean).forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || ""));
+    return obj;
+  }, [draft?.licensePrices, licenses]);
+  const initialPreviewFile = draft?.previewFile || null;
+  const initialCoverArtFile = draft?.coverArtFile || null;
 
   // Form state
-  const [title, setTitle] = useState(draft?.title || "");
-  const [bpm, setBpm] = useState(draft?.bpm || "");
-  const [key, setKey] = useState(draft?.key || "C minor");
-  const [genreGids, setGenreGids] = useState<string[]>(
-    draft?.genreGids?.length ? draft.genreGids : (genres[0]?.id ? [genres[0].id] : []),
-  );
-  const [producerGids, setProducerGids] = useState<string[]>(
-    draft?.producerGids?.length ? draft.producerGids : (producers[0]?.id ? [producers[0].id] : []),
-  );
-  const [producerAlias, setProducerAlias] = useState(draft?.producerAlias || "");
-  const [status, setStatus] = useState(draft ? "draft" : "active");
+  const [title, setTitle] = useState(initialTitle);
+  const [bpm, setBpm] = useState(initialBpm);
+  const [key, setKey] = useState(initialKey);
+  const [genreGids, setGenreGids] = useState<string[]>(initialGenreGids);
+  const [producerGids, setProducerGids] = useState<string[]>(initialProducerGids);
+  const [producerAlias, setProducerAlias] = useState(initialProducerAlias);
+  const [status, setStatus] = useState(initialStatus);
 
   // License file assignment state
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(draft?.uploadedFiles || []);
-  const [licenseFiles, setLicenseFiles] = useState<LicenseFiles>(() => {
-    const obj: LicenseFiles = draft?.licenseFiles || {};
-    if (licenses) licenses.filter(Boolean).forEach(l => obj[l!.licenseId] = obj[l!.licenseId] || []);
-    return obj;
-  });
-  const [licensePrices, setLicensePrices] = useState<Record<string, string>>(() => {
-    const obj: Record<string, string> = draft?.licensePrices || {};
-    if (licenses) licenses.filter(Boolean).forEach(l => obj[l!.licenseId] = obj[l!.licenseId] || "");
-    return obj;
-  });
-  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(draft?.previewFile || null);
-  const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(draft?.coverArtFile || null);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(initialUploadedFiles);
+  const [licenseFiles, setLicenseFiles] = useState<LicenseFiles>(initialLicenseFiles);
+  const [licensePrices, setLicensePrices] = useState<Record<string, string>>(initialLicensePrices);
+  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(initialPreviewFile);
+  const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(initialCoverArtFile);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -700,6 +743,8 @@ export default function NewBeatPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const hasDraftMinimumFields = () => Boolean(title.trim());
+
   const hasRequiredBeatFields = () =>
     Boolean(
       title &&
@@ -708,6 +753,74 @@ export default function NewBeatPage() {
       genreGids.length > 0 &&
       producerGids.length > 0,
     );
+
+  const initialSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        title: initialTitle,
+        bpm: initialBpm,
+        key: initialKey,
+        genreGids: initialGenreGids,
+        producerGids: initialProducerGids,
+        producerAlias: initialProducerAlias,
+        status: initialStatus,
+        uploadedFiles: serializeUploadedFiles(initialUploadedFiles),
+        licenseFiles: initialLicenseFiles,
+        licensePrices: initialLicensePrices,
+        previewFile: serializeUploadedFile(initialPreviewFile),
+        coverArtFile: serializeUploadedFile(initialCoverArtFile),
+      }),
+    [
+      initialBpm,
+      initialCoverArtFile,
+      initialGenreGids,
+      initialKey,
+      initialLicenseFiles,
+      initialLicensePrices,
+      initialPreviewFile,
+      initialProducerAlias,
+      initialProducerGids,
+      initialStatus,
+      initialTitle,
+      initialUploadedFiles,
+    ],
+  );
+
+  const currentSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        title,
+        bpm,
+        key,
+        genreGids,
+        producerGids,
+        producerAlias,
+        status,
+        uploadedFiles: serializeUploadedFiles(uploadedFiles),
+        licenseFiles,
+        licensePrices,
+        previewFile: serializeUploadedFile(previewFile),
+        coverArtFile: serializeUploadedFile(coverArtFile),
+      }),
+    [
+      bpm,
+      coverArtFile,
+      genreGids,
+      key,
+      licenseFiles,
+      licensePrices,
+      previewFile,
+      producerAlias,
+      producerGids,
+      status,
+      title,
+      uploadedFiles,
+    ],
+  );
+
+  const isDirty = initialSnapshot !== currentSnapshot;
+  const isSubmittingForm = navigation.state !== "idle";
+  const isSaveBarOpen = isDirty && !isSubmittingForm;
 
   const isReadyForActive = () => {
     const hasAllLicenseFiles = licenses.filter(Boolean).every((license) => {
@@ -726,8 +839,48 @@ export default function NewBeatPage() {
     return hasRequiredBeatFields() && previewFile && hasAllLicenseFiles;
   };
 
+  const effectiveSaveMode = status === "active" && isReadyForActive() ? "active" : "draft";
+  const saveActionLabel =
+    effectiveSaveMode === "active"
+      ? isUploading
+        ? "Saving beat..."
+        : "Save beat"
+      : isUploading
+        ? "Saving draft..."
+        : "Save draft";
+
+  const resetFormState = useCallback(() => {
+    setTitle(initialTitle);
+    setBpm(initialBpm);
+    setKey(initialKey);
+    setGenreGids(initialGenreGids);
+    setProducerGids(initialProducerGids);
+    setProducerAlias(initialProducerAlias);
+    setStatus(initialStatus);
+    setUploadedFiles(initialUploadedFiles);
+    setLicenseFiles(initialLicenseFiles);
+    setLicensePrices(initialLicensePrices);
+    setPreviewFile(initialPreviewFile);
+    setCoverArtFile(initialCoverArtFile);
+    setUploadError(null);
+  }, [
+    initialBpm,
+    initialCoverArtFile,
+    initialGenreGids,
+    initialKey,
+    initialLicenseFiles,
+    initialLicensePrices,
+    initialPreviewFile,
+    initialProducerAlias,
+    initialProducerGids,
+    initialStatus,
+    initialTitle,
+    initialUploadedFiles,
+  ]);
+
   // Handle form submission
-  const handleSubmit = () => {
+  const handleSubmit = (saveMode?: "draft" | "active") => {
+    const resolvedStatus = saveMode || effectiveSaveMode;
     const formData = new FormData();
     if (draft?.id) {
       formData.append("draftId", draft.id);
@@ -738,7 +891,7 @@ export default function NewBeatPage() {
     formData.append("genreGids", JSON.stringify(genreGids));
     formData.append("producerGids", JSON.stringify(producerGids));
     formData.append("producerAlias", producerAlias);
-    formData.append("status", status);
+    formData.append("status", resolvedStatus);
     formData.append("licenseFiles", JSON.stringify(licenseFiles));
     formData.append("licensePrices", JSON.stringify(licensePrices));
     formData.append(
@@ -843,25 +996,54 @@ export default function NewBeatPage() {
     );
   }
 
+  const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isUploading) return;
+    handleSubmit(effectiveSaveMode);
+  };
+
+  const handleFormReset = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isUploading) return;
+    resetFormState();
+  };
+
+  const handleBackAction = async () => {
+    if (isDirty) {
+      try {
+        await shopify.saveBar.leaveConfirmation();
+      } catch {
+        return;
+      }
+    }
+
+    navigate("/app/beats");
+  };
+
   return (
     <Page 
       title="Upload beat"
-      backAction={{ content: "Beats", url: "/app/beats" }}
-      primaryAction={{
-        content:
-          status === "draft"
-            ? isUploading
-              ? "Saving draft..."
-              : "Save draft"
-            : isUploading
-              ? "Saving..."
-              : "Save beat",
-        onAction: handleSubmit,
-        disabled:
-          (status === "draft" ? !hasRequiredBeatFields() : !isReadyForActive()) ||
-          isUploading,
-      }}
+      backAction={{ content: "Beats", onAction: handleBackAction }}
     >
+      <SaveBar id="beat-upload-save-bar" open={isSaveBarOpen} discardConfirmation>
+        <button
+          type="reset"
+          form="beat-upload-form"
+          disabled={isUploading}
+        >
+          Discard
+        </button>
+        <button
+          type="submit"
+          form="beat-upload-form"
+          variant="primary"
+          disabled={isUploading || (effectiveSaveMode === "draft" ? !hasDraftMinimumFields() : !hasRequiredBeatFields())}
+        >
+          {saveActionLabel}
+        </button>
+      </SaveBar>
+
+      <form id="beat-upload-form" onSubmit={handleFormSubmit} onReset={handleFormReset}>
       <Layout>
         {storageWarning && (
           <Layout.Section>
@@ -1011,17 +1193,16 @@ export default function NewBeatPage() {
                 />
 
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Save as a draft while you finish preview audio and delivery files, or mark
-                  the beat active when it is ready to sell.
+                  Drafts stay inside Producer Launchpad until you activate them. Active beats publish to Shopify when files, preview audio, and pricing are ready.
                 </Text>
 
                 {status === "draft" ? (
                   <Banner tone="info">
-                    <p>Draft beats can be saved before preview audio and delivery packages are complete.</p>
+                    <p>This beat will stay in your Drafts tab until you save it as active.</p>
                   </Banner>
                 ) : !isReadyForActive() ? (
                   <Banner tone="warning">
-                    <p>Add preview audio and finish each license package before saving this beat as active.</p>
+                    <p>This beat will save as a draft until preview audio, delivery packages, and pricing are complete.</p>
                   </Banner>
                 ) : (
                   <Banner tone="success">
@@ -1033,6 +1214,7 @@ export default function NewBeatPage() {
           </BlockStack>
         </Layout.Section>
       </Layout>
+      </form>
     </Page>
   );
 }
