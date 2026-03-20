@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useActionData, useSubmit, useNavigate, useNavigation } from "@remix-run/react";
-import { useState, useCallback, useMemo } from "react";
+import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import {
@@ -14,6 +14,9 @@ import {
   Select,
   Text,
   FormLayout,
+  Badge,
+  Box,
+  InlineStack,
 } from "@shopify/polaris";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { createProductCreatorService } from "../services/productCreator";
@@ -86,6 +89,18 @@ function formatDeliveryFormatLabel(format: DeliveryFormat) {
   return format === "stems" ? "STEMS ZIP" : format.toUpperCase();
 }
 
+function hasCompleteLicensePrices(
+  licenses: Array<{ licenseId: string }>,
+  licensePrices: Record<string, string>,
+) {
+  return licenses.every((license) => {
+    const rawPrice = licensePrices[license.licenseId];
+    if (rawPrice == null || rawPrice.trim() === "") return false;
+    const parsed = Number.parseFloat(rawPrice);
+    return Number.isFinite(parsed) && parsed > 0;
+  });
+}
+
 function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -114,6 +129,7 @@ function serializeUploadedFile(file: UploadedFile | null) {
     purpose: file.purpose,
     size: file.size,
     storageUrl: file.storageUrl || null,
+    shopifyResourceUrl: file.shopifyResourceUrl || null,
   };
 }
 
@@ -365,6 +381,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
+    if (!isDraft) {
+      const missingPrices = dbLicenses
+        .filter((license) => {
+          const rawPrice = licensePricesData[license.licenseId];
+          if (rawPrice == null || String(rawPrice).trim() === "") return true;
+          const parsed = Number.parseFloat(String(rawPrice));
+          return !Number.isFinite(parsed) || parsed <= 0;
+        })
+        .map((license) => license.licenseName);
+
+      if (missingPrices.length > 0) {
+        return json(
+          {
+            success: false,
+            error: `Add a price for each license offer before saving active. Missing: ${missingPrices.join(", ")}`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Collect all file entries from formData
     const fileEntries: Array<{ tempId: string; file: File; purpose: string }> = [];
     for (const [key, value] of formData.entries()) {
@@ -480,8 +517,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const mergedPreviewFile = previewFileId
       ? uploadedFilesWithStorage.get(previewFileId) || existingFilesById.get(previewFileId) || null
       : null;
-    const mergedCoverArtFile = coverArtFileId
+    const mergedCoverArtFileBase = coverArtFileId
       ? uploadedFilesWithStorage.get(coverArtFileId) || existingFilesById.get(coverArtFileId) || null
+      : null;
+    const mergedCoverArtFile = mergedCoverArtFileBase
+      ? {
+          ...mergedCoverArtFileBase,
+          shopifyResourceUrl:
+            shopifyCoverResourceUrl || mergedCoverArtFileBase.shopifyResourceUrl || null,
+        }
       : null;
 
     const mergedLicenseFilePoolByPurpose = new Map<string, UploadedFile>();
@@ -492,7 +536,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const mergedUploadedFiles = Array.from(mergedLicenseFilePoolByPurpose.values());
 
     previewUrl = mergedPreviewFile?.storageUrl;
-    coverArtUrl = mergedCoverArtFile?.storageUrl;
+    coverArtUrl = mergedCoverArtFile?.shopifyResourceUrl || mergedCoverArtFile?.storageUrl;
 
     if (isDraft) {
       const draftData = {
@@ -520,7 +564,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           });
 
       console.info("[upload] draft saved successfully", { draftId: savedDraft.id });
-      return redirect("/app/beats?success=true&status=draft");
+      return json({
+        success: true,
+        redirectTo: "/app/beats?success=true&status=draft",
+      });
     }
 
     // Get actual license GIDs from the database
@@ -553,7 +600,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       producerNames,
       producerAlias: producerAlias || undefined,
       licenses: licensePrices,
-      coverArtUrl: shopifyCoverResourceUrl || coverArtUrl,
+      coverArtUrl: shopifyCoverResourceUrl || mergedCoverArtFile?.shopifyResourceUrl || coverArtUrl,
       previewUrl,
     });
 
@@ -633,7 +680,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     console.info("[upload] completed successfully", { productId: result.productId });
-    return redirect(`/app/beats?success=true&status=${statusValue}`);
+    return json({
+      success: true,
+      redirectTo: `/app/beats?success=true&status=${statusValue}`,
+    });
   } catch (error) {
     console.error("Upload error:", error);
     return json(
@@ -648,10 +698,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function NewBeatPage() {
   const { licenses, genres, producers, draft, storageWarning, error: loaderError } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
-  const submit = useSubmit();
+  const fetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
-  const navigation = useNavigation();
   const shopify = useAppBridge();
 
   const initialTitle = draft?.title || "";
@@ -694,6 +742,8 @@ export default function NewBeatPage() {
   const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(initialCoverArtFile);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isSaveSubmitting, setIsSaveSubmitting] = useState(false);
+  const [suppressSaveBar, setSuppressSaveBar] = useState(false);
 
   // Handle file upload with purpose
   const handleFileUpload = useCallback(
@@ -743,8 +793,6 @@ export default function NewBeatPage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const hasDraftMinimumFields = () => Boolean(title.trim());
-
   const hasRequiredBeatFields = () =>
     Boolean(
       title &&
@@ -753,6 +801,8 @@ export default function NewBeatPage() {
       genreGids.length > 0 &&
       producerGids.length > 0,
     );
+
+  const hasDraftMinimumFields = () => Boolean(title.trim());
 
   const initialSnapshot = useMemo(
     () =>
@@ -819,8 +869,8 @@ export default function NewBeatPage() {
   );
 
   const isDirty = initialSnapshot !== currentSnapshot;
-  const isSubmittingForm = navigation.state !== "idle";
-  const isSaveBarOpen = isDirty && !isSubmittingForm;
+  const isSubmittingForm = fetcher.state !== "idle";
+  const isBusy = isSubmittingForm || isUploading || isSaveSubmitting;
 
   const isReadyForActive = () => {
     const hasAllLicenseFiles = licenses.filter(Boolean).every((license) => {
@@ -836,16 +886,21 @@ export default function NewBeatPage() {
       return requiredFormats.every((format) => assignedFormats.has(format));
     });
 
-    return hasRequiredBeatFields() && previewFile && hasAllLicenseFiles;
+    const hasAllLicensePrices = hasCompleteLicensePrices(
+      licenses.filter(Boolean).map((license) => ({ licenseId: license!.licenseId })),
+      licensePrices,
+    );
+
+    return hasRequiredBeatFields() && previewFile && hasAllLicenseFiles && hasAllLicensePrices;
   };
 
   const effectiveSaveMode = status === "active" && isReadyForActive() ? "active" : "draft";
   const saveActionLabel =
     effectiveSaveMode === "active"
-      ? isUploading
+      ? isBusy
         ? "Saving beat..."
         : "Save beat"
-      : isUploading
+      : isBusy
         ? "Saving draft..."
         : "Save draft";
 
@@ -880,6 +935,8 @@ export default function NewBeatPage() {
 
   // Handle form submission
   const handleSubmit = (saveMode?: "draft" | "active") => {
+    setSuppressSaveBar(false);
+    setIsSaveSubmitting(true);
     const resolvedStatus = saveMode || effectiveSaveMode;
     const formData = new FormData();
     if (draft?.id) {
@@ -960,8 +1017,39 @@ export default function NewBeatPage() {
     
     formData.append("fileMetadata", JSON.stringify(fileMetadata));
 
-    submit(formData, { method: "post", encType: "multipart/form-data" });
+    fetcher.submit(formData, { method: "post", encType: "multipart/form-data" });
   };
+
+  useEffect(() => {
+    if (fetcher.data && "success" in fetcher.data && fetcher.data.success === false) {
+      setIsSaveSubmitting(false);
+      setSuppressSaveBar(false);
+    }
+  }, [fetcher.data]);
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && (!fetcher.data || ("success" in fetcher.data && fetcher.data.success === false))) {
+      setIsSaveSubmitting(false);
+    }
+  }, [fetcher.data, fetcher.state]);
+
+  useEffect(() => {
+    if (!fetcher.data || !("success" in fetcher.data) || fetcher.data.success !== true || !fetcher.data.redirectTo || suppressSaveBar) {
+      return;
+    }
+
+    setSuppressSaveBar(true);
+    setIsSaveSubmitting(false);
+
+    const redirectTo = fetcher.data.redirectTo;
+
+    void shopify.saveBar
+      .hide("beat-upload-save-bar")
+      .catch(() => {})
+      .finally(() => {
+        navigate(redirectTo);
+      });
+  }, [fetcher.data, navigate, shopify, suppressSaveBar]);
 
   // Map licenses to tier format for LicenseFileAssignment
   const dynamicLicenseTiers = licenses.filter(Boolean).map(l => ({
@@ -998,13 +1086,13 @@ export default function NewBeatPage() {
 
   const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isUploading) return;
+    if (isBusy) return;
     handleSubmit(effectiveSaveMode);
   };
 
   const handleFormReset = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (isUploading) return;
+    if (isBusy) return;
     resetFormState();
   };
 
@@ -1025,25 +1113,34 @@ export default function NewBeatPage() {
       title="Upload beat"
       backAction={{ content: "Beats", onAction: handleBackAction }}
     >
-      <SaveBar id="beat-upload-save-bar" open={isSaveBarOpen} discardConfirmation>
+      <SaveBar
+        id="beat-upload-save-bar"
+        open={!suppressSaveBar && (isDirty || isSubmittingForm || isSaveSubmitting)}
+        discardConfirmation
+      >
         <button
-          type="reset"
-          form="beat-upload-form"
-          disabled={isUploading}
+          type="button"
+          disabled={isBusy}
+          onClick={resetFormState}
         >
           Discard
         </button>
         <button
-          type="submit"
-          form="beat-upload-form"
+          type="button"
           variant="primary"
-          disabled={isUploading || (effectiveSaveMode === "draft" ? !hasDraftMinimumFields() : !hasRequiredBeatFields())}
+          disabled={isBusy || (effectiveSaveMode === "draft" ? !hasDraftMinimumFields() : !isReadyForActive())}
+          loading={isSaveSubmitting || isSubmittingForm || isUploading ? "" : undefined}
+          onClick={() => handleSubmit(effectiveSaveMode)}
         >
           {saveActionLabel}
         </button>
       </SaveBar>
 
-      <form id="beat-upload-form" onSubmit={handleFormSubmit} onReset={handleFormReset}>
+      <form
+        id="beat-upload-form"
+        onSubmit={handleFormSubmit}
+        onReset={handleFormReset}
+      >
       <Layout>
         {storageWarning && (
           <Layout.Section>
@@ -1057,10 +1154,10 @@ export default function NewBeatPage() {
           </Layout.Section>
         )}
 
-        {actionData?.error && (
+        {fetcher.data && "success" in fetcher.data && fetcher.data.success === false && (
           <Layout.Section>
             <Banner title="Upload failed" tone="critical">
-              <p>{actionData.error}</p>
+              <p>{fetcher.data.error}</p>
             </Banner>
           </Layout.Section>
         )}
@@ -1088,7 +1185,6 @@ export default function NewBeatPage() {
                     value={title}
                     onChange={setTitle}
                     autoComplete="off"
-                    helpText="Enter a catchy title for your beat"
                   />
 
                   <FormLayout.Group>
@@ -1098,7 +1194,6 @@ export default function NewBeatPage() {
                       value={bpm}
                       onChange={setBpm}
                       autoComplete="off"
-                      helpText="Beats per minute"
                     />
 
                     <Select
@@ -1132,7 +1227,6 @@ export default function NewBeatPage() {
                     value={producerAlias}
                     onChange={setProducerAlias}
                     autoComplete="off"
-                    helpText="Alternative name to display"
                   />
 
                   <MultiSelectCombobox
@@ -1178,9 +1272,11 @@ export default function NewBeatPage() {
             {/* Status Card */}
             <Card>
               <BlockStack gap="400">
-                <Text variant="headingMd" as="h2">
-                  Status
-                </Text>
+                <InlineStatusHeader
+                  status={status}
+                  effectiveSaveMode={effectiveSaveMode}
+                  isReadyForActive={isReadyForActive()}
+                />
                 <Select
                   label="Status"
                   labelHidden
@@ -1193,22 +1289,31 @@ export default function NewBeatPage() {
                 />
 
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Drafts stay inside Producer Launchpad until you activate them. Active beats publish to Shopify when files, preview audio, and pricing are ready.
+                  Choose whether this beat stays in Producer Launchpad for later or publishes to Shopify when it is ready to sell.
                 </Text>
 
-                {status === "draft" ? (
-                  <Banner tone="info">
-                    <p>This beat will stay in your Drafts tab until you save it as active.</p>
-                  </Banner>
-                ) : !isReadyForActive() ? (
-                  <Banner tone="warning">
-                    <p>This beat will save as a draft until preview audio, delivery packages, and pricing are complete.</p>
-                  </Banner>
-                ) : (
-                  <Banner tone="success">
-                    <p>This beat is ready to save as active.</p>
-                  </Banner>
-                )}
+                <Box
+                  background="bg-surface-secondary"
+                  borderRadius="300"
+                  padding="300"
+                >
+                  <BlockStack gap="100">
+                    <Text as="p" variant="bodySm" fontWeight="medium">
+                      {status === "draft"
+                        ? "Stays in Producer Launchpad"
+                        : effectiveSaveMode === "draft"
+                          ? "Will save as a draft for now"
+                          : "Ready to publish to Shopify"}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {status === "draft"
+                        ? "You can come back later to finish files, preview audio, and pricing."
+                        : effectiveSaveMode === "draft"
+                          ? "Add the remaining preview, delivery files, and pricing when you are ready to activate it."
+                          : "Saving will create the Shopify product and keep delivery automation ready."}
+                    </Text>
+                  </BlockStack>
+                </Box>
               </BlockStack>
             </Card>
           </BlockStack>
@@ -1216,5 +1321,26 @@ export default function NewBeatPage() {
       </Layout>
       </form>
     </Page>
+  );
+}
+
+function InlineStatusHeader({
+  status,
+  effectiveSaveMode,
+  isReadyForActive,
+}: {
+  status: string;
+  effectiveSaveMode: "draft" | "active";
+  isReadyForActive: boolean;
+}) {
+  return (
+    <InlineStack align="space-between" blockAlign="center">
+      <Text variant="headingMd" as="h2">
+        Status
+      </Text>
+      <Badge tone={status === "draft" ? undefined : isReadyForActive && effectiveSaveMode === "active" ? "success" : "warning"}>
+        {status === "draft" ? "Draft" : effectiveSaveMode === "active" ? "Ready" : "Incomplete"}
+      </Badge>
+    </InlineStack>
   );
 }

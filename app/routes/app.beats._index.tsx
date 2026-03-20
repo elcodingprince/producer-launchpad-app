@@ -1,6 +1,6 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Link, useLoaderData, useSearchParams } from "@remix-run/react";
+import { Link, useFetcher, useLoaderData, useSearchParams } from "@remix-run/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import prisma from "~/db.server";
@@ -8,12 +8,15 @@ import { authenticate } from "~/shopify.server";
 import type { IndexFiltersProps } from "@shopify/polaris";
 import {
   Badge,
+  Banner,
   Button,
   Card,
   EmptyState,
   IndexFilters,
   IndexTable,
+  InlineStack,
   Layout,
+  Modal,
   Page,
   Text,
   Thumbnail,
@@ -41,6 +44,18 @@ type BeatListItem = {
   actionUrl: string;
   actionExternal?: boolean;
 };
+
+type ActionData =
+  | {
+      success: true;
+      intent: "delete_drafts";
+      deletedCount: number;
+    }
+  | {
+      success: false;
+      intent: "delete_drafts" | "unknown";
+      error: string;
+    };
 
 function normalizeShopifyResourceId(id: string) {
   const match = id.match(/\/(\d+)$/);
@@ -154,7 +169,8 @@ async function getDraftBeats(shop: string): Promise<BeatListItem[]> {
     title: draft.title || "Untitled draft",
     status: "draft" as const,
     coverArt:
-      parseJsonField<{ storageUrl?: string | null } | null>(draft.coverArtFileJson, null)?.storageUrl ||
+      parseJsonField<{ shopifyResourceUrl?: string | null; storageUrl?: string | null } | null>(draft.coverArtFileJson, null)?.shopifyResourceUrl ||
+      parseJsonField<{ shopifyResourceUrl?: string | null; storageUrl?: string | null } | null>(draft.coverArtFileJson, null)?.storageUrl ||
       null,
     kind: "draft" as const,
     updatedAt: draft.updatedAt.toISOString(),
@@ -181,13 +197,58 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent !== "delete_drafts") {
+    return json<ActionData>(
+      {
+        success: false,
+        intent: "unknown",
+        error: "Unknown action",
+      },
+      { status: 400 },
+    );
+  }
+
+  const draftIds = formData.getAll("draftIds").map(String).filter(Boolean);
+
+  if (draftIds.length === 0) {
+    return json<ActionData>(
+      {
+        success: false,
+        intent: "delete_drafts",
+        error: "Select at least one draft to delete.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const result = await prisma.beatDraft.deleteMany({
+    where: {
+      shop: session.shop,
+      id: { in: draftIds },
+    },
+  });
+
+  return json<ActionData>({
+    success: true,
+    intent: "delete_drafts",
+    deletedCount: result.count,
+  });
+};
+
 export default function BeatsList() {
   const { beats, uploadSuccess, uploadStatus } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const shopify = useAppBridge();
+  const deleteFetcher = useFetcher<typeof action>();
   const { mode, setMode } = useSetIndexFiltersMode();
   const [queryValue, setQueryValue] = useState("");
   const [sortSelected, setSortSelected] = useState<string[]>(["updatedAt desc"]);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [selectedView, setSelectedView] = useState(() => {
     const statusParam = searchParams.get("status");
     if (statusParam === "drafts" || statusParam === "draft") return 2;
@@ -207,18 +268,8 @@ export default function BeatsList() {
   const selectedStatusFilter = statusViews[selectedView]?.id as BeatStatusFilter;
 
   useEffect(() => {
-    if (uploadSuccess) {
-      shopify.toast.show(
-        uploadStatus === "draft"
-          ? "Draft saved to Producer Launchpad"
-          : "Beat saved",
-      );
-
-      const next = new URLSearchParams(searchParams);
-      next.delete("success");
-      setSearchParams(next, { replace: true, preventScrollReset: true });
-    }
-  }, [searchParams, setSearchParams, shopify, uploadStatus, uploadSuccess]);
+    shopify.saveBar.hide("beat-upload-save-bar");
+  }, [shopify]);
 
   useEffect(() => {
     const statusParam = searchParams.get("status");
@@ -274,7 +325,21 @@ export default function BeatsList() {
     selectedResources,
     allResourcesSelected,
     handleSelectionChange,
+    clearSelection,
   } = useIndexResourceState(filteredBeats);
+
+  const selectedBeats = useMemo(
+    () => filteredBeats.filter((beat) => selectedResources.includes(beat.id)),
+    [filteredBeats, selectedResources],
+  );
+
+  const selectedDrafts = useMemo(
+    () => selectedBeats.filter((beat) => beat.kind === "draft"),
+    [selectedBeats],
+  );
+
+  const hasOnlyDraftSelection =
+    selectedResources.length > 0 && selectedDrafts.length === selectedResources.length;
 
   const sortOptions = useMemo<IndexFiltersProps["sortOptions"]>(
     () => [
@@ -289,10 +354,55 @@ export default function BeatsList() {
   const handleQueryValueRemove = useCallback(() => setQueryValue(""), []);
 
   const handleClearAll = useCallback(() => {
+    clearSelection();
     setQueryValue("");
     setSelectedView(0);
     setSortSelected(["updatedAt desc"]);
-  }, []);
+  }, [clearSelection]);
+
+  const isDeletingDrafts = deleteFetcher.state !== "idle";
+
+  const handleOpenDeleteModal = useCallback(() => {
+    if (!hasOnlyDraftSelection || selectedDrafts.length === 0) return;
+    setDeleteModalOpen(true);
+  }, [hasOnlyDraftSelection, selectedDrafts.length]);
+
+  const handleCloseDeleteModal = useCallback(() => {
+    if (isDeletingDrafts) return;
+    setDeleteModalOpen(false);
+  }, [isDeletingDrafts]);
+
+  const handleDeleteDrafts = useCallback(() => {
+    if (!hasOnlyDraftSelection || selectedDrafts.length === 0 || isDeletingDrafts) return;
+
+    const deletingMessage =
+      selectedDrafts.length === 1
+        ? "Deleting draft..."
+        : `Deleting ${selectedDrafts.length} drafts...`;
+
+    shopify.toast.show(deletingMessage);
+    const formData = new FormData();
+    formData.append("intent", "delete_drafts");
+    selectedDrafts.forEach((draft) => {
+      formData.append("draftIds", draft.id);
+    });
+
+    deleteFetcher.submit(formData, { method: "post", action: "/app/beats/delete-drafts" });
+  }, [deleteFetcher, hasOnlyDraftSelection, isDeletingDrafts, selectedDrafts, shopify]);
+
+  useEffect(() => {
+    if (!deleteFetcher.data?.success) return;
+
+    if (deleteFetcher.data.intent === "delete_drafts") {
+      shopify.toast.show(
+        deleteFetcher.data.deletedCount === 1
+          ? "Draft deleted"
+          : `${deleteFetcher.data.deletedCount} drafts deleted`,
+      );
+      setDeleteModalOpen(false);
+      clearSelection();
+    }
+  }, [clearSelection, deleteFetcher.data, shopify]);
 
   const pageTitle = "Beats";
 
@@ -332,6 +442,46 @@ export default function BeatsList() {
       }}
     >
       <Layout>
+        {deleteFetcher.data && !deleteFetcher.data.success ? (
+          <Layout.Section>
+            <Banner title="Unable to update drafts" tone="critical">
+              <p>{deleteFetcher.data.error}</p>
+            </Banner>
+          </Layout.Section>
+        ) : null}
+
+        {uploadSuccess ? (
+          <Layout.Section>
+            <Banner
+              title={
+                uploadStatus === "draft"
+                  ? "Draft saved to Producer Launchpad"
+                  : "Beat uploaded successfully"
+              }
+              tone="success"
+              onDismiss={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete("success");
+                setSearchParams(next, { replace: true, preventScrollReset: true });
+              }}
+            >
+              <p>
+                {uploadStatus === "draft" ? (
+                  <>
+                    <Link to="/app/beats/new">Upload another beat</Link>, or reopen this draft any
+                    time from the Draft tab.
+                  </>
+                ) : (
+                  <>
+                    <Link to="/app/beats/new">Upload another beat</Link>, or{" "}
+                    <Link to="/app/licenses">view license templates</Link>.
+                  </>
+                )}
+              </p>
+            </Banner>
+          </Layout.Section>
+        ) : null}
+
         <Layout.Section>
           <Card padding="0">
             <IndexFilters
@@ -391,6 +541,20 @@ export default function BeatsList() {
                   allResourcesSelected ? "All" : selectedResources.length
                 }
                 onSelectionChange={handleSelectionChange}
+                promotedBulkActions={
+                  hasOnlyDraftSelection
+                    ? [
+                        {
+                          content:
+                            selectedDrafts.length === 1
+                              ? "Delete draft"
+                              : "Delete drafts",
+                          destructive: true,
+                          onAction: handleOpenDeleteModal,
+                        },
+                      ]
+                    : []
+                }
                 headings={[
                   { title: "Beat" },
                   { title: "Updated" },
@@ -471,6 +635,39 @@ export default function BeatsList() {
           </Card>
         </Layout.Section>
       </Layout>
+
+      <Modal
+        open={deleteModalOpen}
+        onClose={handleCloseDeleteModal}
+        title={selectedDrafts.length === 1 ? "Delete 1 draft?" : `Delete ${selectedDrafts.length} drafts?`}
+      >
+        <Modal.Section>
+          <Layout>
+            <Layout.Section>
+              <Text as="p" variant="bodyMd">
+                This can&apos;t be undone. Any cover art saved with these drafts will also be removed
+                from Producer Launchpad.
+              </Text>
+            </Layout.Section>
+            <Layout.Section>
+              <InlineStack align="end" gap="300">
+                <Button onClick={handleCloseDeleteModal} disabled={isDeletingDrafts}>
+                  Cancel
+                </Button>
+                <Button
+                  tone="critical"
+                  variant="primary"
+                  onClick={handleDeleteDrafts}
+                  loading={isDeletingDrafts}
+                  disabled={isDeletingDrafts}
+                >
+                  {selectedDrafts.length === 1 ? "Delete" : "Delete drafts"}
+                </Button>
+              </InlineStack>
+            </Layout.Section>
+          </Layout>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }

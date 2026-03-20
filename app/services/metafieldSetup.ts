@@ -240,6 +240,31 @@ export const DEFAULT_LICENSES = [
   },
 ];
 
+function hashStarterPreset(input: string) {
+  let hash = 2166136261;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(36);
+}
+
+function serializeStarterFields(fields: Array<{ key: string; value: string }>) {
+  return [...fields]
+    .sort((left, right) => left.key.localeCompare(right.key))
+    .map((field) => `${field.key}:${field.value}`)
+    .join("|");
+}
+
+export function getStarterPresetVersion(handle: string) {
+  const preset = DEFAULT_LICENSES.find((license) => license.handle === handle);
+  if (!preset) return null;
+
+  return `starter-${hashStarterPreset(`${handle}|${serializeStarterFields(preset.fields)}`)}`;
+}
+
 export interface SetupStatus {
   productMetafields: {
     total: number;

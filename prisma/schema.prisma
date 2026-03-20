@@ -155,3 +155,20 @@ model DeliveryAccess {
   @@index([shop])
   @@index([downloadToken])
 }
+
+model TemplateGuardrailAcceptance {
+  id               String   @id @default(cuid())
+  shop             String
+  templateHandle   String
+  templateMetaobjectId String
+  starterVersion   String
+  acceptedAt       DateTime
+  acceptedByUserId BigInt?
+  acceptedByEmail  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([shop, templateHandle, starterVersion])
+  @@index([shop])
+  @@index([templateHandle])
+}

@@ -42,6 +42,7 @@ export interface UploadedFile {
   size: string;
   file?: File;
   storageUrl?: string;
+  shopifyResourceUrl?: string;
 }
 
 export interface LicenseFiles {
@@ -285,10 +286,19 @@ export function LicenseFileAssignment({
 
   const getFile = useCallback((id: string) => uploadedFiles.find((f) => f.id === id), [uploadedFiles]);
 
+  const packageStatusMessage = (missingFiles: string[], hasAssignments: boolean) => {
+    if (uploadedFiles.length === 0) return "Upload delivery files to build this package.";
+    if (missingFiles.length > 0) {
+      return `Missing: ${missingFiles.map((file) => getFileFormatLabel(file)).join(', ')}`;
+    }
+    if (hasAssignments) return "Matches this license template.";
+    return "No matching package files uploaded yet.";
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <BlockStack gap="500">
+    <BlockStack gap="400">
       {error && <Banner tone="critical"><p>{error}</p></Banner>}
 
       {rejectedFiles.length > 0 && (
@@ -304,13 +314,18 @@ export function LicenseFileAssignment({
 
       {/* ── Storefront media ── */}
       <Card>
-        <BlockStack gap="500">
-          <Text variant="headingMd" as="h2">Storefront media</Text>
+        <BlockStack gap="400">
+          <BlockStack gap="100">
+            <Text variant="headingMd" as="h2">Storefront media</Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Add the artwork and preview audio buyers see before purchase.
+            </Text>
+          </BlockStack>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '24px', alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '20px', alignItems: 'start' }}>
 
             {/* Left — Cover Art */}
-            <BlockStack gap="200">
+            <BlockStack gap="150">
               <Text variant="bodySm" as="p" tone="subdued">Cover Art</Text>
               {!coverArtFile ? (
                 <div style={{ height: '160px' }}>
@@ -323,8 +338,8 @@ export function LicenseFileAssignment({
                 </div>
               ) : (
                 <div style={{ position: 'relative', height: '160px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--p-color-border)' }}>
-                  {(coverArtPreviewUrl || coverArtFile?.storageUrl)
-                    ? <img src={coverArtPreviewUrl || coverArtFile?.storageUrl} alt="Cover art" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  {(coverArtPreviewUrl || coverArtFile?.shopifyResourceUrl || coverArtFile?.storageUrl)
+                    ? <img src={coverArtPreviewUrl || coverArtFile?.shopifyResourceUrl || coverArtFile?.storageUrl} alt="Cover art" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                     : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--p-color-bg-surface-secondary)' }}><Icon source={ImageIcon} tone="base" /></div>
                   }
                   <div style={{ position: 'absolute', top: '4px', right: '4px' }}>
@@ -335,15 +350,15 @@ export function LicenseFileAssignment({
             </BlockStack>
 
             {/* Right — Preview */}
-            <BlockStack gap="300">
-              <BlockStack gap="300">
+            <BlockStack gap="250">
+              <BlockStack gap="200">
                 <BlockStack gap="100">
                   <InlineStack gap="200" blockAlign="center">
                     <Text variant="headingSm" as="h3">Preview audio</Text>
                     <Text as="span" variant="bodySm" tone="subdued">(required)</Text>
                   </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Watermarked MP3 for your storefront player. Not included in any license package.
+                    Watermarked MP3 for your storefront player. Never delivered in a license package.
                   </Text>
                 </BlockStack>
 
@@ -355,16 +370,18 @@ export function LicenseFileAssignment({
                     }
                   </DropZone>
                 ) : (
-                  <Box borderWidth="025" borderColor="border" borderRadius="200" padding="300">
+                  <Box borderWidth="025" borderColor="border" borderRadius="200" padding="250">
                     <InlineStack gap="300" blockAlign="center">
-                          <FileFormatBadge format="preview" />
+                      <FileFormatBadge format="preview" />
                       <BlockStack gap="0">
                         <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>
                           <Text as="span" variant="bodySm" fontWeight="medium">{previewFile.name}</Text>
                         </div>
                         <Text as="span" variant="bodyXs" tone="subdued">{previewFile.size}</Text>
                       </BlockStack>
-                      <Button icon={XIcon} variant="plain" onClick={removePreviewFile} disabled={uploading} accessibilityLabel="Remove preview" />
+                      <div style={{ marginLeft: 'auto' }}>
+                        <Button icon={XIcon} variant="plain" onClick={removePreviewFile} disabled={uploading} accessibilityLabel="Remove preview" />
+                      </div>
                     </InlineStack>
                   </Box>
                 )}
@@ -375,12 +392,12 @@ export function LicenseFileAssignment({
       </Card>
 
       <Card>
-        <BlockStack gap="300">
+        <BlockStack gap="250">
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
               <Text variant="headingMd" as="h2">Delivery files</Text>
               <Text as="p" variant="bodySm" tone="subdued">
-                Upload each master once. Your license templates automatically build the correct package below.
+                Upload each master once. Your license templates automatically build the right customer package below.
               </Text>
             </BlockStack>
             {uploadedFiles.length > 0 && !uploading && (
@@ -408,9 +425,9 @@ export function LicenseFileAssignment({
               }
             </DropZone>
           ) : (
-            <BlockStack gap="200">
+            <BlockStack gap="150">
               {uploadedFiles.map((file) => (
-                <Box key={file.id} borderWidth="025" borderColor="border" borderRadius="200" padding="300">
+                <Box key={file.id} borderWidth="025" borderColor="border" borderRadius="200" padding="250">
                   <InlineStack gap="300" blockAlign="center">
                     <FileFormatBadge format={file.purpose || file.type} />
                     <BlockStack gap="0">
@@ -419,7 +436,9 @@ export function LicenseFileAssignment({
                       </div>
                       <Text as="span" variant="bodyXs" tone="subdued">{file.size}</Text>
                     </BlockStack>
-                    <Button icon={XIcon} variant="plain" onClick={() => removeLicenseFile(file.id)} disabled={uploading} accessibilityLabel={`Remove ${file.name}`} />
+                    <div style={{ marginLeft: 'auto' }}>
+                      <Button icon={XIcon} variant="plain" onClick={() => removeLicenseFile(file.id)} disabled={uploading} accessibilityLabel={`Remove ${file.name}`} />
+                    </div>
                   </InlineStack>
                 </Box>
               ))}
@@ -431,7 +450,12 @@ export function LicenseFileAssignment({
       {/* ── License offers — Shopify Variants Table Layout ── */}
       <Card padding="0">
         <Box padding="400" paddingBlockEnd="400" borderBlockEndWidth="025" borderColor="border">
-          <Text variant="headingMd" as="h2">License offers</Text>
+          <BlockStack gap="100">
+            <Text variant="headingMd" as="h2">License offers</Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Set the price for each offer and review what the buyer will receive.
+            </Text>
+          </BlockStack>
         </Box>
 
         <Box padding="0">
@@ -439,7 +463,7 @@ export function LicenseFileAssignment({
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--p-color-bg-surface-secondary)', borderBottom: '1px solid var(--p-color-border)' }}>
-                  <th style={{ padding: '8px 16px', fontWeight: 500, fontSize: '13px', color: 'var(--p-color-text-subdued)', width: '25%' }}>Variant</th>
+                  <th style={{ padding: '8px 16px', fontWeight: 500, fontSize: '13px', color: 'var(--p-color-text-subdued)', width: '25%' }}>License</th>
                   <th style={{ padding: '8px 16px', fontWeight: 500, fontSize: '13px', color: 'var(--p-color-text-subdued)', width: '25%' }}>Price</th>
                   <th style={{ padding: '8px 16px', fontWeight: 500, fontSize: '13px', color: 'var(--p-color-text-subdued)', width: '50%' }}>Delivered package</th>
                 </tr>
@@ -459,7 +483,7 @@ export function LicenseFileAssignment({
                       <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
                         <InlineStack gap="300" blockAlign="center" wrap={false}>
                           <div>
-                            <Box background="bg-surface" borderWidth="025" borderColor="border" borderRadius="200" padding="150">
+                            <Box background="bg-surface" borderWidth="025" borderColor="border" borderRadius="200" padding="100">
                               <Icon source={meta.icon} tone={meta.tint} />
                             </Box>
                           </div>
@@ -483,38 +507,28 @@ export function LicenseFileAssignment({
                       </td>
                       <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
                         <Box
-                          padding="300"
+                          padding="250"
                           borderWidth="025"
                           borderColor="border"
                           borderRadius="200"
                           background={uploadedFiles.length === 0 ? 'bg-surface-disabled' : 'bg-surface'}
                         >
                           <BlockStack gap="200">
-                            {uploadedFiles.length === 0 ? (
-                              <Text as="span" variant="bodySm" tone="disabled">
-                                Upload license files above first
-                              </Text>
-                            ) : assignedFiles.length > 0 ? (
+                            {assignedFiles.length > 0 ? (
                                 <InlineStack gap="200" wrap>
                                   {assignedFiles.map((file) => (
                                   <FileFormatBadge key={file.id} format={file.purpose || file.type} />
                                 ))}
                               </InlineStack>
-                            ) : (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                No matching package files uploaded yet
-                              </Text>
-                            )}
-
-                            {missingFiles.length > 0 ? (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                Missing: {missingFiles.map((file) => getFileFormatLabel(file)).join(', ')}
-                              </Text>
-                            ) : uploadedFiles.length > 0 ? (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                Auto-linked from this license template
-                              </Text>
                             ) : null}
+
+                            <Text
+                              as="span"
+                              variant="bodySm"
+                              tone={uploadedFiles.length === 0 ? "disabled" : "subdued"}
+                            >
+                              {packageStatusMessage(missingFiles, assignedFiles.length > 0)}
+                            </Text>
                           </BlockStack>
                         </Box>
                       </td>

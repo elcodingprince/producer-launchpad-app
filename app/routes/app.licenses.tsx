@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   useActionData,
+  useFetcher,
   useLoaderData,
   useNavigate,
   useNavigation,
@@ -29,9 +30,11 @@ import {
   TextField,
   Tooltip,
 } from "@shopify/polaris";
-import { CheckCircleIcon, CollectionIcon } from "@shopify/polaris-icons";
+import { CollectionIcon } from "@shopify/polaris-icons";
 import { FileFormatBadge } from "~/components/FileFormatBadge";
-import { DEFAULT_LICENSES } from "~/services/metafieldSetup";
+import { LegalGuardrailModal } from "~/components/LegalGuardrailModal";
+import prisma from "~/db.server";
+import { DEFAULT_LICENSES, getStarterPresetVersion } from "~/services/metafieldSetup";
 import { createProductCreatorService } from "~/services/productCreator";
 import { createShopifyClient } from "~/services/shopify";
 import { authenticate } from "~/shopify.server";
@@ -50,6 +53,8 @@ type LicenseTemplate = {
   featuresShort: string;
   terms: string[];
   isStarter: boolean;
+  starterVersion: string | null;
+  hasAcceptedGuardrail: boolean;
 };
 
 type LicenseUsageSummary = {
@@ -74,9 +79,24 @@ type LicenseFormState = {
 
 type PackageFormat = "MP3" | "WAV" | "STEMS";
 
+type ActionDataShape = {
+  success: boolean;
+  intent?: string;
+  error?: string;
+  requiresGuardrail?: boolean;
+  templateHandle?: string;
+  starterVersion?: string | null;
+};
+
 const PACKAGE_FORMAT_ORDER: PackageFormat[] = ["MP3", "WAV", "STEMS"];
 
 const STARTER_HANDLES = new Set(DEFAULT_LICENSES.map((license) => license.handle));
+const DYNAMIC_TEMPLATE_FIELDS = [
+  "{{producer_name}}",
+  "{{customer_name}}",
+  "{{beat_name}}",
+  "{{license_terms}}",
+] as const;
 
 const emptyLicenseForm = (): LicenseFormState => ({
   handle: "",
@@ -184,6 +204,21 @@ function formatPackageFormats(formats: string[]) {
   return PACKAGE_FORMAT_ORDER.filter((format) => formats.includes(format)).join(", ");
 }
 
+function normalizeSessionUserId(value: unknown) {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isInteger(value)) return BigInt(value);
+
+  if (typeof value === "string" && value.trim()) {
+    try {
+      return BigInt(value);
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 function getLicenseStatus(
   license: LicenseTemplate,
   usage: LicenseUsageSummary | undefined,
@@ -284,15 +319,40 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const productService = createProductCreatorService(session, admin);
 
   try {
-    const [licenses, licenseUsageById] = await Promise.all([
+    const starterHandles = [...STARTER_HANDLES];
+    const [licenses, licenseUsageById, guardrailAcceptances] = await Promise.all([
       productService.getLicenseMetaobjects(),
       getLicenseUsage(admin),
+      prisma.templateGuardrailAcceptance.findMany({
+        where: {
+          shop: session.shop,
+          templateHandle: { in: starterHandles },
+        },
+        select: {
+          templateHandle: true,
+          starterVersion: true,
+        },
+      }),
     ]);
+
+    const acceptedStarterKeys = new Set(
+      guardrailAcceptances.map(
+        (acceptance) => `${acceptance.templateHandle}:${acceptance.starterVersion}`,
+      ),
+    );
 
     const normalizedLicenses: LicenseTemplate[] = licenses
       .map((license) => ({
         ...license,
         isStarter: STARTER_HANDLES.has(license.handle),
+        starterVersion: getStarterPresetVersion(license.handle),
+        hasAcceptedGuardrail: false,
+      }))
+      .map((license) => ({
+        ...license,
+        hasAcceptedGuardrail: license.isStarter && license.starterVersion
+          ? acceptedStarterKeys.has(`${license.handle}:${license.starterVersion}`)
+          : true,
       }))
       .sort((a, b) => {
         if (a.isStarter !== b.isStarter) return a.isStarter ? -1 : 1;
@@ -318,6 +378,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
   const client = createShopifyClient(session, admin);
+
+  if (intent === "accept_guardrail") {
+    const templateHandle = String(formData.get("templateHandle") || "").trim();
+    const templateMetaobjectId = String(formData.get("templateMetaobjectId") || "").trim();
+    const starterVersion = getStarterPresetVersion(templateHandle);
+
+    if (!templateHandle || !STARTER_HANDLES.has(templateHandle) || !starterVersion) {
+      return json(
+        {
+          success: false,
+          intent,
+          error: "This Starter Preset cannot be reviewed right now.",
+        } satisfies ActionDataShape,
+        { status: 400 },
+      );
+    }
+
+    await prisma.templateGuardrailAcceptance.upsert({
+      where: {
+        shop_templateHandle_starterVersion: {
+          shop: session.shop,
+          templateHandle,
+          starterVersion,
+        },
+      },
+      update: {
+        templateMetaobjectId,
+        acceptedAt: new Date(),
+        acceptedByUserId: normalizeSessionUserId(session.userId),
+        acceptedByEmail: session.email || null,
+      },
+      create: {
+        shop: session.shop,
+        templateHandle,
+        templateMetaobjectId,
+        starterVersion,
+        acceptedAt: new Date(),
+        acceptedByUserId: normalizeSessionUserId(session.userId),
+        acceptedByEmail: session.email || null,
+      },
+    });
+
+    return json(
+      {
+        success: true,
+        intent,
+        templateHandle,
+        starterVersion,
+      } satisfies ActionDataShape,
+    );
+  }
 
   const licenseName = String(formData.get("licenseName") || "").trim();
   const normalizedHandle =
@@ -348,7 +459,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (!licenseName) {
     return json(
-      { success: false, error: "License name is required." },
+      { success: false, intent, error: "Template name is required." } satisfies ActionDataShape,
       { status: 400 },
     );
   }
@@ -357,7 +468,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json(
       {
         success: false,
-        error: "A valid license name is required to generate the license handle.",
+        intent,
+        error: "A valid template name is required to generate the preset handle.",
       },
       { status: 400 },
     );
@@ -371,14 +483,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         fields,
       });
 
-      return json({ success: true, intent });
+      return json({ success: true, intent } satisfies ActionDataShape);
     }
 
     if (intent === "update") {
       const id = String(formData.get("id") || "");
+      const starterVersion = getStarterPresetVersion(normalizedHandle);
 
       if (!id) {
-        return json({ success: false, error: "Missing license id." }, { status: 400 });
+        return json(
+          { success: false, intent, error: "Missing template id." } satisfies ActionDataShape,
+          { status: 400 },
+        );
+      }
+
+      if (STARTER_HANDLES.has(normalizedHandle) && starterVersion) {
+        const acceptance = await prisma.templateGuardrailAcceptance.findUnique({
+          where: {
+            shop_templateHandle_starterVersion: {
+              shop: session.shop,
+              templateHandle: normalizedHandle,
+              starterVersion,
+            },
+          },
+        });
+
+        if (!acceptance) {
+          return json(
+            {
+              success: false,
+              intent,
+              error:
+                "Review and accept this Starter Preset before saving changes.",
+              requiresGuardrail: true,
+              templateHandle: normalizedHandle,
+              starterVersion,
+            } satisfies ActionDataShape,
+            { status: 403 },
+          );
+        }
       }
 
       await client.updateMetaobject({
@@ -386,16 +529,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         fields,
       });
 
-      return json({ success: true, intent });
+      return json({ success: true, intent } satisfies ActionDataShape);
     }
 
-    return json({ success: false, error: "Unknown intent" }, { status: 400 });
+    return json(
+      { success: false, intent, error: "Unknown intent" } satisfies ActionDataShape,
+      { status: 400 },
+    );
   } catch (error) {
     console.error("License action error:", error);
     return json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Failed to save license",
+        intent,
+        error: error instanceof Error ? error.message : "Failed to save template",
       },
       { status: 500 },
     );
@@ -405,6 +552,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function LicensesPage() {
   const { licenses, licenseUsageById, error: loaderError } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
+  const guardrailFetcher = useFetcher<typeof action>();
   const submit = useSubmit();
   const navigate = useNavigate();
   const navigation = useNavigation();
@@ -414,13 +562,31 @@ export default function LicensesPage() {
   const [activeRightsPopoverId, setActiveRightsPopoverId] = useState<string | null>(null);
   const [activeDeliveryPopoverId, setActiveDeliveryPopoverId] = useState<string | null>(null);
   const [activeUsagePopoverId, setActiveUsagePopoverId] = useState<string | null>(null);
+  const [guardrailModalTemplate, setGuardrailModalTemplate] = useState<LicenseTemplate | null>(null);
+  const [pendingEditHandle, setPendingEditHandle] = useState<string | null>(null);
+  const [acceptedStarterVersions, setAcceptedStarterVersions] = useState<Record<string, string>>({});
 
   const editingHandle = searchParams.get("edit");
   const isCreating = searchParams.get("new") === "1";
   const savedState = searchParams.get("saved");
+  const licensesWithGuardrailState = useMemo(
+    () =>
+      licenses.map((license) => {
+        const locallyAcceptedVersion = acceptedStarterVersions[license.handle];
+        const hasAcceptedGuardrail = license.isStarter && license.starterVersion
+          ? license.hasAcceptedGuardrail || locallyAcceptedVersion === license.starterVersion
+          : true;
+
+        return {
+          ...license,
+          hasAcceptedGuardrail,
+        };
+      }),
+    [acceptedStarterVersions, licenses],
+  );
   const editorLicense = useMemo(
-    () => licenses.find((license) => license.handle === editingHandle) || null,
-    [licenses, editingHandle],
+    () => licensesWithGuardrailState.find((license) => license.handle === editingHandle) || null,
+    [licensesWithGuardrailState, editingHandle],
   );
   const editorMode: "create" | "update" | null = isCreating
     ? "create"
@@ -428,10 +594,23 @@ export default function LicensesPage() {
       ? "update"
       : null;
   const isEditorOpen = editorMode !== null;
-  const actionError = actionData && "error" in actionData ? actionData.error : null;
+  const actionError = actionData?.error ?? null;
+  const guardrailError =
+    guardrailFetcher.data?.intent === "accept_guardrail" && !guardrailFetcher.data.success
+      ? guardrailFetcher.data.error || "Unable to record your review right now."
+      : null;
   const isSaving =
     navigation.state === "submitting" &&
-    navigation.formMethod?.toLowerCase() === "post";
+    navigation.formMethod?.toLowerCase() === "post" &&
+    navigation.formData?.get("intent") !== "accept_guardrail";
+  const isAcceptingGuardrail =
+    guardrailFetcher.state !== "idle" ||
+    (navigation.state === "submitting" &&
+      navigation.formMethod?.toLowerCase() === "post" &&
+      navigation.formData?.get("intent") === "accept_guardrail");
+  const requiresEditorGuardrail = Boolean(
+    editorLicense?.isStarter && editorLicense.starterVersion && !editorLicense.hasAcceptedGuardrail,
+  );
 
   useEffect(() => {
     if (editorMode === "create") {
@@ -445,11 +624,44 @@ export default function LicensesPage() {
   }, [editorMode, editorLicense]);
 
   useEffect(() => {
-    if (actionData?.success) {
+    if (actionData?.success && (actionData.intent === "update" || actionData.intent === "create")) {
       const nextSavedState = actionData.intent === "update" ? "updated" : "created";
       navigate(`/app/licenses?saved=${nextSavedState}`, { replace: true });
     }
   }, [actionData, navigate]);
+
+  useEffect(() => {
+    if (guardrailFetcher.data?.success && guardrailFetcher.data.intent === "accept_guardrail") {
+      const acceptedHandle = guardrailFetcher.data.templateHandle;
+      const acceptedVersion = guardrailFetcher.data.starterVersion;
+
+      if (acceptedHandle && acceptedVersion) {
+        setAcceptedStarterVersions((current) => ({
+          ...current,
+          [acceptedHandle]: acceptedVersion,
+        }));
+      }
+
+      setGuardrailModalTemplate(null);
+
+      if (pendingEditHandle && acceptedHandle === pendingEditHandle) {
+        setPendingEditHandle(null);
+        navigate(`/app/licenses?edit=${acceptedHandle}`);
+      }
+    }
+  }, [guardrailFetcher.data, navigate, pendingEditHandle]);
+
+  useEffect(() => {
+    if (editorMode === "update" && editorLicense && requiresEditorGuardrail) {
+      setGuardrailModalTemplate(editorLicense);
+    }
+  }, [editorLicense, editorMode, requiresEditorGuardrail]);
+
+  useEffect(() => {
+    if (actionData?.requiresGuardrail && editorLicense) {
+      setGuardrailModalTemplate(editorLicense);
+    }
+  }, [actionData, editorLicense]);
 
   const handleOpenCreate = useCallback(() => {
     navigate("/app/licenses?new=1");
@@ -457,14 +669,46 @@ export default function LicensesPage() {
 
   const handleOpenEdit = useCallback(
     (license: LicenseTemplate) => {
+      if (license.isStarter && license.starterVersion && !license.hasAcceptedGuardrail) {
+        setPendingEditHandle(license.handle);
+        setGuardrailModalTemplate(license);
+        return;
+      }
+
       navigate(`/app/licenses?edit=${license.handle}`);
     },
     [navigate],
   );
 
   const handleCloseEditor = useCallback(() => {
+    setGuardrailModalTemplate(null);
+    setPendingEditHandle(null);
     navigate("/app/licenses");
   }, [navigate]);
+
+  const handleCloseGuardrailModal = useCallback(() => {
+    setGuardrailModalTemplate(null);
+
+    if (pendingEditHandle) {
+      setPendingEditHandle(null);
+    }
+
+    if (editorMode === "update" && requiresEditorGuardrail) {
+      navigate("/app/licenses");
+    }
+  }, [editorMode, navigate, pendingEditHandle, requiresEditorGuardrail]);
+
+  const handleAcceptGuardrail = useCallback(() => {
+    if (!guardrailModalTemplate?.starterVersion) return;
+
+    const formData = new FormData();
+    formData.append("intent", "accept_guardrail");
+    formData.append("templateHandle", guardrailModalTemplate.handle);
+    formData.append("templateMetaobjectId", guardrailModalTemplate.id);
+    formData.append("starterVersion", guardrailModalTemplate.starterVersion);
+
+    guardrailFetcher.submit(formData, { method: "post" });
+  }, [guardrailFetcher, guardrailModalTemplate]);
 
   const handleRightsPopoverToggle = useCallback((licenseId: string) => {
     setActiveRightsPopoverId((current) => (current === licenseId ? null : licenseId));
@@ -479,6 +723,11 @@ export default function LicensesPage() {
   }, []);
 
   const handleSave = useCallback(() => {
+    if (editorMode === "update" && editorLicense?.isStarter && requiresEditorGuardrail) {
+      setGuardrailModalTemplate(editorLicense);
+      return;
+    }
+
     const formData = new FormData();
     formData.append("intent", editorMode || "create");
     if (licenseForm.id) formData.append("id", licenseForm.id);
@@ -497,7 +746,7 @@ export default function LicensesPage() {
     });
 
     submit(formData, { method: "post" });
-  }, [editorMode, licenseForm, submit]);
+  }, [editorLicense, editorMode, licenseForm, requiresEditorGuardrail, submit]);
 
   if (isEditorOpen) {
     const usage = editorLicense ? licenseUsageById[editorLicense.id] : undefined;
@@ -517,637 +766,739 @@ export default function LicensesPage() {
           : { label: "Draft" as const, tone: undefined };
 
     return (
-      <Page
-        title={editorMode === "create" ? "New license template" : licenseForm.licenseName || "Edit license template"}
-        subtitle="Configure rights, delivery package, and agreement terms for this reusable commercial-use offer."
-        backAction={{ content: "Licenses", onAction: handleCloseEditor }}
-        primaryAction={{
-          content: editorMode === "create" ? "Create license" : "Save changes",
-          onAction: handleSave,
-          loading: isSaving,
-          disabled: !licenseForm.licenseName.trim(),
-        }}
-        secondaryActions={[
-          {
-            content: "Cancel",
-            onAction: handleCloseEditor,
-          },
-        ]}
-      >
-        <Layout>
-          {actionError && (
-            <Layout.Section>
-              <Banner title="Unable to save license template" tone="critical">
-                <p>{actionError}</p>
-              </Banner>
-            </Layout.Section>
-          )}
+      <>
+        <Page
+          title={editorMode === "create" ? "New Reusable Template" : licenseForm.licenseName || "Edit Template"}
+          subtitle="Configure storefront copy, usage limits, delivery packaging, and reusable agreement language for this template."
+          backAction={{ content: "Templates", onAction: handleCloseEditor }}
+          primaryAction={{
+            content: editorMode === "create" ? "Create template" : "Save changes",
+            onAction: handleSave,
+            loading: isSaving,
+            disabled: !licenseForm.licenseName.trim() || requiresEditorGuardrail,
+          }}
+          secondaryActions={[
+            {
+              content: "Cancel",
+              onAction: handleCloseEditor,
+            },
+          ]}
+        >
+          <Layout>
+            {actionError && (
+              <Layout.Section>
+                <Banner title="Unable to save template" tone="critical">
+                  <p>{actionError}</p>
+                </Banner>
+              </Layout.Section>
+            )}
 
-          <Layout.Section variant="twoThirds">
-            <BlockStack gap="400">
-              <Card>
-                <BlockStack gap="400">
-                  <InlineStack align="space-between" blockAlign="center">
+            {guardrailError && (
+              <Layout.Section>
+                <Banner title="Unable to record review" tone="critical">
+                  <p>{guardrailError}</p>
+                </Banner>
+              </Layout.Section>
+            )}
+
+            {requiresEditorGuardrail && editorLicense ? (
+              <Layout.Section>
+                <Banner
+                  title="Review required before editing this Starter Preset"
+                  tone="warning"
+                  action={{
+                    content: "Review & Accept",
+                    onAction: handleAcceptGuardrail,
+                    loading: isAcceptingGuardrail,
+                  }}
+                >
+                  <p>
+                    These templates are professional starting points. Producer
+                    Launchpad is a technical delivery tool and does not provide
+                    legal advice.
+                  </p>
+                </Banner>
+              </Layout.Section>
+            ) : null}
+
+            <Layout.Section variant="twoThirds">
+              <BlockStack gap="400">
+                <Card>
+                  <BlockStack gap="400">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <BlockStack gap="100">
+                        <Text as="h2" variant="headingMd">
+                          Identity
+                        </Text>
+                        <Text as="p" tone="subdued">
+                          Use a clear template name your team will recognize
+                          across storefront offers, checkout records, and
+                          delivery history.
+                        </Text>
+                      </BlockStack>
+                      {editorMode === "update" ? (
+                        isStarter ? (
+                          <Badge tone="success">Starter Preset</Badge>
+                        ) : (
+                          <Badge>Reusable Template</Badge>
+                        )
+                      ) : null}
+                    </InlineStack>
+
+                    <TextField
+                      label="Preset ID"
+                      value={licenseForm.licenseId}
+                      onChange={(value) =>
+                        setLicenseForm((current) => ({
+                          ...current,
+                          licenseId: value,
+                        }))
+                      }
+                      autoComplete="off"
+                      helpText="Matches the required beat_license metaobject field used by your storefront and delivery logic."
+                    />
+
+                    <TextField
+                      label="Template name"
+                      value={licenseForm.licenseName}
+                      onChange={(value) =>
+                        setLicenseForm((current) => ({
+                          ...current,
+                          licenseName: value,
+                        }))
+                      }
+                      autoComplete="off"
+                      helpText="This name appears in storefront offers, buyer records, and post-purchase delivery details."
+                    />
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="400">
                     <BlockStack gap="100">
                       <Text as="h2" variant="headingMd">
-                        Identity
+                        Rights and limits
                       </Text>
                       <Text as="p" tone="subdued">
-                        This is the name merchants and customers will recognize across storefront offers, contracts, and delivery records.
+                        Set the usage boundaries buyers receive when they select
+                        this template.
                       </Text>
                     </BlockStack>
-                    {editorMode === "update" ? (
-                      isStarter ? (
-                        <Badge tone="success">Default</Badge>
-                      ) : (
-                        <Badge>Custom</Badge>
-                      )
-                    ) : null}
-                  </InlineStack>
 
-                  <TextField
-                    label="License ID"
-                    value={licenseForm.licenseId}
-                    onChange={(value) =>
-                      setLicenseForm((current) => ({
-                        ...current,
-                        licenseId: value,
-                      }))
-                    }
-                    autoComplete="off"
-                    helpText="Matches the required beat_license metaobject field used by your storefront and delivery logic."
-                  />
+                    <FormLayout>
+                      <FormLayout.Group>
+                        <TextField
+                          label="Stream limit"
+                          type="number"
+                          value={licenseForm.streamLimit}
+                          onChange={(value) =>
+                            setLicenseForm((current) => ({ ...current, streamLimit: value }))
+                          }
+                          helpText="Use 0 for unlimited."
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label="Copy limit"
+                          type="number"
+                          value={licenseForm.copyLimit}
+                          onChange={(value) =>
+                            setLicenseForm((current) => ({ ...current, copyLimit: value }))
+                          }
+                          helpText="Use 0 for unlimited."
+                          autoComplete="off"
+                        />
+                      </FormLayout.Group>
 
-                  <TextField
-                    label="License name"
-                    value={licenseForm.licenseName}
-                    onChange={(value) =>
-                      setLicenseForm((current) => ({
-                        ...current,
-                        licenseName: value,
-                      }))
-                    }
-                    autoComplete="off"
-                    helpText="This is the formal legal name that appears in contracts, storefront offers, and order records."
-                  />
-                </BlockStack>
-              </Card>
-
-              <Card>
-                <BlockStack gap="400">
-                  <BlockStack gap="100">
-                    <Text as="h2" variant="headingMd">
-                      Rights and limits
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      Set the commercial-use boundaries customers receive when they buy this license.
-                    </Text>
-                  </BlockStack>
-
-                  <FormLayout>
-                    <FormLayout.Group>
                       <TextField
-                        label="Stream limit"
+                        label="Term (years)"
                         type="number"
-                        value={licenseForm.streamLimit}
+                        value={licenseForm.termYears}
                         onChange={(value) =>
-                          setLicenseForm((current) => ({ ...current, streamLimit: value }))
+                          setLicenseForm((current) => ({ ...current, termYears: value }))
                         }
-                        helpText="Use 0 for unlimited."
+                        helpText="Use 0 for a perpetual term."
                         autoComplete="off"
                       />
+                    </FormLayout>
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="400">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingMd">
+                        Delivery package
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        Define the audio package and storefront summary paired
+                        with this Reusable Template.
+                      </Text>
+                    </BlockStack>
+
+                    <FormLayout>
+                      <ChoiceList
+                        title="Included files"
+                        allowMultiple
+                        choices={[
+                          { label: "MP3", value: "MP3" },
+                          { label: "WAV", value: "WAV" },
+                          { label: "STEMS ZIP", value: "STEMS" },
+                        ]}
+                        selected={selectedPackageFormats}
+                        onChange={(selected) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            fileFormats: formatPackageFormats(selected),
+                            includesStems: selected.includes("STEMS"),
+                          }))
+                        }
+                      />
+
                       <TextField
-                        label="Copy limit"
-                        type="number"
-                        value={licenseForm.copyLimit}
-                        onChange={(value) =>
-                          setLicenseForm((current) => ({ ...current, copyLimit: value }))
-                        }
-                        helpText="Use 0 for unlimited."
+                        label="File formats"
+                        value={licenseForm.fileFormats}
                         autoComplete="off"
+                        readOnly
+                        helpText="Locked to the delivery package above so storefront messaging matches what is actually delivered."
                       />
-                    </FormLayout.Group>
 
-                    <TextField
-                      label="Term (years)"
-                      type="number"
-                      value={licenseForm.termYears}
-                      onChange={(value) =>
-                        setLicenseForm((current) => ({ ...current, termYears: value }))
-                      }
-                      helpText="Use 0 for a perpetual license."
-                      autoComplete="off"
-                    />
-                  </FormLayout>
-                </BlockStack>
-              </Card>
+                      <Text as="p" tone="subdued">
+                        {licenseForm.includesStems
+                          ? "Stems are included in this package."
+                          : "Stems are not included in this package."}
+                      </Text>
 
-              <Card>
-                <BlockStack gap="400">
-                  <BlockStack gap="100">
-                    <Text as="h2" variant="headingMd">
-                      Delivery package
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      Define the file package and storefront summary that should accompany this license.
-                    </Text>
-                  </BlockStack>
+                      <ChoiceList
+                        title="Stems add-on availability"
+                        choices={[
+                          { label: "Offer stems as an add-on for this template", value: "true" },
+                          { label: "Do not offer a stems add-on", value: "false" },
+                        ]}
+                        selected={[String(licenseForm.supportsStemsAddon)]}
+                        onChange={([value]) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            supportsStemsAddon: value === "true",
+                          }))
+                        }
+                      />
 
-                  <FormLayout>
-                    <ChoiceList
-                      title="Included files"
-                      allowMultiple
-                      choices={[
-                        { label: "MP3", value: "MP3" },
-                        { label: "WAV", value: "WAV" },
-                        { label: "STEMS ZIP", value: "STEMS" },
-                      ]}
-                      selected={selectedPackageFormats}
-                      onChange={(selected) =>
-                        setLicenseForm((current) => ({
-                          ...current,
-                          fileFormats: formatPackageFormats(selected),
-                          includesStems: selected.includes("STEMS"),
-                        }))
-                      }
-                    />
-
-                    <TextField
-                      label="File formats"
-                      value={licenseForm.fileFormats}
-                      autoComplete="off"
-                      readOnly
-                      helpText="Locked to the delivery package above so storefront messaging matches what is actually delivered."
-                    />
-
-                    <Text as="p" tone="subdued">
-                      {licenseForm.includesStems
-                        ? "Stems are included in this package."
-                        : "Stems are not included in this package."}
-                    </Text>
-
-                    <ChoiceList
-                      title="Stems add-on availability"
-                      choices={[
-                        { label: "Offer stems as an add-on for this license", value: "true" },
-                        { label: "Do not offer a stems add-on", value: "false" },
-                      ]}
-                      selected={[String(licenseForm.supportsStemsAddon)]}
-                      onChange={([value]) =>
-                        setLicenseForm((current) => ({
-                          ...current,
-                          supportsStemsAddon: value === "true",
-                        }))
-                      }
-                    />
-
-                    <TextField
-                      label="Storefront summary"
-                      value={licenseForm.featuresShort}
-                      onChange={(value) =>
-                        setLicenseForm((current) => ({ ...current, featuresShort: value }))
-                      }
-                      multiline={5}
-                      autoComplete="off"
-                      helpText="One line per feature. This summary is used when the license is presented to customers."
-                    />
-                  </FormLayout>
-                </BlockStack>
-              </Card>
-
-              <Card>
-                <BlockStack gap="400">
-                  <BlockStack gap="100">
-                    <Text as="h2" variant="headingMd">
-                      Agreement terms
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      These clauses will shape the license agreement snapshot your customers receive after purchase.
-                    </Text>
-                  </BlockStack>
-
-                  <FormLayout>
-                    {licenseForm.terms.map((term, index) => (
                       <TextField
-                        key={`term-${index + 1}`}
-                        label={`Clause ${index + 1}`}
-                        value={term}
+                        label="Storefront summary"
+                        value={licenseForm.featuresShort}
                         onChange={(value) =>
-                          setLicenseForm((current) => {
-                            const nextTerms = [...current.terms];
-                            nextTerms[index] = value;
-                            return { ...current, terms: nextTerms };
-                          })
+                          setLicenseForm((current) => ({ ...current, featuresShort: value }))
                         }
-                        multiline={3}
+                        multiline={5}
                         autoComplete="off"
+                        helpText="One line per feature. This summary is shown to buyers when they compare options."
                       />
-                    ))}
-                  </FormLayout>
-                </BlockStack>
-              </Card>
-            </BlockStack>
-          </Layout.Section>
-
-          <Layout.Section variant="oneThird">
-            <BlockStack gap="400">
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd">
-                      Customer preview
-                    </Text>
-                    <Badge tone={previewStatus.tone}>
-                      {previewStatus.label}
-                    </Badge>
-                  </InlineStack>
-
-                  <BlockStack gap="100">
-                    <Text as="p" variant="headingLg" fontWeight="semibold">
-                      {licenseForm.licenseName || "Untitled license"}
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      {formatLimit(licenseForm.streamLimit, "streams")}
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      {formatLimit(licenseForm.copyLimit, "copies")}
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      {formatTermLength(licenseForm.termYears)}
-                    </Text>
+                    </FormLayout>
                   </BlockStack>
+                </Card>
 
-                  {fileBadges.length > 0 ? (
-                    <InlineStack gap="200">
-                      {fileBadges.map((format) => (
-                        <FileFormatBadge key={format} format={format} />
+                <Card>
+                  <BlockStack gap="400">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingMd">
+                        Reusable language
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        These reusable sections shape the agreement summary your
+                        buyer receives after purchase.
+                      </Text>
+                    </BlockStack>
+
+                    <FormLayout>
+                      {licenseForm.terms.map((term, index) => (
+                        <TextField
+                          key={`term-${index + 1}`}
+                          label={`Section ${index + 1}`}
+                          value={term}
+                          onChange={(value) =>
+                            setLicenseForm((current) => {
+                              const nextTerms = [...current.terms];
+                              nextTerms[index] = value;
+                              return { ...current, terms: nextTerms };
+                            })
+                          }
+                          multiline={3}
+                          autoComplete="off"
+                        />
                       ))}
-                    </InlineStack>
-                  ) : (
-                    <Text as="p" tone="subdued">
-                      Add file formats to preview the delivery package.
-                    </Text>
-                  )}
+                    </FormLayout>
+                  </BlockStack>
+                </Card>
+              </BlockStack>
+            </Layout.Section>
 
-                  <InlineStack gap="200">
-                    {licenseForm.includesStems ? (
-                      <Badge tone="success">Stems included</Badge>
-                    ) : licenseForm.supportsStemsAddon ? (
-                      <Badge tone="attention">Stems add-on available</Badge>
+            <Layout.Section variant="oneThird">
+              <BlockStack gap="400">
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="h2" variant="headingMd">
+                        Buyer preview
+                      </Text>
+                      <Badge tone={previewStatus.tone}>{previewStatus.label}</Badge>
+                    </InlineStack>
+
+                    <BlockStack gap="100">
+                      <Text as="p" variant="headingLg" fontWeight="semibold">
+                        {licenseForm.licenseName || "Untitled template"}
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        {formatLimit(licenseForm.streamLimit, "streams")}
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        {formatLimit(licenseForm.copyLimit, "copies")}
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        {formatTermLength(licenseForm.termYears)}
+                      </Text>
+                    </BlockStack>
+
+                    {fileBadges.length > 0 ? (
+                      <InlineStack gap="200">
+                        {fileBadges.map((format) => (
+                          <FileFormatBadge key={format} format={format} />
+                        ))}
+                      </InlineStack>
                     ) : (
-                      <Badge>No stems</Badge>
+                      <Text as="p" tone="subdued">
+                        Add file formats to preview the delivery package.
+                      </Text>
                     )}
-                  </InlineStack>
 
-                  {previewFeatures.length > 0 ? (
-                    <List type="bullet">
-                      {previewFeatures.slice(0, 4).map((feature) => (
-                        <List.Item key={feature}>{feature}</List.Item>
-                      ))}
-                    </List>
-                  ) : (
-                    <Text as="p" tone="subdued">
-                      Add storefront summary lines to preview how the offer reads at a glance.
-                    </Text>
-                  )}
-                </BlockStack>
-              </Card>
+                    <InlineStack gap="200">
+                      {licenseForm.includesStems ? (
+                        <Badge tone="success">Stems included</Badge>
+                      ) : licenseForm.supportsStemsAddon ? (
+                        <Badge tone="attention">Stems add-on available</Badge>
+                      ) : (
+                        <Badge>No stems</Badge>
+                      )}
+                    </InlineStack>
 
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack gap="200" blockAlign="center">
-                    <Icon source={CollectionIcon} />
+                    {previewFeatures.length > 0 ? (
+                      <List type="bullet">
+                        {previewFeatures.slice(0, 4).map((feature) => (
+                          <List.Item key={feature}>{feature}</List.Item>
+                        ))}
+                      </List>
+                    ) : (
+                      <Text as="p" tone="subdued">
+                        Add storefront summary lines to preview how the offer
+                        reads at a glance.
+                      </Text>
+                    )}
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="300">
                     <Text as="h2" variant="headingMd">
-                      Automation summary
+                      Dynamic fields inserted at checkout
                     </Text>
-                  </InlineStack>
-
-                  <BlockStack gap="200">
-                    <InlineStack align="space-between">
-                      <Text as="span">Agreement generation</Text>
-                      <Badge tone="success">Automatic</Badge>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span">Portal and file delivery</Text>
-                      <Badge tone="success">Automatic</Badge>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span">Custom clauses</Text>
-                      <Text as="span">
-                        {customTermCount} clause{customTermCount === 1 ? "" : "s"}
-                      </Text>
-                    </InlineStack>
-                    <InlineStack align="space-between">
-                      <Text as="span">Assigned beats</Text>
-                      <Text as="span">
-                        {usage?.beatCount || 0}
-                      </Text>
+                    <Text as="p" tone="subdued">
+                      These highlighted variables are filled with store and order
+                      data. They show that Producer Launchpad is inserting your
+                      data into reusable text, not writing bespoke terms on the
+                      fly.
+                    </Text>
+                    <InlineStack gap="200" wrap>
+                      {DYNAMIC_TEMPLATE_FIELDS.map((field) => (
+                        <Box
+                          key={field}
+                          background="bg-surface-secondary"
+                          borderRadius="200"
+                          padding="200"
+                        >
+                          <Text as="span" variant="bodySm" fontWeight="medium">
+                            {field}
+                          </Text>
+                        </Box>
+                      ))}
                     </InlineStack>
                   </BlockStack>
+                </Card>
 
-                  <Text as="p" tone="subdued">
-                    Once a customer buys a beat with this license, Producer Launchpad generates the agreement, sends the delivery email, and tracks the order inside Deliveries.
-                  </Text>
-                </BlockStack>
-              </Card>
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack gap="200" blockAlign="center">
+                      <Icon source={CollectionIcon} />
+                      <Text as="h2" variant="headingMd">
+                        Automation summary
+                      </Text>
+                    </InlineStack>
 
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd">
-                      Used by beats
-                    </Text>
-                    <Badge>{usage?.beatCount || 0}</Badge>
-                  </InlineStack>
+                    <BlockStack gap="200">
+                      <InlineStack align="space-between">
+                        <Text as="span">Agreement generation</Text>
+                        <Badge tone="success">Automatic</Badge>
+                      </InlineStack>
+                      <InlineStack align="space-between">
+                        <Text as="span">Portal and file delivery</Text>
+                        <Badge tone="success">Automatic</Badge>
+                      </InlineStack>
+                      <InlineStack align="space-between">
+                        <Text as="span">Reusable sections</Text>
+                        <Text as="span">
+                          {customTermCount} section{customTermCount === 1 ? "" : "s"}
+                        </Text>
+                      </InlineStack>
+                      <InlineStack align="space-between">
+                        <Text as="span">Assigned beats</Text>
+                        <Text as="span">{usage?.beatCount || 0}</Text>
+                      </InlineStack>
+                    </BlockStack>
 
-                  {usage?.beatTitles.length ? (
-                    <List type="bullet">
-                      {usage.beatTitles.slice(0, 6).map((title) => (
-                        <List.Item key={title}>{title}</List.Item>
-                      ))}
-                    </List>
-                  ) : (
                     <Text as="p" tone="subdued">
-                      Assign this template from the beat upload flow or future beat editing flow.
+                      Once a buyer selects this template, Producer Launchpad
+                      prepares the agreement summary, sends the delivery email,
+                      and tracks the order inside Deliveries.
                     </Text>
-                  )}
+                  </BlockStack>
+                </Card>
 
-                  <InlineStack gap="300">
-                    <Button url="/app/beats">View beats</Button>
-                    <Button url="/app/deliveries">Open deliveries</Button>
-                  </InlineStack>
-                </BlockStack>
-              </Card>
-            </BlockStack>
-          </Layout.Section>
-        </Layout>
-      </Page>
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="h2" variant="headingMd">
+                        Used by beats
+                      </Text>
+                      <Badge>{usage?.beatCount || 0}</Badge>
+                    </InlineStack>
+
+                    {usage?.beatTitles.length ? (
+                      <List type="bullet">
+                        {usage.beatTitles.slice(0, 6).map((title) => (
+                          <List.Item key={title}>{title}</List.Item>
+                        ))}
+                      </List>
+                    ) : (
+                      <Text as="p" tone="subdued">
+                        Assign this template from the beat upload flow or a
+                        future beat editing flow.
+                      </Text>
+                    )}
+
+                    <InlineStack gap="300">
+                      <Button url="/app/beats">View beats</Button>
+                      <Button url="/app/deliveries">Open deliveries</Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              </BlockStack>
+            </Layout.Section>
+          </Layout>
+        </Page>
+
+        <LegalGuardrailModal
+          open={Boolean(guardrailModalTemplate)}
+          templateName={guardrailModalTemplate?.licenseName || "Starter Preset"}
+          accepting={isAcceptingGuardrail}
+          onAccept={handleAcceptGuardrail}
+          onClose={handleCloseGuardrailModal}
+        />
+      </>
     );
   }
 
   return (
-    <Page
-      fullWidth
-      title="License templates"
-      subtitle="Manage the reusable commercial-use templates your beat variants reference for storefront display, agreement generation, and delivery packaging."
-      primaryAction={{
-        content: "Add license",
-        onAction: handleOpenCreate,
-      }}
-    >
-      <Layout>
-        {loaderError && (
+    <>
+      <Page
+        fullWidth
+        title="Starter Presets & Reusable Templates"
+        subtitle="Manage the Industry Standard Foundations and reusable templates your beat offers reference for storefront display, agreement generation, and delivery packaging."
+        primaryAction={{
+          content: "Add template",
+          onAction: handleOpenCreate,
+        }}
+      >
+        <Layout>
+          {loaderError && (
+            <Layout.Section>
+              <Banner title="Unable to load templates" tone="critical">
+                <p>{loaderError}</p>
+              </Banner>
+            </Layout.Section>
+          )}
+
+          {guardrailError && (
+            <Layout.Section>
+              <Banner title="Unable to record review" tone="critical">
+                <p>{guardrailError}</p>
+              </Banner>
+            </Layout.Section>
+          )}
+
+          {savedState && (
+            <Layout.Section>
+              <Banner
+                title={savedState === "updated" ? "Template updated" : "Template created"}
+                tone="success"
+              />
+            </Layout.Section>
+          )}
+
+          {editingHandle && !editorLicense && !isCreating && (
+            <Layout.Section>
+              <Banner title="Template not found" tone="warning">
+                <p>The selected template could not be found.</p>
+              </Banner>
+            </Layout.Section>
+          )}
+
           <Layout.Section>
-            <Banner title="Unable to load license templates" tone="critical">
-              <p>{loaderError}</p>
-            </Banner>
-          </Layout.Section>
-        )}
+            <BlockStack gap="400">
+              {licensesWithGuardrailState.length === 0 ? (
+                <Card>
+                  <Box padding="400">
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd" fontWeight="medium">
+                        No Reusable Templates yet
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        Create your first template to define storefront copy,
+                        usage limits, and delivery options for new beat offers.
+                      </Text>
+                      <InlineStack>
+                        <Button onClick={handleOpenCreate}>Add template</Button>
+                      </InlineStack>
+                    </BlockStack>
+                  </Box>
+                </Card>
+              ) : (
+                <Card padding="0">
+                  <IndexTable
+                    selectable={false}
+                    resourceName={{ singular: "template", plural: "templates" }}
+                    itemCount={licensesWithGuardrailState.length}
+                    headings={[
+                      { title: "Template" },
+                      { title: "Rights" },
+                      { title: "Delivery package" },
+                      { title: "Used by" },
+                      { title: "Status" },
+                      { title: "" },
+                    ]}
+                  >
+                    {licensesWithGuardrailState.map((license, index) => {
+                      const usage = licenseUsageById[license.id];
+                      const status = getLicenseStatus(license, usage);
+                      const customTermCount = countCustomTerms(license.terms);
+                      const storefrontSummary = parseFeatureLines(license.featuresShort);
+                      const fileBadges = parseFileFormatBadges(license.fileFormats);
 
-        {savedState && (
-          <Layout.Section>
-            <Banner
-              title={savedState === "updated" ? "License template updated" : "License template created"}
-              tone="success"
-            />
-          </Layout.Section>
-        )}
+                      return (
+                        <IndexTable.Row key={license.id} id={license.id} position={index}>
+                          <IndexTable.Cell>
+                            <BlockStack gap="100">
+                              <Text as="span" variant="bodyMd" fontWeight="semibold">
+                                {license.licenseName}
+                              </Text>
+                              <InlineStack gap="200">
+                                {license.isStarter ? (
+                                  <Badge tone="success">Starter Preset</Badge>
+                                ) : (
+                                  <Badge>Reusable Template</Badge>
+                                )}
+                                {license.isStarter && !license.hasAcceptedGuardrail ? (
+                                  <Badge tone="attention">Review required</Badge>
+                                ) : null}
+                              </InlineStack>
+                            </BlockStack>
+                          </IndexTable.Cell>
 
-        {editingHandle && !editorLicense && !isCreating && (
-          <Layout.Section>
-            <Banner title="License template not found" tone="warning">
-              <p>The selected license template could not be found.</p>
-            </Banner>
-          </Layout.Section>
-        )}
-
-        <Layout.Section>
-          <BlockStack gap="400">
-            {licenses.length === 0 ? (
-              <Card>
-                <Box padding="400">
-                  <BlockStack gap="200">
-                    <Text as="p" variant="bodyMd" fontWeight="medium">
-                      No license templates yet
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      Create your first template to define storefront copy, usage limits, and delivery options for new beat variants.
-                    </Text>
-                    <InlineStack>
-                      <Button onClick={handleOpenCreate}>Add license</Button>
-                    </InlineStack>
-                  </BlockStack>
-                </Box>
-              </Card>
-            ) : (
-              <Card padding="0">
-                <IndexTable
-                  selectable={false}
-                  resourceName={{ singular: "license", plural: "licenses" }}
-                  itemCount={licenses.length}
-                  headings={[
-                    { title: "License" },
-                    { title: "Rights" },
-                    { title: "Delivery package" },
-                    { title: "Used by" },
-                    { title: "Status" },
-                    { title: "" },
-                  ]}
-                >
-                  {licenses.map((license, index) => {
-                    const usage = licenseUsageById[license.id];
-                    const status = getLicenseStatus(license, usage);
-                    const customTermCount = countCustomTerms(license.terms);
-                    const storefrontSummary = parseFeatureLines(license.featuresShort);
-                    const fileBadges = parseFileFormatBadges(license.fileFormats);
-
-                    return (
-                      <IndexTable.Row key={license.id} id={license.id} position={index}>
-                        <IndexTable.Cell>
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">
-                            {license.licenseName}
-                          </Text>
-                        </IndexTable.Cell>
-
-                        <IndexTable.Cell>
-                          <Popover
-                            active={activeRightsPopoverId === license.id}
-                            autofocusTarget="first-node"
-                            preferredAlignment="left"
-                            preferredPosition="below"
-                            onClose={() => setActiveRightsPopoverId(null)}
-                            activator={
-                              <Button
-                                disclosure
-                                variant="monochromePlain"
-                                size="slim"
-                                textAlign="left"
-                                onClick={() => handleRightsPopoverToggle(license.id)}
-                              >
-                                {formatLimit(license.streamLimit, "streams")}
-                              </Button>
-                            }
-                          >
-                            <Box padding="400" minWidth="240px">
-                              <BlockStack gap="200">
-                                <InlineStack gap="200" blockAlign="center">
-                                  <Text as="p" variant="headingSm" fontWeight="semibold">
-                                    License rights
-                                  </Text>
-                                  {license.isStarter ? (
-                                    <Badge tone="success">Default</Badge>
-                                  ) : (
-                                    <Badge>Custom</Badge>
-                                  )}
-                                </InlineStack>
-                                <Text as="p">{formatLimit(license.streamLimit, "streams")}</Text>
-                                <Text as="p">{formatLimit(license.copyLimit, "copies")}</Text>
-                                <Text as="p">{formatTermLength(license.termYears)}</Text>
-                                <Text as="p" tone="subdued">
-                                  {customTermCount} custom clause{customTermCount === 1 ? "" : "s"}
-                                </Text>
-                              </BlockStack>
-                            </Box>
-                          </Popover>
-                        </IndexTable.Cell>
-
-                        <IndexTable.Cell>
-                          <Popover
-                            active={activeDeliveryPopoverId === license.id}
-                            autofocusTarget="first-node"
-                            preferredAlignment="left"
-                            preferredPosition="below"
-                            onClose={() => setActiveDeliveryPopoverId(null)}
-                            activator={
-                              <Button
-                                disclosure
-                                variant="monochromePlain"
-                                size="slim"
-                                textAlign="left"
-                                onClick={() => handleDeliveryPopoverToggle(license.id)}
-                              >
-                                {fileBadges.length > 0 ? `${fileBadges.length} formats` : "No formats"}
-                              </Button>
-                            }
-                          >
-                            <Box padding="400" minWidth="260px">
-                              <BlockStack gap="300">
-                                <Text as="p" variant="headingSm" fontWeight="semibold">
-                                  Delivery files
-                                </Text>
-                                {fileBadges.length > 0 ? (
-                                  <InlineStack gap="200">
-                                    {fileBadges.map((format) => (
-                                      <FileFormatBadge key={format} format={format} />
-                                    ))}
+                          <IndexTable.Cell>
+                            <Popover
+                              active={activeRightsPopoverId === license.id}
+                              autofocusTarget="first-node"
+                              preferredAlignment="left"
+                              preferredPosition="below"
+                              onClose={() => setActiveRightsPopoverId(null)}
+                              activator={
+                                <Button
+                                  disclosure
+                                  variant="monochromePlain"
+                                  size="slim"
+                                  textAlign="left"
+                                  onClick={() => handleRightsPopoverToggle(license.id)}
+                                >
+                                  {formatLimit(license.streamLimit, "streams")}
+                                </Button>
+                              }
+                            >
+                              <Box padding="400" minWidth="240px">
+                                <BlockStack gap="200">
+                                  <InlineStack gap="200" blockAlign="center">
+                                    <Text as="p" variant="headingSm" fontWeight="semibold">
+                                      Usage boundaries
+                                    </Text>
+                                    {license.isStarter ? (
+                                      <Badge tone="success">Starter Preset</Badge>
+                                    ) : (
+                                      <Badge>Reusable Template</Badge>
+                                    )}
                                   </InlineStack>
-                                ) : (
+                                  <Text as="p">{formatLimit(license.streamLimit, "streams")}</Text>
+                                  <Text as="p">{formatLimit(license.copyLimit, "copies")}</Text>
+                                  <Text as="p">{formatTermLength(license.termYears)}</Text>
                                   <Text as="p" tone="subdued">
-                                    No file formats listed yet
+                                    {customTermCount} reusable section{customTermCount === 1 ? "" : "s"}
                                   </Text>
-                                )}
+                                </BlockStack>
+                              </Box>
+                            </Popover>
+                          </IndexTable.Cell>
 
-                                <InlineStack gap="200">
-                                  {license.includesStems ? (
-                                    <Badge tone="success">Stems included</Badge>
-                                  ) : license.supportsStemsAddon ? (
-                                    <Badge tone="attention">Stems add-on available</Badge>
+                          <IndexTable.Cell>
+                            <Popover
+                              active={activeDeliveryPopoverId === license.id}
+                              autofocusTarget="first-node"
+                              preferredAlignment="left"
+                              preferredPosition="below"
+                              onClose={() => setActiveDeliveryPopoverId(null)}
+                              activator={
+                                <Button
+                                  disclosure
+                                  variant="monochromePlain"
+                                  size="slim"
+                                  textAlign="left"
+                                  onClick={() => handleDeliveryPopoverToggle(license.id)}
+                                >
+                                  {fileBadges.length > 0 ? `${fileBadges.length} formats` : "No formats"}
+                                </Button>
+                              }
+                            >
+                              <Box padding="400" minWidth="260px">
+                                <BlockStack gap="300">
+                                  <Text as="p" variant="headingSm" fontWeight="semibold">
+                                    Delivery files
+                                  </Text>
+                                  {fileBadges.length > 0 ? (
+                                    <InlineStack gap="200">
+                                      {fileBadges.map((format) => (
+                                        <FileFormatBadge key={format} format={format} />
+                                      ))}
+                                    </InlineStack>
                                   ) : (
-                                    <Badge>No stems</Badge>
+                                    <Text as="p" tone="subdued">
+                                      No file formats listed yet
+                                    </Text>
                                   )}
-                                </InlineStack>
 
-                                {storefrontSummary.length > 0 ? (
-                                  <List type="bullet">
-                                    {storefrontSummary.slice(0, 3).map((feature) => (
-                                      <List.Item key={feature}>{feature}</List.Item>
-                                    ))}
-                                  </List>
-                                ) : (
-                                  <Text as="p" tone="subdued">
-                                    No storefront summary yet
-                                  </Text>
-                                )}
-                              </BlockStack>
-                            </Box>
-                          </Popover>
-                        </IndexTable.Cell>
+                                  <InlineStack gap="200">
+                                    {license.includesStems ? (
+                                      <Badge tone="success">Stems included</Badge>
+                                    ) : license.supportsStemsAddon ? (
+                                      <Badge tone="attention">Stems add-on available</Badge>
+                                    ) : (
+                                      <Badge>No stems</Badge>
+                                    )}
+                                  </InlineStack>
 
-                        <IndexTable.Cell>
-                          <Popover
-                            active={activeUsagePopoverId === license.id}
-                            autofocusTarget="first-node"
-                            preferredAlignment="left"
-                            preferredPosition="below"
-                            onClose={() => setActiveUsagePopoverId(null)}
-                            activator={
-                              <Button
-                                disclosure={usage?.beatCount ? "down" : undefined}
-                                variant="monochromePlain"
-                                size="slim"
-                                textAlign="left"
-                                onClick={() => handleUsagePopoverToggle(license.id)}
-                              >
-                                {usage?.beatCount
-                                  ? `${usage.beatCount} beat${usage.beatCount === 1 ? "" : "s"}`
-                                  : "Not used yet"}
-                              </Button>
-                            }
-                          >
-                            <Box padding="400" minWidth="320px">
-                              <BlockStack gap="300">
-                                <Text as="p" variant="headingSm" fontWeight="semibold">
-                                  Beats using this license
-                                </Text>
-                                {usage?.beatTitles.length ? (
-                                  <List type="bullet">
-                                    {usage.beatTitles.slice(0, 6).map((title) => (
-                                      <List.Item key={title}>{title}</List.Item>
-                                    ))}
-                                  </List>
-                                ) : (
-                                  <Text as="p" tone="subdued">
-                                    Assign this license to beats from the upload or beat editing flow.
-                                  </Text>
-                                )}
-                                <Text as="p" tone="subdued">
+                                  {storefrontSummary.length > 0 ? (
+                                    <List type="bullet">
+                                      {storefrontSummary.slice(0, 3).map((feature) => (
+                                        <List.Item key={feature}>{feature}</List.Item>
+                                      ))}
+                                    </List>
+                                  ) : (
+                                    <Text as="p" tone="subdued">
+                                      No storefront summary yet
+                                    </Text>
+                                  )}
+                                </BlockStack>
+                              </Box>
+                            </Popover>
+                          </IndexTable.Cell>
+
+                          <IndexTable.Cell>
+                            <Popover
+                              active={activeUsagePopoverId === license.id}
+                              autofocusTarget="first-node"
+                              preferredAlignment="left"
+                              preferredPosition="below"
+                              onClose={() => setActiveUsagePopoverId(null)}
+                              activator={
+                                <Button
+                                  disclosure={usage?.beatCount ? "down" : undefined}
+                                  variant="monochromePlain"
+                                  size="slim"
+                                  textAlign="left"
+                                  onClick={() => handleUsagePopoverToggle(license.id)}
+                                >
                                   {usage?.beatCount
-                                    ? `${usage.beatCount} beat${usage.beatCount === 1 ? "" : "s"} currently reference this template`
-                                    : "No beats reference this template yet"}
-                                </Text>
-                              </BlockStack>
-                            </Box>
-                          </Popover>
-                        </IndexTable.Cell>
+                                    ? `${usage.beatCount} beat${usage.beatCount === 1 ? "" : "s"}`
+                                    : "Not used yet"}
+                                </Button>
+                              }
+                            >
+                              <Box padding="400" minWidth="320px">
+                                <BlockStack gap="300">
+                                  <Text as="p" variant="headingSm" fontWeight="semibold">
+                                    Beats using this template
+                                  </Text>
+                                  {usage?.beatTitles.length ? (
+                                    <List type="bullet">
+                                      {usage.beatTitles.slice(0, 6).map((title) => (
+                                        <List.Item key={title}>{title}</List.Item>
+                                      ))}
+                                    </List>
+                                  ) : (
+                                    <Text as="p" tone="subdued">
+                                      Assign this template to beats from the upload or beat editing flow.
+                                    </Text>
+                                  )}
+                                  <Text as="p" tone="subdued">
+                                    {usage?.beatCount
+                                      ? `${usage.beatCount} beat${usage.beatCount === 1 ? "" : "s"} currently reference this template`
+                                      : "No beats reference this template yet"}
+                                  </Text>
+                                </BlockStack>
+                              </Box>
+                            </Popover>
+                          </IndexTable.Cell>
 
-                        <IndexTable.Cell>
-                          <Tooltip
-                            content={
-                              status.label === "Ready"
-                                ? "This template is complete and already used by beats in your catalog."
-                                : status.label === "Unused"
-                                  ? "This template is ready, but no beats reference it yet."
-                                  : "Add core package details before using this template on beats."
-                            }
-                          >
-                            <Badge tone={status.tone}>{status.label}</Badge>
-                          </Tooltip>
-                        </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Tooltip
+                              content={
+                                status.label === "Ready"
+                                  ? "This template is complete and already used by beats in your catalog."
+                                  : status.label === "Unused"
+                                    ? "This template is ready, but no beats reference it yet."
+                                    : "Add core package details before using this template on beats."
+                              }
+                            >
+                              <Badge tone={status.tone}>{status.label}</Badge>
+                            </Tooltip>
+                          </IndexTable.Cell>
 
-                        <IndexTable.Cell>
-                          <Button variant="plain" onClick={() => handleOpenEdit(license)}>
-                            Edit
-                          </Button>
-                        </IndexTable.Cell>
-                      </IndexTable.Row>
-                    );
-                  })}
-                </IndexTable>
-              </Card>
-            )}
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
-    </Page>
+                          <IndexTable.Cell>
+                            <Button variant="plain" onClick={() => handleOpenEdit(license)}>
+                              Edit
+                            </Button>
+                          </IndexTable.Cell>
+                        </IndexTable.Row>
+                      );
+                    })}
+                  </IndexTable>
+                </Card>
+              )}
+            </BlockStack>
+          </Layout.Section>
+        </Layout>
+      </Page>
+
+      <LegalGuardrailModal
+        open={Boolean(guardrailModalTemplate)}
+        templateName={guardrailModalTemplate?.licenseName || "Starter Preset"}
+        accepting={isAcceptingGuardrail}
+        onAccept={handleAcceptGuardrail}
+        onClose={handleCloseGuardrailModal}
+      />
+    </>
   );
 }
