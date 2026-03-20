@@ -750,6 +750,9 @@ export default function LicensesPage() {
 
   if (isEditorOpen) {
     const usage = editorLicense ? licenseUsageById[editorLicense.id] : undefined;
+    const usageBeatsUrl = editorLicense
+      ? `/app/beats?license=${encodeURIComponent(editorLicense.id)}`
+      : "/app/beats";
     const previewFeatures = parseFeatureLines(licenseForm.featuresShort);
     const fileBadges = parseFileFormatBadges(licenseForm.fileFormats);
     const customTermCount = countCustomTerms(licenseForm.terms);
@@ -1184,7 +1187,7 @@ export default function LicensesPage() {
                     )}
 
                     <InlineStack gap="300">
-                      <Button url="/app/beats">View beats</Button>
+                      <Button url={usageBeatsUrl}>View matching beats</Button>
                       <Button url="/app/deliveries">Open deliveries</Button>
                     </InlineStack>
                   </BlockStack>
@@ -1457,6 +1460,14 @@ export default function LicensesPage() {
                                       ? `${usage.beatCount} beat${usage.beatCount === 1 ? "" : "s"} currently reference this template`
                                       : "No beats reference this template yet"}
                                   </Text>
+                                  <InlineStack>
+                                    <Button
+                                      variant="plain"
+                                      url={`/app/beats?license=${encodeURIComponent(license.id)}`}
+                                    >
+                                      View in Beats
+                                    </Button>
+                                  </InlineStack>
                                 </BlockStack>
                               </Box>
                             </Popover>
