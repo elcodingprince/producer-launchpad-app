@@ -45,15 +45,25 @@ interface DeliverySummary {
     beatTitle: string;
     licenseName: string;
     includedFiles: string[];
+    downloadCount: number;
   }[];
   totalDownloadCount: number;
   deliveryEmailStatus: string;
   deliveryEmailConfirmedStatus: string | null;
+  deliveryEmailRecipient: string | null;
+  deliveryEmailSentAt: string | null;
+  deliveryEmailError: string | null;
+  deliveryEmailConfirmedAt: string | null;
+  deliveryEmailConfirmedError: string | null;
+  deliveryEmailLastEvent: string | null;
+  deliveryEmailLastEventAt: string | null;
 }
 
 type DeliveryOrder = Order & { items: OrderItem[]; deliveryAccess: DeliveryAccess | null };
 
 type DeliveryStatusFilter = "all" | "active" | "expired";
+type DeliveryEmailFilter = "pending" | "delivered" | "failed" | "bounced";
+type DeliveryPopoverType = "customer" | "items" | "email" | "downloads";
 type DeliverySortValue =
   | "createdAt desc"
   | "createdAt asc"
@@ -84,6 +94,10 @@ function formatDate(value: Date | string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatOptionalDate(value: string | null) {
+  return value ? formatDate(value) : "Not available";
 }
 
 function getCustomerLastName(customerName: string | null) {
@@ -143,6 +157,35 @@ function getDisplayedDeliveryEmailStatus(
   return sendStatus;
 }
 
+function getDeliveryEmailFilterValue(status: string): DeliveryEmailFilter | null {
+  if (status === "delivered") return "delivered";
+  if (status === "bounced") return "bounced";
+  if (status === "failed" || status === "skipped" || status === "complained") {
+    return "failed";
+  }
+  if (status === "pending" || status === "sent" || status === "delayed") {
+    return "pending";
+  }
+
+  return null;
+}
+
+function getDeliveryEmailFilterLabel(status: DeliveryEmailFilter) {
+  if (status === "pending") return "Pending";
+  if (status === "delivered") return "Delivered";
+  if (status === "failed") return "Failed";
+  return "Bounced";
+}
+
+function formatWebhookEventLabel(value: string | null) {
+  if (!value) return "No event yet";
+
+  const normalized = value.startsWith("email.") ? value.slice(6) : value;
+  return normalized
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function normalizeShopifyResourceId(id: string) {
   const match = id.match(/\/(\d+)$/);
   return match ? match[1] : id;
@@ -160,10 +203,11 @@ function getIncludedFileLabel(file: BeatFile) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const emailConfirmationEnabled = isResendWebhookTrackingEnabled();
 
   const orders = await prisma.order.findMany({
+    where: { shop: session.shop },
     orderBy: { createdAt: "desc" },
     take: 50,
     include: {
@@ -247,6 +291,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           beatTitle: item.beatTitle,
           licenseName: item.licenseName,
           includedFiles: uniqueIncludedFiles,
+          downloadCount: item.downloadCount,
         };
       }),
       totalDownloadCount: order.items.reduce(
@@ -256,13 +301,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       deliveryEmailStatus: order.deliveryAccess?.deliveryEmailStatus || "missing",
       deliveryEmailConfirmedStatus:
         order.deliveryAccess?.deliveryEmailConfirmedStatus || null,
+      deliveryEmailRecipient: order.deliveryAccess?.deliveryEmailRecipient || null,
+      deliveryEmailSentAt: order.deliveryAccess?.deliveryEmailSentAt?.toISOString() || null,
+      deliveryEmailError: order.deliveryAccess?.deliveryEmailError || null,
+      deliveryEmailConfirmedAt:
+        order.deliveryAccess?.deliveryEmailConfirmedAt?.toISOString() || null,
+      deliveryEmailConfirmedError:
+        order.deliveryAccess?.deliveryEmailConfirmedError || null,
+      deliveryEmailLastEvent: order.deliveryAccess?.deliveryEmailLastEvent || null,
+      deliveryEmailLastEventAt:
+        order.deliveryAccess?.deliveryEmailLastEventAt?.toISOString() || null,
     })),
     emailConfirmationEnabled,
   });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
@@ -276,9 +331,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (intent === "regenerate_token") {
+    const existingAccess = await prisma.deliveryAccess.findFirst({
+      where: {
+        orderId,
+        shop: session.shop,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!existingAccess) {
+      return json(
+        {
+          success: false,
+          intent: "regenerate_token",
+          error: "No delivery record was found for this order.",
+        },
+        { status: 404 },
+      );
+    }
+
     const nextToken = `dl_${crypto.randomBytes(16).toString("hex")}`;
     const updatedAccess = await prisma.deliveryAccess.update({
-      where: { orderId },
+      where: { id: existingAccess.id },
       data: { downloadToken: nextToken },
       select: {
         orderId: true,
@@ -300,8 +376,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
-  const deliveryAccess = await prisma.deliveryAccess.findUnique({
-    where: { orderId },
+  const deliveryAccess = await prisma.deliveryAccess.findFirst({
+    where: {
+      orderId,
+      shop: session.shop,
+    },
     include: {
       order: {
         include: {
@@ -347,7 +426,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     await prisma.deliveryAccess.update({
-      where: { orderId },
+      where: { id: deliveryAccess.id },
       data: {
         deliveryEmailStatus: "sent",
         deliveryEmailSentAt: new Date(),
@@ -373,7 +452,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       error instanceof Error ? error.message : "Unknown email resend error";
 
     await prisma.deliveryAccess.update({
-      where: { orderId },
+      where: { id: deliveryAccess.id },
       data: {
         deliveryEmailStatus: "failed",
         deliveryEmailRecipient: deliveryAccess.customerEmail,
@@ -399,19 +478,14 @@ export default function DeliveriesPage() {
   const shopify = useAppBridge();
   const { mode, setMode } = useSetIndexFiltersMode();
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
-  const [activeCustomerPopoverId, setActiveCustomerPopoverId] = useState<string | null>(null);
-  const [activeItemsPopoverId, setActiveItemsPopoverId] = useState<string | null>(null);
+  const [activePopover, setActivePopover] = useState<{
+    deliveryId: string;
+    type: DeliveryPopoverType;
+  } | null>(null);
   const [queryValue, setQueryValue] = useState("");
   const [selectedView, setSelectedView] = useState(0);
+  const [selectedEmailStatuses, setSelectedEmailStatuses] = useState<DeliveryEmailFilter[]>([]);
   const [sortSelected, setSortSelected] = useState<string[]>(["createdAt desc"]);
-
-  const portalUrlOverrides = useMemo<Map<string, string>>(() => {
-    if (!actionData?.success || !actionData.orderId || !actionData.portalUrl) {
-      return new Map<string, string>();
-    }
-
-    return new Map([[actionData.orderId, actionData.portalUrl]]);
-  }, [actionData]);
 
   const statusViews = useMemo(
     () => [
@@ -441,11 +515,27 @@ export default function DeliveriesPage() {
     const activeSort = (sortSelected[0] || "createdAt desc") as DeliverySortValue;
 
     let nextDeliveries = deliveries.filter((delivery: DeliverySummary) => {
+      const displayedDeliveryEmailStatus = getDisplayedDeliveryEmailStatus(
+        delivery.deliveryEmailStatus,
+        delivery.deliveryEmailConfirmedStatus,
+        emailConfirmationEnabled,
+      );
+      const emailStatusFilterValue = getDeliveryEmailFilterValue(
+        displayedDeliveryEmailStatus,
+      );
+
       if (selectedStatusFilter === "active" && delivery.status !== "active") {
         return false;
       }
 
       if (selectedStatusFilter === "expired" && delivery.status !== "expired") {
+        return false;
+      }
+
+      if (
+        selectedEmailStatuses.length > 0 &&
+        (!emailStatusFilterValue || !selectedEmailStatuses.includes(emailStatusFilterValue))
+      ) {
         return false;
       }
 
@@ -457,6 +547,9 @@ export default function DeliveriesPage() {
         delivery.customerEmail,
         delivery.itemSummary,
         delivery.status,
+        displayedDeliveryEmailStatus,
+        delivery.deliveryEmailRecipient || "",
+        delivery.deliveryEmailLastEvent || "",
       ]
         .join(" ")
         .toLowerCase();
@@ -488,7 +581,14 @@ export default function DeliveriesPage() {
     });
 
     return nextDeliveries;
-  }, [deliveries, queryValue, selectedStatusFilter, sortSelected]);
+  }, [
+    deliveries,
+    emailConfirmationEnabled,
+    queryValue,
+    selectedEmailStatuses,
+    selectedStatusFilter,
+    sortSelected,
+  ]);
 
   const {
     selectedResources,
@@ -504,8 +604,8 @@ export default function DeliveriesPage() {
         ) || null
       : null;
 
-  const appliedFilters =
-    selectedStatusFilter === "all"
+  const appliedFilters = [
+    ...(selectedStatusFilter === "all"
       ? []
       : [
           {
@@ -513,12 +613,24 @@ export default function DeliveriesPage() {
             label: selectedStatusFilter === "active" ? "Active" : "Expired",
             onRemove: () => setSelectedView(0),
           },
-        ];
+        ]),
+    ...(selectedEmailStatuses.length === 0
+      ? []
+      : [
+          {
+            key: "emailStatus",
+            label: `Email: ${selectedEmailStatuses
+              .map((status) => getDeliveryEmailFilterLabel(status))
+              .join(", ")}`,
+            onRemove: () => setSelectedEmailStatuses([]),
+          },
+        ]),
+  ];
 
   useEffect(() => {
     if (!actionData?.success) return;
     if (actionData.intent === "regenerate_token") {
-      shopify.toast.show(`Access link regenerated for order #${actionData.orderNumber}`);
+      shopify.toast.show(`Portal link regenerated for order #${actionData.orderNumber}`);
       return;
     }
 
@@ -565,15 +677,59 @@ export default function DeliveriesPage() {
 
   const handleQueryValueRemove = useCallback(() => setQueryValue(""), []);
 
-  const handleCustomerPopoverToggle = useCallback((deliveryId: string) => {
-    setActiveCustomerPopoverId((current) => (current === deliveryId ? null : deliveryId));
+  const isPopoverOpen = useCallback(
+    (deliveryId: string, type: DeliveryPopoverType) =>
+      activePopover?.deliveryId === deliveryId && activePopover.type === type,
+    [activePopover],
+  );
+
+  const closePopover = useCallback(() => {
+    setActivePopover(null);
   }, []);
 
-  const handleItemsPopoverToggle = useCallback((deliveryId: string) => {
-    setActiveItemsPopoverId((current) => (current === deliveryId ? null : deliveryId));
+  const handlePopoverActivatorPointerDown = useCallback((
+    event: { stopPropagation: () => void },
+  ) => {
+    event.stopPropagation();
   }, []);
+
+  const handlePopoverActivatorClick = useCallback(
+    (
+      event: { stopPropagation: () => void },
+      deliveryId: string,
+      type: DeliveryPopoverType,
+    ) => {
+      event.stopPropagation();
+      setActivePopover((current) =>
+        current?.deliveryId === deliveryId && current.type === type
+          ? null
+          : { deliveryId, type },
+      );
+    },
+    [],
+  );
 
   const filters = [
+    {
+      key: "emailStatus",
+      label: "Email status",
+      filter: (
+        <ChoiceList
+          title="Email status"
+          titleHidden
+          choices={[
+            { label: "Pending", value: "pending" },
+            { label: "Delivered", value: "delivered" },
+            { label: "Failed", value: "failed" },
+            { label: "Bounced", value: "bounced" },
+          ]}
+          selected={selectedEmailStatuses}
+          onChange={(value) => setSelectedEmailStatuses(value as DeliveryEmailFilter[])}
+          allowMultiple
+        />
+      ),
+      shortcut: false,
+    },
     {
       key: "tokenAccess",
       label: "Token access",
@@ -606,13 +762,40 @@ export default function DeliveriesPage() {
   const handleClearAll = useCallback(() => {
     setQueryValue("");
     setSelectedView(0);
+    setSelectedEmailStatuses([]);
     setSortSelected(["createdAt desc"]);
     clearSelection();
   }, [clearSelection]);
 
+  const selectedDeliveryActions = selectedDelivery
+    ? [
+        ...(selectedDelivery.portalUrl
+          ? [
+              {
+                content: copiedOrderId === selectedDelivery.id ? "Copied" : "Copy portal link",
+                onAction: () => handleCopy(selectedDelivery.id, selectedDelivery.portalUrl),
+              },
+              {
+                content: "Regenerate portal link",
+                onAction: () => handleRegenerate(selectedDelivery.id),
+              },
+            ]
+          : []),
+        ...(selectedDelivery.portalUrl && selectedDelivery.customerEmail
+          ? [
+              {
+                content: "Resend delivery email",
+                onAction: () => handleResendEmail(selectedDelivery.id),
+              },
+            ]
+          : []),
+      ]
+    : [];
+
   return (
     <Page
       title="Deliveries"
+      subtitle="Monitor delivery email, portal access, and download activity after purchase."
       fullWidth
     >
       <Layout>
@@ -639,8 +822,7 @@ export default function DeliveriesPage() {
                 image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
               >
                 <p>
-                  Completed orders with delivery tokens will appear here once buyers
-                  begin checking out.
+                  Monitor delivery email, portal access, and download activity after purchase.
                 </p>
               </EmptyState>
             </Card>
@@ -656,6 +838,7 @@ export default function DeliveriesPage() {
                   disabled:
                     !queryValue &&
                     selectedView === 0 &&
+                    selectedEmailStatuses.length === 0 &&
                     (sortSelected[0] || "createdAt desc") === "createdAt desc",
                   loading: false,
                 }}
@@ -680,24 +863,7 @@ export default function DeliveriesPage() {
                   allResourcesSelected ? "All" : selectedResources.length
                 }
                 onSelectionChange={handleSelectionChange}
-                promotedBulkActions={
-                  selectedDelivery
-                    ? [
-                        {
-                          content: copiedOrderId === selectedDelivery.id ? "Copied" : "Copy portal link",
-                          onAction: () => handleCopy(selectedDelivery.id, selectedDelivery.portalUrl),
-                        },
-                        {
-                          content: "Regenerate access link",
-                          onAction: () => handleRegenerate(selectedDelivery.id),
-                        },
-                        {
-                          content: "Resend delivery email",
-                          onAction: () => handleResendEmail(selectedDelivery.id),
-                        },
-                      ]
-                    : []
-                }
+                promotedBulkActions={selectedDeliveryActions}
                 headings={[
                   { title: "Order" },
                   { title: "Date" },
@@ -709,8 +875,6 @@ export default function DeliveriesPage() {
                 ]}
               >
                 {filteredDeliveries.map((delivery: DeliverySummary, index: number) => {
-                  const portalUrl =
-                    portalUrlOverrides.get(delivery.id) || delivery.portalUrl;
                   const displayedDeliveryEmailStatus = getDisplayedDeliveryEmailStatus(
                     delivery.deliveryEmailStatus,
                     delivery.deliveryEmailConfirmedStatus,
@@ -736,21 +900,28 @@ export default function DeliveriesPage() {
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Popover
-                          active={activeCustomerPopoverId === delivery.id}
+                          active={isPopoverOpen(delivery.id, "customer")}
                           autofocusTarget="first-node"
                           preferredAlignment="left"
                           preferredPosition="below"
-                          onClose={() => setActiveCustomerPopoverId(null)}
+                          onClose={closePopover}
                           activator={
-                            <Button
-                              disclosure
-                              variant="monochromePlain"
-                              size="slim"
-                              textAlign="left"
-                              onClick={() => handleCustomerPopoverToggle(delivery.id)}
+                            <div
+                              onClickCapture={(event) =>
+                                handlePopoverActivatorClick(event, delivery.id, "customer")
+                              }
+                              onMouseDownCapture={handlePopoverActivatorPointerDown}
+                              onPointerDownCapture={handlePopoverActivatorPointerDown}
                             >
-                              {delivery.customerLastName || delivery.customerName || "Customer"}
-                            </Button>
+                              <Button
+                                disclosure
+                                variant="monochromePlain"
+                                size="slim"
+                                textAlign="left"
+                              >
+                                {delivery.customerLastName || delivery.customerName || "Customer"}
+                              </Button>
+                            </div>
                           }
                         >
                           <div style={{ minWidth: "240px", padding: "16px" }}>
@@ -773,21 +944,28 @@ export default function DeliveriesPage() {
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Popover
-                          active={activeItemsPopoverId === delivery.id}
+                          active={isPopoverOpen(delivery.id, "items")}
                           autofocusTarget="first-node"
                           preferredAlignment="left"
                           preferredPosition="below"
-                          onClose={() => setActiveItemsPopoverId(null)}
+                          onClose={closePopover}
                           activator={
-                            <Button
-                              disclosure={delivery.itemCount > 0 ? "down" : undefined}
-                              variant="monochromePlain"
-                              size="slim"
-                              textAlign="left"
-                              onClick={() => handleItemsPopoverToggle(delivery.id)}
+                            <div
+                              onClickCapture={(event) =>
+                                handlePopoverActivatorClick(event, delivery.id, "items")
+                              }
+                              onMouseDownCapture={handlePopoverActivatorPointerDown}
+                              onPointerDownCapture={handlePopoverActivatorPointerDown}
                             >
-                              {`${delivery.itemCount} item${delivery.itemCount === 1 ? "" : "s"}`}
-                            </Button>
+                              <Button
+                                disclosure={delivery.itemCount > 0 ? "down" : undefined}
+                                variant="monochromePlain"
+                                size="slim"
+                                textAlign="left"
+                              >
+                                {`${delivery.itemCount} item${delivery.itemCount === 1 ? "" : "s"}`}
+                              </Button>
+                            </div>
                           }
                         >
                           <div style={{ minWidth: "320px", padding: "16px" }}>
@@ -810,9 +988,70 @@ export default function DeliveriesPage() {
                         </Popover>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
-                        <Badge tone={getDeliveryEmailBadgeTone(displayedDeliveryEmailStatus)}>
-                          {getDeliveryEmailBadgeLabel(displayedDeliveryEmailStatus)}
-                        </Badge>
+                        <Popover
+                          active={isPopoverOpen(delivery.id, "email")}
+                          autofocusTarget="first-node"
+                          preferredAlignment="left"
+                          preferredPosition="below"
+                          onClose={closePopover}
+                          activator={
+                            <button
+                              type="button"
+                              aria-label={`Show delivery email details for order #${delivery.orderNumber}`}
+                              onClick={(event) =>
+                                handlePopoverActivatorClick(event, delivery.id, "email")
+                              }
+                              onMouseDown={handlePopoverActivatorPointerDown}
+                              onPointerDown={handlePopoverActivatorPointerDown}
+                              style={{
+                                background: "none",
+                                border: 0,
+                                padding: 0,
+                                cursor: "pointer",
+                              }}
+                            >
+                              <Badge tone={getDeliveryEmailBadgeTone(displayedDeliveryEmailStatus)}>
+                                {getDeliveryEmailBadgeLabel(displayedDeliveryEmailStatus)}
+                              </Badge>
+                            </button>
+                          }
+                        >
+                          <div style={{ minWidth: "280px", padding: "16px" }}>
+                            <BlockStack gap="300">
+                              <Text as="p" variant="headingSm" fontWeight="semibold">
+                                Delivery email
+                              </Text>
+                              <Text as="p" tone="subdued">
+                                Recipient: {delivery.deliveryEmailRecipient || delivery.customerEmail || "Not available"}
+                              </Text>
+                              <Text as="p" tone="subdued">
+                                Sent: {formatOptionalDate(delivery.deliveryEmailSentAt)}
+                              </Text>
+                              <Text as="p" tone="subdued">
+                                Last Resend event: {formatWebhookEventLabel(delivery.deliveryEmailLastEvent)}
+                                {delivery.deliveryEmailLastEventAt
+                                  ? ` • ${formatDate(delivery.deliveryEmailLastEventAt)}`
+                                  : ""}
+                              </Text>
+                              {displayedDeliveryEmailStatus === "delivered" &&
+                              delivery.deliveryEmailConfirmedAt ? (
+                                <Text as="p" tone="subdued">
+                                  Confirmed delivered: {formatDate(delivery.deliveryEmailConfirmedAt)}
+                                </Text>
+                              ) : null}
+                              {(delivery.deliveryEmailConfirmedError || delivery.deliveryEmailError) ? (
+                                <Text as="p" tone="critical">
+                                  Error: {delivery.deliveryEmailConfirmedError || delivery.deliveryEmailError}
+                                </Text>
+                              ) : null}
+                              {!emailConfirmationEnabled ? (
+                                <Text as="p" tone="subdued">
+                                  Resend webhook tracking is not enabled for this store.
+                                </Text>
+                              ) : null}
+                            </BlockStack>
+                          </div>
+                        </Popover>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Badge tone={delivery.status === "active" ? "success" : undefined}>
@@ -820,10 +1059,49 @@ export default function DeliveriesPage() {
                         </Badge>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
-                        <Text as="span" tone="subdued">
-                          {delivery.totalDownloadCount} tracked download
-                          {delivery.totalDownloadCount === 1 ? "" : "s"}
-                        </Text>
+                        <Popover
+                          active={isPopoverOpen(delivery.id, "downloads")}
+                          autofocusTarget="first-node"
+                          preferredAlignment="left"
+                          preferredPosition="below"
+                          onClose={closePopover}
+                          activator={
+                            <div
+                              onClickCapture={(event) =>
+                                handlePopoverActivatorClick(event, delivery.id, "downloads")
+                              }
+                              onMouseDownCapture={handlePopoverActivatorPointerDown}
+                              onPointerDownCapture={handlePopoverActivatorPointerDown}
+                            >
+                              <Button
+                                disclosure={delivery.itemCount > 0 ? "down" : undefined}
+                                variant="monochromePlain"
+                                size="slim"
+                                textAlign="left"
+                              >
+                                {`${delivery.totalDownloadCount} tracked download${delivery.totalDownloadCount === 1 ? "" : "s"}`}
+                              </Button>
+                            </div>
+                          }
+                        >
+                          <div style={{ minWidth: "320px", padding: "16px" }}>
+                            <BlockStack gap="300">
+                              {delivery.itemDetails.map((item) => (
+                                <BlockStack key={item.id} gap="100">
+                                  <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                    {item.beatTitle}
+                                  </Text>
+                                  <Text as="p" tone="subdued">
+                                    {item.licenseName}
+                                  </Text>
+                                  <Text as="p" tone="subdued">
+                                    {item.downloadCount} download{item.downloadCount === 1 ? "" : "s"}
+                                  </Text>
+                                </BlockStack>
+                              ))}
+                            </BlockStack>
+                          </div>
+                        </Popover>
                       </IndexTable.Cell>
                     </IndexTable.Row>
                   );
