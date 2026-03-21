@@ -173,13 +173,20 @@ export class ProductCreatorService {
       licenseId: string;
       licenseName: string;
       displayName: string;
+      legalTemplateFamily: string;
       streamLimit: string;
       copyLimit: string;
+      videoViewLimit: string;
       termYears: string;
       fileFormats: string;
-      includesStems: boolean;
-      supportsStemsAddon: boolean;
+      stemsPolicy: string;
+      storefrontSummary: string;
       featuresShort: string;
+      contentIdPolicy: string;
+      syncPolicy: string;
+      creditRequirement: string;
+      publishingSplitMode: string;
+      publishingSplitSummary: string;
       terms: string[];
     }>
   > {
@@ -187,19 +194,38 @@ export class ProductCreatorService {
 
     return metaobjects.map((obj) => {
       const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
+      const licenseId = fields.get("license_id") || "";
+      const legalTemplateFamily =
+        fields.get("legal_template_family") ||
+        (licenseId === "premium" || licenseId === "unlimited" ? licenseId : "basic");
+      const stemsPolicy =
+        fields.get("stems_policy") ||
+        (fields.get("includes_stems") === "true"
+          ? "included_by_default"
+          : fields.get("supports_stems_addon") === "true"
+            ? "available_as_addon"
+            : "not_available");
+
       return {
         id: obj.id,
         handle: obj.handle,
-        licenseId: fields.get("license_id") || "",
+        licenseId,
         licenseName: fields.get("license_name") || "",
         displayName: fields.get("license_name") || "",
+        legalTemplateFamily,
         streamLimit: fields.get("stream_limit") || "",
         copyLimit: fields.get("copy_limit") || "",
+        videoViewLimit: fields.get("video_view_limit") || "",
         termYears: fields.get("term_years") || "",
         fileFormats: fields.get("file_formats") || "",
-        includesStems: fields.get("includes_stems") === "true",
-        supportsStemsAddon: fields.get("supports_stems_addon") === "true",
+        stemsPolicy,
+        storefrontSummary: fields.get("storefront_summary") || "",
         featuresShort: fields.get("features_short") || "",
+        contentIdPolicy: fields.get("content_id_policy") || "",
+        syncPolicy: fields.get("sync_policy") || "",
+        creditRequirement: fields.get("credit_requirement") || "",
+        publishingSplitMode: fields.get("publishing_split_mode") || "",
+        publishingSplitSummary: fields.get("publishing_split_summary") || "",
         terms: [
           fields.get("term_1") || "",
           fields.get("term_2") || "",

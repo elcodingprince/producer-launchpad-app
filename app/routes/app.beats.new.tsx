@@ -24,6 +24,7 @@ import { getAppReadiness } from "~/services/appReadiness.server";
 import {
   formatDeliveryFormatLabel,
   getRequiredDeliveryFormats,
+  licenseOffersStems,
   normalizeDeliveryFormat,
   type DeliveryFormat,
 } from "~/services/deliveryPackages";
@@ -32,7 +33,11 @@ import {
   shouldHardBlockUpload,
   shouldSoftWarnUpload,
 } from "~/services/storageConfig.server";
-import { uploadDynamicFilesForShop, type DynamicFileUpload, type UploadedFileResult } from "~/services/storageUpload.server";
+import {
+  uploadDynamicFilesForShop,
+  type DynamicFileUpload,
+  type UploadedFileResult,
+} from "~/services/storageUpload.server";
 import {
   LicenseFileAssignment,
   type UploadedFile,
@@ -41,12 +46,30 @@ import {
 import { MultiSelectCombobox } from "../components/MultiSelectCombobox";
 
 const keyOptions = [
-  "C major", "C minor", "C# major", "C# minor",
-  "D major", "D minor", "D# major", "D# minor",
-  "E major", "E minor", "F major", "F minor",
-  "F# major", "F# minor", "G major", "G minor",
-  "G# major", "G# minor", "A major", "A minor",
-  "A# major", "A# minor", "B major", "B minor",
+  "C major",
+  "C minor",
+  "C# major",
+  "C# minor",
+  "D major",
+  "D minor",
+  "D# major",
+  "D# minor",
+  "E major",
+  "E minor",
+  "F major",
+  "F minor",
+  "F# major",
+  "F# minor",
+  "G major",
+  "G minor",
+  "G# major",
+  "G# minor",
+  "A major",
+  "A minor",
+  "A# major",
+  "A# minor",
+  "B major",
+  "B minor",
 ];
 
 function normalizeShopifyResourceId(id: string) {
@@ -103,10 +126,19 @@ function serializeUploadedFiles(files: UploadedFile[]) {
 }
 
 function isLicenseDeliveryFile(file: UploadedFile) {
-  return file.purpose === "mp3" || file.purpose === "wav" || file.purpose === "stems";
+  return (
+    file.purpose === "mp3" || file.purpose === "wav" || file.purpose === "stems"
+  );
 }
 
-
+function hasSharedStemsSourceFile(
+  files: Array<Pick<UploadedFile, "purpose" | "type">>,
+) {
+  return files.some(
+    (file) =>
+      normalizeDeliveryFormat(file.purpose || file.type || "") === "stems",
+  );
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -158,12 +190,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             key: draftRecord.key || "C minor",
             producerAlias: draftRecord.producerAlias || "",
             genreGids: parseJsonField<string[]>(draftRecord.genreGidsJson, []),
-            producerGids: parseJsonField<string[]>(draftRecord.producerGidsJson, []),
-            licenseFiles: parseJsonField<LicenseFiles>(draftRecord.licenseFilesJson, {}),
-            licensePrices: parseJsonField<Record<string, string>>(draftRecord.licensePricesJson, {}),
-            uploadedFiles: parseJsonField<UploadedFile[]>(draftRecord.uploadedFilesJson, []),
-            previewFile: parseJsonField<UploadedFile | null>(draftRecord.previewFileJson, null),
-            coverArtFile: parseJsonField<UploadedFile | null>(draftRecord.coverArtFileJson, null),
+            producerGids: parseJsonField<string[]>(
+              draftRecord.producerGidsJson,
+              [],
+            ),
+            licenseFiles: parseJsonField<LicenseFiles>(
+              draftRecord.licenseFilesJson,
+              {},
+            ),
+            licensePrices: parseJsonField<Record<string, string>>(
+              draftRecord.licensePricesJson,
+              {},
+            ),
+            uploadedFiles: parseJsonField<UploadedFile[]>(
+              draftRecord.uploadedFilesJson,
+              [],
+            ),
+            previewFile: parseJsonField<UploadedFile | null>(
+              draftRecord.previewFileJson,
+              null,
+            ),
+            coverArtFile: parseJsonField<UploadedFile | null>(
+              draftRecord.coverArtFileJson,
+              null,
+            ),
           }
         : null,
       storageWarning: shouldSoftWarnUpload(storageConfig)
@@ -180,9 +230,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         producers: [],
         draft: null,
         storageWarning: null,
-        error: error instanceof Error ? error.message : "Failed to load upload page",
+        error:
+          error instanceof Error ? error.message : "Failed to load upload page",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 };
@@ -201,13 +252,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Parse multipart form data to get actual File objects
     const formData = await request.formData();
-    
+
     // Extract beat details
     const title = formData.get("title") as string;
     const bpm = parseInt(formData.get("bpm") as string, 10);
     const key = formData.get("key") as string;
     const genreGids = JSON.parse((formData.get("genreGids") as string) || "[]");
-    const producerGids = JSON.parse((formData.get("producerGids") as string) || "[]");
+    const producerGids = JSON.parse(
+      (formData.get("producerGids") as string) || "[]",
+    );
     const producerAlias = (formData.get("producerAlias") as string) || "";
     const statusValue = (formData.get("status") as string) || "active";
     const productStatus = statusValue === "draft" ? "DRAFT" : "ACTIVE";
@@ -216,17 +269,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const coverArtFileId = (formData.get("coverArtFileId") as string) || null;
 
     // Extract license file assignments (maps tier -> array of temp file IDs)
-    const licenseFilesData = JSON.parse((formData.get("licenseFiles") as string) || "{}");
-    const licensePricesData = JSON.parse((formData.get("licensePrices") as string) || "{}");
-    const uploadedFilesStateRaw = formData.get("uploadedFilesState") as string | null;
+    const licenseFilesData = JSON.parse(
+      (formData.get("licenseFiles") as string) || "{}",
+    );
+    const licensePricesData = JSON.parse(
+      (formData.get("licensePrices") as string) || "{}",
+    );
+    const uploadedFilesStateRaw = formData.get("uploadedFilesState") as
+      | string
+      | null;
     const uploadedFilesState = parseJsonField<UploadedFile[]>(
       uploadedFilesStateRaw || "[]",
       [],
     );
-    
+
     // Extract preview file ID
     const previewFileId = formData.get("previewFileId") as string | null;
-    
+
     // Extract file metadata (maps temp file ID -> metadata including purpose)
     const fileMetadataJson = (formData.get("fileMetadata") as string) || "{}";
     const fileMetadata = JSON.parse(fileMetadataJson);
@@ -246,8 +305,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const existingUploadedFiles =
       uploadedFilesStateRaw !== null
         ? uploadedFilesState
-            .map((file) =>
-              savedDraftUploadedFiles.find((savedFile) => savedFile.id === file.id) || file,
+            .map(
+              (file) =>
+                savedDraftUploadedFiles.find(
+                  (savedFile) => savedFile.id === file.id,
+                ) || file,
             )
             .filter(isLicenseDeliveryFile)
         : savedDraftUploadedFiles;
@@ -255,7 +317,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ? parseJsonField<UploadedFile | null>(existingDraft.previewFileJson, null)
       : null;
     const existingCoverArtFile = existingDraft
-      ? parseJsonField<UploadedFile | null>(existingDraft.coverArtFileJson, null)
+      ? parseJsonField<UploadedFile | null>(
+          existingDraft.coverArtFileJson,
+          null,
+        )
       : null;
     const existingFilesById = new Map(
       dedupeFilesById([
@@ -266,7 +331,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
 
     // === SERVER-SIDE VALIDATION ===
-    
+
     const hasRequiredMetadata =
       Boolean(title) &&
       Boolean(bpm) &&
@@ -283,7 +348,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             ? "Add a beat title before saving this draft"
             : "Please fill in all required fields",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -291,13 +356,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (!isDraft && !previewFileId) {
       return json(
         { success: false, error: "Please upload a preview audio file" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     // Get actual license GIDs from the database
     const dbLicenses = await productService.getLicenseMetaobjects();
-    const licenseTiers = dbLicenses.map(l => l.licenseId);
+    const licenseTiers = dbLicenses.map((l) => l.licenseId);
 
     // Validate each license tier has the full package its template promises
     const missingAssignments: string[] = [];
@@ -307,7 +372,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const filesForTier = licenseFilesData[license.licenseId];
         const requiredFormats = getRequiredDeliveryFormats(license);
 
-        if (!filesForTier || !Array.isArray(filesForTier) || filesForTier.length === 0) {
+        if (
+          !filesForTier ||
+          !Array.isArray(filesForTier) ||
+          filesForTier.length === 0
+        ) {
           missingAssignments.push(
             `${license.licenseName}: ${requiredFormats.map(formatDeliveryFormatLabel).join(", ") || "package files"}`,
           );
@@ -316,18 +385,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         const assignedFormats = new Set(
           filesForTier
-            .map((fileId: string) =>
-              fileMetadata[fileId]?.purpose ||
-              fileMetadata[fileId]?.type ||
-              existingFilesById.get(fileId)?.purpose ||
-              existingFilesById.get(fileId)?.type ||
-              "",
+            .map(
+              (fileId: string) =>
+                fileMetadata[fileId]?.purpose ||
+                fileMetadata[fileId]?.type ||
+                existingFilesById.get(fileId)?.purpose ||
+                existingFilesById.get(fileId)?.type ||
+                "",
             )
             .map((format: string) => normalizeDeliveryFormat(format))
-            .filter((format: DeliveryFormat | null): format is DeliveryFormat => Boolean(format))
+            .filter((format: DeliveryFormat | null): format is DeliveryFormat =>
+              Boolean(format),
+            ),
         );
 
-        const missingFormats = requiredFormats.filter((format) => !assignedFormats.has(format));
+        const missingFormats = requiredFormats.filter(
+          (format) => !assignedFormats.has(format),
+        );
         if (missingFormats.length > 0) {
           missingAssignments.push(
             `${license.licenseName}: ${missingFormats.map(formatDeliveryFormatLabel).join(", ")}`,
@@ -336,13 +410,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
+    const stemsSourceRequired = dbLicenses.some((license) =>
+      licenseOffersStems(license.stemsPolicy),
+    );
+    const sharedStemsFilePresent = hasSharedStemsSourceFile(
+      existingUploadedFiles,
+    );
+
+    if (!isDraft && stemsSourceRequired && !sharedStemsFilePresent) {
+      const affectedLicenses = dbLicenses
+        .filter((license) => licenseOffersStems(license.stemsPolicy))
+        .map((license) => license.licenseName);
+
+      return json(
+        {
+          success: false,
+          error: `Upload one stems ZIP before publishing this beat. Required because these offers include stems or sell stems as an add-on: ${affectedLicenses.join(", ")}`,
+        },
+        { status: 400 },
+      );
+    }
+
     if (missingAssignments.length > 0) {
       return json(
         {
           success: false,
           error: `Some license packages are missing required files. ${missingAssignments.join(" | ")}`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -368,19 +463,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Collect all file entries from formData
-    const fileEntries: Array<{ tempId: string; file: File; purpose: string }> = [];
+    const fileEntries: Array<{ tempId: string; file: File; purpose: string }> =
+      [];
     for (const [key, value] of formData.entries()) {
       if (key.startsWith("file_") && value instanceof File) {
         const tempId = key.replace("file_", "");
         const metadata = fileMetadata[tempId] || {};
-        fileEntries.push({ tempId, file: value, purpose: metadata.purpose || "other" });
+        fileEntries.push({
+          tempId,
+          file: value,
+          purpose: metadata.purpose || "other",
+        });
       }
     }
 
     if (!isDraft && fileEntries.length === 0 && existingFilesById.size === 0) {
       return json(
         { success: false, error: "No files were uploaded" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -396,12 +496,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    const uploadedTempIds = new Set(fileEntries.map(e => e.tempId));
+    const uploadedTempIds = new Set(fileEntries.map((e) => e.tempId));
     const knownFileIds = new Set([
       ...uploadedTempIds,
       ...existingFilesById.keys(),
     ]);
-    const missingFiles = Array.from(allAssignedFileIds).filter(id => !knownFileIds.has(id));
+    const missingFiles = Array.from(allAssignedFileIds).filter(
+      (id) => !knownFileIds.has(id),
+    );
 
     if (!isDraft && missingFiles.length > 0) {
       return json(
@@ -409,12 +511,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           success: false,
           error: `Some assigned files were not found in the upload. Please re-upload the files.`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const producers = await productService.getProducerMetaobjects();
-    const selectedProducers = producers.filter((p) => producerGids.includes(p.id));
+    const selectedProducers = producers.filter((p) =>
+      producerGids.includes(p.id),
+    );
     const producerNames = selectedProducers.map((p) => p.name);
 
     // Generate beat slug for storage path
@@ -424,7 +528,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.info("[upload] uploading files to configured storage");
 
     // Prepare files for upload with their purpose
-    const filesToUpload: DynamicFileUpload[] = fileEntries.map(entry => {
+    const filesToUpload: DynamicFileUpload[] = fileEntries.map((entry) => {
       const metadata = fileMetadata[entry.tempId] || {};
       return {
         file: entry.file,
@@ -439,7 +543,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       filesToUpload.length > 0
         ? await uploadDynamicFilesForShop(session.shop, filesToUpload, beatSlug)
         : [];
-    
+
     // Create a map from tempId to upload result
     const tempIdToResult = new Map<string, UploadedFileResult>();
     for (let i = 0; i < fileEntries.length; i++) {
@@ -465,43 +569,63 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Track cover art and preview URLs by purpose
     let coverArtUrl: string | undefined;
     let previewUrl: string | undefined;
-    
+
     // Upload cover art to Shopify's CDN directly to prevent "Media processing failed" timeouts
-    const coverEntry = fileEntries.find(e => e.purpose === "cover" || e.file.type.startsWith('image/'));
+    const coverEntry = fileEntries.find(
+      (e) => e.purpose === "cover" || e.file.type.startsWith("image/"),
+    );
     let shopifyCoverResourceUrl: string | undefined;
 
     if (coverEntry) {
-      console.info("[upload] uploading cover art directly to Shopify CDN via stagedUploadsCreate");
+      console.info(
+        "[upload] uploading cover art directly to Shopify CDN via stagedUploadsCreate",
+      );
       try {
-        shopifyCoverResourceUrl = await productService.uploadImageToShopify(coverEntry.file);
+        shopifyCoverResourceUrl = await productService.uploadImageToShopify(
+          coverEntry.file,
+        );
       } catch (err) {
         console.error("Failed to upload cover art to Shopify:", err);
       }
     }
 
-    const mergedPreviewFile = previewFileId
-      ? uploadedFilesWithStorage.get(previewFileId) || existingFilesById.get(previewFileId) || null
+    const mergedPreviewFile: UploadedFile | null = previewFileId
+      ? uploadedFilesWithStorage.get(previewFileId) ||
+        existingFilesById.get(previewFileId) ||
+        null
       : null;
-    const mergedCoverArtFileBase = coverArtFileId
-      ? uploadedFilesWithStorage.get(coverArtFileId) || existingFilesById.get(coverArtFileId) || null
+    const mergedCoverArtFileBase: UploadedFile | null = coverArtFileId
+      ? uploadedFilesWithStorage.get(coverArtFileId) ||
+        existingFilesById.get(coverArtFileId) ||
+        null
       : null;
-    const mergedCoverArtFile = mergedCoverArtFileBase
+    const mergedCoverArtFile: UploadedFile | null = mergedCoverArtFileBase
       ? {
           ...mergedCoverArtFileBase,
           shopifyResourceUrl:
-            shopifyCoverResourceUrl || mergedCoverArtFileBase.shopifyResourceUrl || null,
+            shopifyCoverResourceUrl ||
+            mergedCoverArtFileBase.shopifyResourceUrl ||
+            undefined,
         }
       : null;
 
     const mergedLicenseFilePoolByPurpose = new Map<string, UploadedFile>();
-    [...existingUploadedFiles, ...Array.from(uploadedFilesWithStorage.values()).filter(isLicenseDeliveryFile)].forEach((file) => {
+    [
+      ...existingUploadedFiles,
+      ...Array.from(uploadedFilesWithStorage.values()).filter(
+        isLicenseDeliveryFile,
+      ),
+    ].forEach((file) => {
       const purposeKey = isLicenseDeliveryFile(file) ? file.purpose : file.id;
       mergedLicenseFilePoolByPurpose.set(purposeKey, file);
     });
-    const mergedUploadedFiles = Array.from(mergedLicenseFilePoolByPurpose.values());
+    const mergedUploadedFiles = Array.from(
+      mergedLicenseFilePoolByPurpose.values(),
+    );
 
     previewUrl = mergedPreviewFile?.storageUrl;
-    coverArtUrl = mergedCoverArtFile?.shopifyResourceUrl || mergedCoverArtFile?.storageUrl;
+    coverArtUrl =
+      mergedCoverArtFile?.shopifyResourceUrl || mergedCoverArtFile?.storageUrl;
 
     if (isDraft) {
       const draftData = {
@@ -515,8 +639,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         licenseFilesJson: JSON.stringify(licenseFilesData),
         licensePricesJson: JSON.stringify(licensePricesData),
         uploadedFilesJson: JSON.stringify(mergedUploadedFiles),
-        previewFileJson: mergedPreviewFile ? JSON.stringify(mergedPreviewFile) : null,
-        coverArtFileJson: mergedCoverArtFile ? JSON.stringify(mergedCoverArtFile) : null,
+        previewFileJson: mergedPreviewFile
+          ? JSON.stringify(mergedPreviewFile)
+          : null,
+        coverArtFileJson: mergedCoverArtFile
+          ? JSON.stringify(mergedCoverArtFile)
+          : null,
       };
 
       const savedDraft = existingDraft
@@ -528,7 +656,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             data: draftData,
           });
 
-      console.info("[upload] draft saved successfully", { draftId: savedDraft.id });
+      console.info("[upload] draft saved successfully", {
+        draftId: savedDraft.id,
+      });
       return json({
         success: true,
         redirectTo: "/app/beats?success=true&status=draft",
@@ -541,9 +671,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // === CREATE SHOPIFY PRODUCT ===
     console.info("[upload] creating Shopify product");
-    
+
     // Prepare license prices
-    const licensePrices = licenses.map(lp => {
+    const licensePrices = licenses.map((lp) => {
       const customPriceStr = licensePricesData[lp.licenseId];
       const customPrice = customPriceStr ? parseFloat(customPriceStr) : 0;
       return {
@@ -565,15 +695,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       producerNames,
       producerAlias: producerAlias || undefined,
       licenses: licensePrices,
-      coverArtUrl: shopifyCoverResourceUrl || mergedCoverArtFile?.shopifyResourceUrl || coverArtUrl,
+      coverArtUrl:
+        shopifyCoverResourceUrl ||
+        mergedCoverArtFile?.shopifyResourceUrl ||
+        coverArtUrl,
       previewUrl,
     });
 
     // === SAVE FILE MAPPINGS TO DATABASE ===
-    console.info("[upload] saving file mappings to database", { productId: result.productId });
-    
+    console.info("[upload] saving file mappings to database", {
+      productId: result.productId,
+    });
+
     const productId = result.productId;
-    
+
     // Create BeatFile records for each uploaded file
     const beatFileRecords: Array<{ id: string; tempId: string }> = [];
 
@@ -581,13 +716,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ...mergedUploadedFiles,
       mergedPreviewFile,
       mergedCoverArtFile,
-    ]).filter((file) => file.storageUrl);
+    ]).filter((file): file is UploadedFile & { storageUrl: string } =>
+      Boolean(file.storageUrl),
+    );
 
     for (const file of allPersistedFiles) {
       const sizeInBytes =
         typeof file.size === "number"
           ? file.size
-          : Math.round(parseFloat(String(file.size).replace(/[^\d.]/g, "")) * (String(file.size).includes("MB") ? 1024 * 1024 : String(file.size).includes("KB") ? 1024 : 1));
+          : Math.round(
+              parseFloat(String(file.size).replace(/[^\d.]/g, "")) *
+                (String(file.size).includes("MB")
+                  ? 1024 * 1024
+                  : String(file.size).includes("KB")
+                    ? 1024
+                    : 1),
+            );
 
       const beatFile = await prisma.beatFile.create({
         data: {
@@ -599,33 +743,39 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           size: sizeInBytes,
         },
       });
-      
+
       beatFileRecords.push({ id: beatFile.id, tempId: file.id });
     }
-    
+
     // Create a map from tempId to database BeatFile id
-    const tempIdToDbId = new Map(beatFileRecords.map(r => [r.tempId, r.id]));
-    
+    const tempIdToDbId = new Map(beatFileRecords.map((r) => [r.tempId, r.id]));
+
     const licenseIdToVariantId = new Map(
       result.variants
         .filter((variant) => variant.id && variant.licenseId)
-        .map((variant) => [variant.licenseId, variant.id])
+        .map((variant) => [variant.licenseId, variant.id]),
     );
 
     // Create LicenseFileMapping records for each created Shopify variant
     for (const tier of licenseTiers) {
       const variantId = licenseIdToVariantId.get(tier);
       if (!variantId) {
-        throw new Error(`Missing Shopify variant mapping for license tier "${tier}"`);
+        throw new Error(
+          `Missing Shopify variant mapping for license tier "${tier}"`,
+        );
       }
       const normalizedVariantId = normalizeShopifyResourceId(variantId);
 
       const tempFileIdsForTier = licenseFilesData[tier] || [];
-      
-      for (let sortOrder = 0; sortOrder < tempFileIdsForTier.length; sortOrder++) {
+
+      for (
+        let sortOrder = 0;
+        sortOrder < tempFileIdsForTier.length;
+        sortOrder++
+      ) {
         const tempId = tempFileIdsForTier[sortOrder];
         const dbFileId = tempIdToDbId.get(tempId);
-        
+
         if (dbFileId) {
           await prisma.licenseFileMapping.create({
             data: {
@@ -644,7 +794,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    console.info("[upload] completed successfully", { productId: result.productId });
+    console.info("[upload] completed successfully", {
+      productId: result.productId,
+    });
     return json({
       success: true,
       redirectTo: `/app/beats?success=true&status=${statusValue}`,
@@ -654,15 +806,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "An unexpected error occurred",
+        error:
+          error instanceof Error
+            ? error.message
+            : "An unexpected error occurred",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 };
 
 export default function NewBeatPage() {
-  const { licenses, genres, producers, draft, storageWarning, error: loaderError } = useLoaderData<typeof loader>();
+  const {
+    licenses,
+    genres,
+    producers,
+    draft,
+    storageWarning,
+    error: loaderError,
+  } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -670,41 +832,63 @@ export default function NewBeatPage() {
   const initialTitle = draft?.title || "";
   const initialBpm = draft?.bpm || "";
   const initialKey = draft?.key || "C minor";
-  const initialGenreGids =
-    draft?.genreGids?.length ? draft.genreGids : (genres[0]?.id ? [genres[0].id] : []);
-  const initialProducerGids =
-    draft?.producerGids?.length ? draft.producerGids : (producers[0]?.id ? [producers[0].id] : []);
+  const initialGenreGids = draft?.genreGids?.length
+    ? draft.genreGids
+    : genres[0]?.id
+      ? [genres[0].id]
+      : [];
+  const initialProducerGids = draft?.producerGids?.length
+    ? draft.producerGids
+    : producers[0]?.id
+      ? [producers[0].id]
+      : [];
   const initialProducerAlias = draft?.producerAlias || "";
   const initialStatus = draft ? "draft" : "active";
-  const initialUploadedFiles = draft?.uploadedFiles || [];
+  const initialUploadedFiles = (draft?.uploadedFiles || []) as UploadedFile[];
   const initialLicenseFiles = useMemo(() => {
     const obj: LicenseFiles = draft?.licenseFiles || {};
-    if (licenses) licenses.filter(Boolean).forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || []));
+    if (licenses)
+      licenses
+        .filter(Boolean)
+        .forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || []));
     return obj;
   }, [draft?.licenseFiles, licenses]);
   const initialLicensePrices = useMemo(() => {
     const obj: Record<string, string> = draft?.licensePrices || {};
-    if (licenses) licenses.filter(Boolean).forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || ""));
+    if (licenses)
+      licenses
+        .filter(Boolean)
+        .forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || ""));
     return obj;
   }, [draft?.licensePrices, licenses]);
-  const initialPreviewFile = draft?.previewFile || null;
-  const initialCoverArtFile = draft?.coverArtFile || null;
+  const initialPreviewFile = (draft?.previewFile ||
+    null) as UploadedFile | null;
+  const initialCoverArtFile = (draft?.coverArtFile ||
+    null) as UploadedFile | null;
 
   // Form state
   const [title, setTitle] = useState(initialTitle);
   const [bpm, setBpm] = useState(initialBpm);
   const [key, setKey] = useState(initialKey);
   const [genreGids, setGenreGids] = useState<string[]>(initialGenreGids);
-  const [producerGids, setProducerGids] = useState<string[]>(initialProducerGids);
+  const [producerGids, setProducerGids] =
+    useState<string[]>(initialProducerGids);
   const [producerAlias, setProducerAlias] = useState(initialProducerAlias);
   const [status, setStatus] = useState(initialStatus);
 
   // License file assignment state
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>(initialUploadedFiles);
-  const [licenseFiles, setLicenseFiles] = useState<LicenseFiles>(initialLicenseFiles);
-  const [licensePrices, setLicensePrices] = useState<Record<string, string>>(initialLicensePrices);
-  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(initialPreviewFile);
-  const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(initialCoverArtFile);
+  const [uploadedFiles, setUploadedFiles] =
+    useState<UploadedFile[]>(initialUploadedFiles);
+  const [licenseFiles, setLicenseFiles] =
+    useState<LicenseFiles>(initialLicenseFiles);
+  const [licensePrices, setLicensePrices] =
+    useState<Record<string, string>>(initialLicensePrices);
+  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(
+    initialPreviewFile,
+  );
+  const [coverArtFile, setCoverArtFile] = useState<UploadedFile | null>(
+    initialCoverArtFile,
+  );
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isSaveSubmitting, setIsSaveSubmitting] = useState(false);
@@ -712,7 +896,10 @@ export default function NewBeatPage() {
 
   // Handle file upload with purpose
   const handleFileUpload = useCallback(
-    async (files: File[], purpose: 'preview' | 'license'): Promise<UploadedFile[]> => {
+    async (
+      files: File[],
+      purpose: "preview" | "license",
+    ): Promise<UploadedFile[]> => {
       setIsUploading(true);
       setUploadError(null);
 
@@ -723,8 +910,15 @@ export default function NewBeatPage() {
           return {
             id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             name: file.name,
-            type: purpose === 'preview' ? 'preview' : fileType,
-            purpose: purpose === 'preview' ? 'preview' : (fileType === 'mp3' || fileType === 'wav' || fileType === 'stems' ? fileType : 'other'),
+            type: purpose === "preview" ? "preview" : fileType,
+            purpose:
+              purpose === "preview"
+                ? "preview"
+                : fileType === "mp3" ||
+                    fileType === "wav" ||
+                    fileType === "stems"
+                  ? fileType
+                  : "other",
             size: formatFileSize(file.size),
             file: file,
           };
@@ -732,13 +926,15 @@ export default function NewBeatPage() {
 
         return newFiles;
       } catch (error) {
-        setUploadError(error instanceof Error ? error.message : "Upload failed");
+        setUploadError(
+          error instanceof Error ? error.message : "Upload failed",
+        );
         throw error;
       } finally {
         setIsUploading(false);
       }
     },
-    []
+    [],
   );
 
   // Detect file type
@@ -760,11 +956,7 @@ export default function NewBeatPage() {
 
   const hasRequiredBeatFields = () =>
     Boolean(
-      title &&
-      bpm &&
-      key &&
-      genreGids.length > 0 &&
-      producerGids.length > 0,
+      title && bpm && key && genreGids.length > 0 && producerGids.length > 0,
     );
 
   const hasDraftMinimumFields = () => Boolean(title.trim());
@@ -838,28 +1030,44 @@ export default function NewBeatPage() {
   const isBusy = isSubmittingForm || isUploading || isSaveSubmitting;
 
   const isReadyForActive = () => {
+    const sharedStemsFilePresent = hasSharedStemsSourceFile(uploadedFiles);
+    const sharedStemsRequired = licenses
+      .filter(Boolean)
+      .some((license) => licenseOffersStems(license!.stemsPolicy));
     const hasAllLicenseFiles = licenses.filter(Boolean).every((license) => {
       const requiredFormats = getRequiredDeliveryFormats(license!);
       const assignedFileIds = licenseFiles[license!.licenseId] || [];
       const assignedFormats = new Set(
         assignedFileIds
-          .map((fileId) => uploadedFiles.find((file) => file.id === fileId)?.purpose || "")
+          .map(
+            (fileId) =>
+              uploadedFiles.find((file) => file.id === fileId)?.purpose || "",
+          )
           .map((format) => normalizeDeliveryFormat(format))
-          .filter((format): format is DeliveryFormat => Boolean(format))
+          .filter((format): format is DeliveryFormat => Boolean(format)),
       );
 
       return requiredFormats.every((format) => assignedFormats.has(format));
     });
 
     const hasAllLicensePrices = hasCompleteLicensePrices(
-      licenses.filter(Boolean).map((license) => ({ licenseId: license!.licenseId })),
+      licenses
+        .filter(Boolean)
+        .map((license) => ({ licenseId: license!.licenseId })),
       licensePrices,
     );
 
-    return hasRequiredBeatFields() && previewFile && hasAllLicenseFiles && hasAllLicensePrices;
+    return Boolean(
+      hasRequiredBeatFields() &&
+      previewFile &&
+      hasAllLicenseFiles &&
+      hasAllLicensePrices &&
+      (!sharedStemsRequired || sharedStemsFilePresent),
+    );
   };
 
-  const effectiveSaveMode = status === "active" && isReadyForActive() ? "active" : "draft";
+  const effectiveSaveMode =
+    status === "active" && isReadyForActive() ? "active" : "draft";
   const saveActionLabel =
     effectiveSaveMode === "active"
       ? isBusy
@@ -929,7 +1137,7 @@ export default function NewBeatPage() {
         })),
       ),
     );
-    
+
     // Add preview file ID
     if (previewFile) {
       formData.append("previewFileId", previewFile.id);
@@ -979,27 +1187,45 @@ export default function NewBeatPage() {
         };
       }
     });
-    
+
     formData.append("fileMetadata", JSON.stringify(fileMetadata));
 
-    fetcher.submit(formData, { method: "post", encType: "multipart/form-data" });
+    fetcher.submit(formData, {
+      method: "post",
+      encType: "multipart/form-data",
+    });
   };
 
   useEffect(() => {
-    if (fetcher.data && "success" in fetcher.data && fetcher.data.success === false) {
+    if (
+      fetcher.data &&
+      "success" in fetcher.data &&
+      fetcher.data.success === false
+    ) {
       setIsSaveSubmitting(false);
       setSuppressSaveBar(false);
     }
   }, [fetcher.data]);
 
   useEffect(() => {
-    if (fetcher.state === "idle" && (!fetcher.data || ("success" in fetcher.data && fetcher.data.success === false))) {
+    if (
+      fetcher.state === "idle" &&
+      (!fetcher.data ||
+        ("success" in fetcher.data && fetcher.data.success === false))
+    ) {
       setIsSaveSubmitting(false);
     }
   }, [fetcher.data, fetcher.state]);
 
   useEffect(() => {
-    if (!fetcher.data || !("success" in fetcher.data) || fetcher.data.success !== true || !fetcher.data.redirectTo || suppressSaveBar) {
+    if (
+      !fetcher.data ||
+      !("success" in fetcher.data) ||
+      fetcher.data.success !== true ||
+      !("redirectTo" in fetcher.data) ||
+      !fetcher.data.redirectTo ||
+      suppressSaveBar
+    ) {
       return;
     }
 
@@ -1017,12 +1243,15 @@ export default function NewBeatPage() {
   }, [fetcher.data, navigate, shopify, suppressSaveBar]);
 
   // Map licenses to tier format for LicenseFileAssignment
-  const dynamicLicenseTiers = licenses.filter(Boolean).map(l => ({
+  const dynamicLicenseTiers = licenses.filter(Boolean).map((l) => ({
     id: l!.licenseId,
     name: l!.licenseName,
-    price: licensePrices[l!.licenseId] ? `$${licensePrices[l!.licenseId]}` : "Not set",
+    price: licensePrices[l!.licenseId]
+      ? `$${licensePrices[l!.licenseId]}`
+      : "Not set",
     description: l!.displayName,
     packageFormats: getRequiredDeliveryFormats(l!),
+    stemsPolicy: l!.stemsPolicy,
   }));
 
   const genreOptions = genres.filter(Boolean).map((g) => ({
@@ -1074,27 +1303,32 @@ export default function NewBeatPage() {
   };
 
   return (
-    <Page 
+    <Page
       title="Upload beat"
       backAction={{ content: "Beats", onAction: handleBackAction }}
     >
       <SaveBar
         id="beat-upload-save-bar"
-        open={!suppressSaveBar && (isDirty || isSubmittingForm || isSaveSubmitting)}
+        open={
+          !suppressSaveBar && (isDirty || isSubmittingForm || isSaveSubmitting)
+        }
         discardConfirmation
       >
-        <button
-          type="button"
-          disabled={isBusy}
-          onClick={resetFormState}
-        >
+        <button type="button" disabled={isBusy} onClick={resetFormState}>
           Discard
         </button>
         <button
           type="button"
           variant="primary"
-          disabled={isBusy || (effectiveSaveMode === "draft" ? !hasDraftMinimumFields() : !isReadyForActive())}
-          loading={isSaveSubmitting || isSubmittingForm || isUploading ? "" : undefined}
+          disabled={
+            isBusy ||
+            (effectiveSaveMode === "draft"
+              ? !hasDraftMinimumFields()
+              : !isReadyForActive())
+          }
+          loading={
+            isSaveSubmitting || isSubmittingForm || isUploading ? "" : undefined
+          }
           onClick={() => handleSubmit(effectiveSaveMode)}
         >
           {saveActionLabel}
@@ -1106,184 +1340,219 @@ export default function NewBeatPage() {
         onSubmit={handleFormSubmit}
         onReset={handleFormReset}
       >
-      <Layout>
-        {storageWarning && (
+        <Layout>
+          {storageWarning && (
+            <Layout.Section>
+              <Banner
+                title="Storage warning"
+                tone="warning"
+                action={{ content: "Fix storage", url: "/app/settings" }}
+              >
+                <p>{storageWarning}</p>
+              </Banner>
+            </Layout.Section>
+          )}
+
+          {fetcher.data &&
+            "success" in fetcher.data &&
+            fetcher.data.success === false && (
+              <Layout.Section>
+                <Banner title="Upload failed" tone="critical">
+                  <p>
+                    {"error" in fetcher.data
+                      ? fetcher.data.error
+                      : "Upload failed"}
+                  </p>
+                </Banner>
+              </Layout.Section>
+            )}
+
+          {uploadError && (
+            <Layout.Section>
+              <Banner
+                title="Upload error"
+                tone="critical"
+                onDismiss={() => setUploadError(null)}
+              >
+                <p>{uploadError}</p>
+              </Banner>
+            </Layout.Section>
+          )}
+
           <Layout.Section>
-            <Banner
-              title="Storage warning"
-              tone="warning"
-              action={{ content: "Fix storage", url: "/app/settings" }}
-            >
-              <p>{storageWarning}</p>
-            </Banner>
-          </Layout.Section>
-        )}
+            <BlockStack gap="500">
+              {/* Beat Details */}
+              <Card>
+                <BlockStack gap="400">
+                  <Text variant="headingMd" as="h2">
+                    Beat details
+                  </Text>
 
-        {fetcher.data && "success" in fetcher.data && fetcher.data.success === false && (
-          <Layout.Section>
-            <Banner title="Upload failed" tone="critical">
-              <p>{fetcher.data.error}</p>
-            </Banner>
-          </Layout.Section>
-        )}
-
-        {uploadError && (
-          <Layout.Section>
-            <Banner title="Upload error" tone="critical" onDismiss={() => setUploadError(null)}>
-              <p>{uploadError}</p>
-            </Banner>
-          </Layout.Section>
-        )}
-
-        <Layout.Section>
-          <BlockStack gap="500">
-            {/* Beat Details */}
-            <Card>
-              <BlockStack gap="400">
-                <Text variant="headingMd" as="h2">
-                  Beat details
-                </Text>
-
-                <FormLayout>
-                  <TextField
-                    label={<span>Beat title <Text as="span" tone="subdued">(required)</Text></span>}
-                    value={title}
-                    onChange={setTitle}
-                    autoComplete="off"
-                  />
-
-                  <FormLayout.Group>
+                  <FormLayout>
                     <TextField
-                      label={<span>BPM <Text as="span" tone="subdued">(required)</Text></span>}
-                      type="number"
-                      value={bpm}
-                      onChange={setBpm}
+                      label={
+                        <span>
+                          Beat title{" "}
+                          <Text as="span" tone="subdued">
+                            (required)
+                          </Text>
+                        </span>
+                      }
+                      value={title}
+                      onChange={setTitle}
                       autoComplete="off"
                     />
 
-                    <Select
-                      label={<span>Key <Text as="span" tone="subdued">(required)</Text></span>}
-                      options={keyOptions.map((k) => ({ label: k, value: k }))}
-                      value={key}
-                      onChange={setKey}
+                    <FormLayout.Group>
+                      <TextField
+                        label={
+                          <span>
+                            BPM{" "}
+                            <Text as="span" tone="subdued">
+                              (required)
+                            </Text>
+                          </span>
+                        }
+                        type="number"
+                        value={bpm}
+                        onChange={setBpm}
+                        autoComplete="off"
+                      />
+
+                      <Select
+                        label={
+                          <span>
+                            Key{" "}
+                            <Text as="span" tone="subdued">
+                              (required)
+                            </Text>
+                          </span>
+                        }
+                        options={keyOptions.map((k) => ({
+                          label: k,
+                          value: k,
+                        }))}
+                        value={key}
+                        onChange={setKey}
+                      />
+                    </FormLayout.Group>
+                  </FormLayout>
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="400">
+                  <Text variant="headingMd" as="h2">
+                    Organization
+                  </Text>
+
+                  <FormLayout>
+                    <MultiSelectCombobox
+                      label="Producers"
+                      options={producerOptions}
+                      selectedValues={producerGids}
+                      onChange={setProducerGids}
+                      placeholder="Search producers"
                     />
-                  </FormLayout.Group>
-                </FormLayout>
-              </BlockStack>
-            </Card>
 
-            <Card>
-              <BlockStack gap="400">
-                <Text variant="headingMd" as="h2">
-                  Organization
-                </Text>
+                    <TextField
+                      label="Producer alias (optional)"
+                      value={producerAlias}
+                      onChange={setProducerAlias}
+                      autoComplete="off"
+                    />
 
-                <FormLayout>
-                  <MultiSelectCombobox
-                    label="Producers"
-                    options={producerOptions}
-                    selectedValues={producerGids}
-                    onChange={setProducerGids}
-                    placeholder="Search producers"
+                    <MultiSelectCombobox
+                      label="Genres"
+                      options={genreOptions}
+                      selectedValues={genreGids}
+                      onChange={setGenreGids}
+                      placeholder="Search genres"
+                    />
+                  </FormLayout>
+                </BlockStack>
+              </Card>
+
+              <LicenseFileAssignment
+                licenses={dynamicLicenseTiers}
+                uploadedFiles={uploadedFiles}
+                licenseFiles={licenseFiles}
+                licensePrices={licensePrices}
+                previewFile={previewFile}
+                coverArtFile={coverArtFile}
+                onChange={({
+                  uploadedFiles: newFiles,
+                  licenseFiles: newLicenseFiles,
+                  previewFile: newPreviewFile,
+                  coverArtFile: newCoverArtFile,
+                  licensePrices: newLicensePrices,
+                }) => {
+                  setUploadedFiles(newFiles);
+                  setLicenseFiles(newLicenseFiles);
+                  setPreviewFile(newPreviewFile);
+                  setCoverArtFile(newCoverArtFile);
+                  setLicensePrices(newLicensePrices);
+                }}
+                onUpload={handleFileUpload}
+                uploading={isUploading}
+                error={uploadError}
+              />
+            </BlockStack>
+          </Layout.Section>
+
+          <Layout.Section variant="oneThird">
+            <BlockStack gap="500">
+              {/* Status Card */}
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStatusHeader
+                    status={status}
+                    effectiveSaveMode={effectiveSaveMode}
+                    isReadyForActive={isReadyForActive()}
+                  />
+                  <Select
+                    label="Status"
+                    labelHidden
+                    options={[
+                      { label: "Active", value: "active" },
+                      { label: "Draft", value: "draft" },
+                    ]}
+                    value={status}
+                    onChange={setStatus}
                   />
 
-                  <TextField
-                    label="Producer alias (optional)"
-                    value={producerAlias}
-                    onChange={setProducerAlias}
-                    autoComplete="off"
-                  />
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Choose whether this beat stays in Producer Launchpad for
+                    later or publishes to Shopify when it is ready to sell.
+                  </Text>
 
-                  <MultiSelectCombobox
-                    label="Genres"
-                    options={genreOptions}
-                    selectedValues={genreGids}
-                    onChange={setGenreGids}
-                    placeholder="Search genres"
-                  />
-                </FormLayout>
-              </BlockStack>
-            </Card>
-
-            <LicenseFileAssignment
-              licenses={dynamicLicenseTiers}
-              uploadedFiles={uploadedFiles}
-              licenseFiles={licenseFiles}
-              licensePrices={licensePrices}
-              previewFile={previewFile}
-              coverArtFile={coverArtFile}
-              onChange={({
-                uploadedFiles: newFiles,
-                licenseFiles: newLicenseFiles,
-                previewFile: newPreviewFile,
-                coverArtFile: newCoverArtFile,
-                licensePrices: newLicensePrices,
-              }) => {
-                setUploadedFiles(newFiles);
-                setLicenseFiles(newLicenseFiles);
-                setPreviewFile(newPreviewFile);
-                setCoverArtFile(newCoverArtFile);
-                setLicensePrices(newLicensePrices);
-              }}
-              onUpload={handleFileUpload}
-              uploading={isUploading}
-              error={uploadError}
-            />
-          </BlockStack>
-        </Layout.Section>
-
-        <Layout.Section variant="oneThird">
-          <BlockStack gap="500">
-            {/* Status Card */}
-            <Card>
-              <BlockStack gap="400">
-                <InlineStatusHeader
-                  status={status}
-                  effectiveSaveMode={effectiveSaveMode}
-                  isReadyForActive={isReadyForActive()}
-                />
-                <Select
-                  label="Status"
-                  labelHidden
-                  options={[
-                    { label: "Active", value: "active" },
-                    { label: "Draft", value: "draft" }
-                  ]}
-                  value={status}
-                  onChange={setStatus}
-                />
-
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Choose whether this beat stays in Producer Launchpad for later or publishes to Shopify when it is ready to sell.
-                </Text>
-
-                <Box
-                  background="bg-surface-secondary"
-                  borderRadius="300"
-                  padding="300"
-                >
-                  <BlockStack gap="100">
-                    <Text as="p" variant="bodySm" fontWeight="medium">
-                      {status === "draft"
-                        ? "Stays in Producer Launchpad"
-                        : effectiveSaveMode === "draft"
-                          ? "Will save as a draft for now"
-                          : "Ready to publish to Shopify"}
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {status === "draft"
-                        ? "You can come back later to finish files, preview audio, and pricing."
-                        : effectiveSaveMode === "draft"
-                          ? "Add the remaining preview, delivery files, and pricing when you are ready to activate it."
-                          : "Saving will create the Shopify product and keep delivery automation ready."}
-                    </Text>
-                  </BlockStack>
-                </Box>
-              </BlockStack>
-            </Card>
-          </BlockStack>
-        </Layout.Section>
-      </Layout>
+                  <Box
+                    background="bg-surface-secondary"
+                    borderRadius="300"
+                    padding="300"
+                  >
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" fontWeight="medium">
+                        {status === "draft"
+                          ? "Stays in Producer Launchpad"
+                          : effectiveSaveMode === "draft"
+                            ? "Will save as a draft for now"
+                            : "Ready to publish to Shopify"}
+                      </Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {status === "draft"
+                          ? "You can come back later to finish files, preview audio, and pricing."
+                          : effectiveSaveMode === "draft"
+                            ? "Add the remaining preview, delivery files, and pricing when you are ready to activate it."
+                            : "Saving will create the Shopify product and keep delivery automation ready."}
+                      </Text>
+                    </BlockStack>
+                  </Box>
+                </BlockStack>
+              </Card>
+            </BlockStack>
+          </Layout.Section>
+        </Layout>
       </form>
     </Page>
   );
@@ -1303,8 +1572,20 @@ function InlineStatusHeader({
       <Text variant="headingMd" as="h2">
         Status
       </Text>
-      <Badge tone={status === "draft" ? undefined : isReadyForActive && effectiveSaveMode === "active" ? "success" : "warning"}>
-        {status === "draft" ? "Draft" : effectiveSaveMode === "active" ? "Ready" : "Incomplete"}
+      <Badge
+        tone={
+          status === "draft"
+            ? undefined
+            : isReadyForActive && effectiveSaveMode === "active"
+              ? "success"
+              : "warning"
+        }
+      >
+        {status === "draft"
+          ? "Draft"
+          : effectiveSaveMode === "active"
+            ? "Ready"
+            : "Incomplete"}
       </Badge>
     </InlineStack>
   );

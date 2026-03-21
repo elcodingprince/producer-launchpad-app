@@ -1,7 +1,12 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
-import { useState } from "react";
+import {
+  Form,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "@remix-run/react";
+import { useEffect, useRef, useState } from "react";
 import {
   Banner,
   Badge,
@@ -40,14 +45,33 @@ type ActionData = {
   testResult?: { ok: boolean; message: string; errorType?: string };
 };
 
+function getMetaobjectFieldValue(
+  metaobject:
+    | {
+        fields?: Array<{ key: string; value: string }>;
+      }
+    | null
+    | undefined,
+  key: string,
+) {
+  return metaobject?.fields?.find((field) => field.key === key)?.value || "";
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
-  const readiness = await getAppReadiness(session, admin);
+  const setupService = createMetafieldSetupService(session, admin);
   const deliveryEmail = getDeliveryEmailConfigSummary();
+  const [readiness, licensor, stemsAddonProduct] = await Promise.all([
+    getAppReadiness(session, admin),
+    setupService.getDefaultLicensor(),
+    setupService.getStemsAddonProductConfig(),
+  ]);
 
   return json({
     readiness,
     deliveryEmail,
+    licensor,
+    stemsAddonProduct,
     mode:
       (readiness.storageConfig?.mode as StorageMode | undefined) ||
       "disconnected",
@@ -75,8 +99,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } catch (error) {
       return json<ActionData>(
         {
-          error:
-            error instanceof Error ? error.message : "Repair failed.",
+          error: error instanceof Error ? error.message : "Repair failed.",
         },
         { status: 500 },
       );
@@ -95,11 +118,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json<ActionData>({ success: "Storage mode saved." });
   }
 
+  if (intent === "ensure_stems_addon_product") {
+    const createdHandles = await setupService.ensureDefaultStemsAddonProduct();
+    return json<ActionData>({
+      success:
+        createdHandles.length > 0
+          ? "Stems add-on product created."
+          : "Stems add-on product is already connected.",
+    });
+  }
+
+  if (intent === "save_legal_identity") {
+    const legalName = String(formData.get("legalName") || "").trim();
+
+    if (!legalName) {
+      return json<ActionData>(
+        { error: "Legal or business name is required." },
+        { status: 400 },
+      );
+    }
+
+    await setupService.upsertDefaultLicensor({
+      legalName,
+      businessEntityType: String(
+        formData.get("businessEntityType") || "",
+      ).trim(),
+      dbaName: String(formData.get("dbaName") || "").trim(),
+      noticeEmail: String(formData.get("noticeEmail") || "").trim(),
+      governingLawRegion: String(
+        formData.get("governingLawRegion") || "",
+      ).trim(),
+      disputeForum: String(formData.get("disputeForum") || "").trim(),
+      signatureLabel: String(formData.get("signatureLabel") || "").trim(),
+    });
+
+    return json<ActionData>({ success: "Legal identity saved." });
+  }
+
   if (intent === "test_r2_connection") {
     const accountId = String(formData.get("accountId") || "").trim();
     const bucketName = String(formData.get("bucketName") || "").trim();
     const accessKeyId = String(formData.get("accessKeyId") || "").trim();
-    const secretAccessKey = String(formData.get("secretAccessKey") || "").trim();
+    const secretAccessKey = String(
+      formData.get("secretAccessKey") || "",
+    ).trim();
 
     const result = await testR2Connection({
       accountId,
@@ -131,11 +193,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const bucketName = String(formData.get("bucketName") || "").trim();
     const publicBaseUrl = String(formData.get("publicBaseUrl") || "").trim();
     const accessKeyIdInput = String(formData.get("accessKeyId") || "").trim();
-    const secretAccessKeyInput = String(formData.get("secretAccessKey") || "").trim();
+    const secretAccessKeyInput = String(
+      formData.get("secretAccessKey") || "",
+    ).trim();
 
     const existing = await getResolvedR2Credentials(shop);
     const accessKeyId = accessKeyIdInput || existing?.accessKeyId || "";
-    const secretAccessKey = secretAccessKeyInput || existing?.secretAccessKey || "";
+    const secretAccessKey =
+      secretAccessKeyInput || existing?.secretAccessKey || "";
 
     const testResult = await testR2Connection({
       accountId,
@@ -175,10 +240,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { readiness, deliveryEmail, mode } = useLoaderData<typeof loader>();
+  const { readiness, deliveryEmail, licensor, stemsAddonProduct, mode } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
   const [showTechnical, setShowTechnical] = useState(false);
+  const testConnectionSubmitRef = useRef<HTMLButtonElement | null>(null);
+  const saveStorageSubmitRef = useRef<HTMLButtonElement | null>(null);
 
   const isSubmitting = navigation.state === "submitting";
   const selectedMode =
@@ -187,6 +255,60 @@ export default function SettingsPage() {
   const providerOptions = [{ label: "Cloudflare R2", value: "r2" }];
   const storageConfig = readiness.storageConfig;
   const setupStatus = readiness.setupStatus;
+  const [legalName, setLegalName] = useState(
+    getMetaobjectFieldValue(licensor, "legal_name"),
+  );
+  const [dbaName, setDbaName] = useState(
+    getMetaobjectFieldValue(licensor, "dba_name"),
+  );
+  const [businessEntityType, setBusinessEntityType] = useState(
+    getMetaobjectFieldValue(licensor, "business_entity_type"),
+  );
+  const [noticeEmail, setNoticeEmail] = useState(
+    getMetaobjectFieldValue(licensor, "notice_email"),
+  );
+  const [governingLawRegion, setGoverningLawRegion] = useState(
+    getMetaobjectFieldValue(licensor, "governing_law_region"),
+  );
+  const [disputeForum, setDisputeForum] = useState(
+    getMetaobjectFieldValue(licensor, "dispute_forum"),
+  );
+  const [signatureLabel, setSignatureLabel] = useState(
+    getMetaobjectFieldValue(licensor, "signature_label"),
+  );
+  const [accountIdValue, setAccountIdValue] = useState(
+    storageConfig?.accountId || "",
+  );
+  const [bucketNameValue, setBucketNameValue] = useState(
+    storageConfig?.bucketName || "",
+  );
+  const [publicBaseUrlValue, setPublicBaseUrlValue] = useState(
+    storageConfig?.publicBaseUrl || "",
+  );
+  const [accessKeyIdValue, setAccessKeyIdValue] = useState("");
+  const [secretAccessKeyValue, setSecretAccessKeyValue] = useState("");
+
+  useEffect(() => {
+    setLegalName(getMetaobjectFieldValue(licensor, "legal_name"));
+    setDbaName(getMetaobjectFieldValue(licensor, "dba_name"));
+    setBusinessEntityType(
+      getMetaobjectFieldValue(licensor, "business_entity_type"),
+    );
+    setNoticeEmail(getMetaobjectFieldValue(licensor, "notice_email"));
+    setGoverningLawRegion(
+      getMetaobjectFieldValue(licensor, "governing_law_region"),
+    );
+    setDisputeForum(getMetaobjectFieldValue(licensor, "dispute_forum"));
+    setSignatureLabel(getMetaobjectFieldValue(licensor, "signature_label"));
+  }, [licensor]);
+
+  useEffect(() => {
+    setAccountIdValue(storageConfig?.accountId || "");
+    setBucketNameValue(storageConfig?.bucketName || "");
+    setPublicBaseUrlValue(storageConfig?.publicBaseUrl || "");
+    setAccessKeyIdValue("");
+    setSecretAccessKeyValue("");
+  }, [storageConfig]);
 
   const technicalItems = [
     {
@@ -214,26 +336,37 @@ export default function SettingsPage() {
       description: `${setupStatus.producers.existing}/${setupStatus.producers.required} created`,
     },
     {
+      term: "Licensor profiles",
+      description: `${setupStatus.licensors.existing}/${setupStatus.licensors.required} created`,
+    },
+    {
       term: "Storage and delivery",
-      description: storageConfig?.status === "connected"
-        ? "Connected"
-        : storageConfig?.status === "error"
-          ? "Needs attention"
-          : "Not configured",
+      description:
+        storageConfig?.status === "connected"
+          ? "Connected"
+          : storageConfig?.status === "error"
+            ? "Needs attention"
+            : "Not configured",
     },
   ];
 
-  const catalogHealthLabel = readiness.needsProfile || readiness.needsCoreSetup
-    ? "Needs attention"
-    : "Ready";
-  const catalogHealthTone = readiness.needsProfile || readiness.needsCoreSetup
-    ? "attention"
-    : "success";
+  const catalogHealthLabel =
+    readiness.needsProfile || readiness.needsCoreSetup
+      ? "Needs attention"
+      : "Ready";
+  const catalogHealthTone =
+    readiness.needsProfile || readiness.needsCoreSetup
+      ? "attention"
+      : "success";
+  const stemsAddonReady = Boolean(
+    stemsAddonProduct?.stemsAddonProductId &&
+    stemsAddonProduct?.stemsAddonVariantId,
+  );
 
   return (
     <Page
       title="Settings"
-      subtitle="Manage storage, delivery configuration, and store connection health."
+      subtitle="Manage legal identity, storage, delivery configuration, and store connection health."
     >
       <BlockStack gap="500">
         {storageConfig?.status === "connected" && (
@@ -252,9 +385,15 @@ export default function SettingsPage() {
           <Banner
             title="Finish setup from Home"
             tone="warning"
-            action={{ content: "Continue setup", url: readiness.onboardingRoute }}
+            action={{
+              content: "Continue setup",
+              url: readiness.onboardingRoute,
+            }}
           >
-            <p>Your producer profile still needs to be completed before the app is fully ready.</p>
+            <p>
+              Your producer profile or legal identity still needs attention
+              before the app is fully ready.
+            </p>
           </Banner>
         )}
 
@@ -270,15 +409,188 @@ export default function SettingsPage() {
           </Banner>
         )}
 
-        {actionData?.repairResult && actionData.repairResult.errors.length > 0 && (
-          <Banner title="Repair finished with issues" tone="warning">
-            <ul>
-              {actionData.repairResult.errors.map((error) => (
-                <li key={error}>{error}</li>
-              ))}
-            </ul>
-          </Banner>
-        )}
+        {actionData?.repairResult &&
+          actionData.repairResult.errors.length > 0 && (
+            <Banner title="Repair finished with issues" tone="warning">
+              <ul>
+                {actionData.repairResult.errors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
+            </Banner>
+          )}
+
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">
+                  Legal identity
+                </Text>
+                <Text as="p" tone="subdued">
+                  This shop-level licensor profile appears on your starter
+                  agreements and powers the launch-ready defaults for future
+                  previews and PDFs.
+                </Text>
+              </BlockStack>
+              <Badge
+                tone={
+                  getMetaobjectFieldValue(licensor, "legal_name")
+                    ? "success"
+                    : "attention"
+                }
+              >
+                {getMetaobjectFieldValue(licensor, "legal_name")
+                  ? "Configured"
+                  : "Needs setup"}
+              </Badge>
+            </InlineStack>
+
+            <Form method="post">
+              <input type="hidden" name="intent" value="save_legal_identity" />
+              <FormLayout>
+                <TextField
+                  label="Legal / business name"
+                  name="legalName"
+                  autoComplete="off"
+                  value={legalName}
+                  onChange={setLegalName}
+                  requiredIndicator
+                  helpText="This is the legal contracting party named as the licensor in your agreements."
+                />
+                <TextField
+                  label="DBA / brand name"
+                  name="dbaName"
+                  autoComplete="off"
+                  value={dbaName}
+                  onChange={setDbaName}
+                  helpText="Optional. Use this if you want agreements to reference a trading or brand name in addition to the legal name."
+                />
+                <TextField
+                  label="Business entity type"
+                  name="businessEntityType"
+                  autoComplete="off"
+                  value={businessEntityType}
+                  onChange={setBusinessEntityType}
+                  placeholder="Example: Sole proprietor, LLC, corporation"
+                />
+                <TextField
+                  label="Notice email"
+                  name="noticeEmail"
+                  autoComplete="off"
+                  type="email"
+                  value={noticeEmail}
+                  onChange={setNoticeEmail}
+                  helpText="Optional for now. This will become the default contact shown in the agreement notices section."
+                />
+                <TextField
+                  label="Governing law / region"
+                  name="governingLawRegion"
+                  autoComplete="off"
+                  value={governingLawRegion}
+                  onChange={setGoverningLawRegion}
+                  placeholder="Example: England and Wales, California, New South Wales"
+                />
+                <TextField
+                  label="Dispute forum"
+                  name="disputeForum"
+                  autoComplete="off"
+                  multiline={3}
+                  value={disputeForum}
+                  onChange={setDisputeForum}
+                  helpText="Optional. Use this later if you want your starter agreements to name a court, arbitration venue, or forum."
+                />
+                <TextField
+                  label="Signature label / title"
+                  name="signatureLabel"
+                  autoComplete="off"
+                  value={signatureLabel}
+                  onChange={setSignatureLabel}
+                  placeholder="Example: Owner, Licensor, Authorized Representative"
+                />
+                <Text as="p" tone="subdued">
+                  Signature image upload is reserved in the schema and can be
+                  added when the full agreement renderer is wired. For launch,
+                  typed licensor identity plus electronic acceptance is the
+                  cleaner low-friction default.
+                </Text>
+
+                <InlineStack gap="300">
+                  <Button variant="primary" submit loading={isSubmitting}>
+                    Save legal identity
+                  </Button>
+                </InlineStack>
+              </FormLayout>
+            </Form>
+          </BlockStack>
+        </Card>
+
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">
+                  Stems add-on product
+                </Text>
+                <Text as="p" tone="subdued">
+                  Producer Launchpad can seed the hidden Shopify product used by
+                  the license selector modal when a merchant sells stems as an
+                  add-on.
+                </Text>
+              </BlockStack>
+              <Badge tone={stemsAddonReady ? "success" : "attention"}>
+                {stemsAddonReady ? "Connected" : "Needs setup"}
+              </Badge>
+            </InlineStack>
+
+            <DescriptionList
+              items={[
+                {
+                  term: "Product title",
+                  description:
+                    stemsAddonProduct?.stemsAddonTitle || "Not created yet",
+                },
+                {
+                  term: "Handle",
+                  description:
+                    stemsAddonProduct?.stemsAddonHandle || "stems-add-on",
+                },
+                {
+                  term: "Variant ID",
+                  description:
+                    stemsAddonProduct?.stemsAddonVariantId || "Not created yet",
+                },
+                {
+                  term: "Starter price",
+                  description: stemsAddonProduct?.stemsAddonPrice
+                    ? `$${stemsAddonProduct.stemsAddonPrice}`
+                    : "$15.00 default when seeded",
+                },
+              ]}
+            />
+
+            <Text as="p" tone="subdued">
+              This product is seeded automatically during setup when possible.
+              Keep your theme and storefront upsell logic pointed at the seeded
+              variant instead of a hardcoded demo value.
+            </Text>
+
+            <Form method="post">
+              <input
+                type="hidden"
+                name="intent"
+                value="ensure_stems_addon_product"
+              />
+              <InlineStack gap="300">
+                <Button variant="primary" submit loading={isSubmitting}>
+                  {stemsAddonReady
+                    ? "Repair / recheck product"
+                    : "Create product"}
+                </Button>
+              </InlineStack>
+            </Form>
+          </BlockStack>
+        </Card>
 
         <Card>
           <BlockStack gap="400">
@@ -288,11 +600,20 @@ export default function SettingsPage() {
                   Storage and delivery
                 </Text>
                 <Text as="p" tone="subdued">
-                  Choose where high-quality audio files live and keep delivery storage healthy.
+                  Choose where high-quality audio files live and keep delivery
+                  storage healthy.
                 </Text>
               </BlockStack>
-              <Badge tone={storageConfig?.status === "connected" ? "success" : "attention"}>
-                {storageConfig?.status === "connected" ? "Connected" : "Needs setup"}
+              <Badge
+                tone={
+                  storageConfig?.status === "connected"
+                    ? "success"
+                    : "attention"
+                }
+              >
+                {storageConfig?.status === "connected"
+                  ? "Connected"
+                  : "Needs setup"}
               </Badge>
             </InlineStack>
 
@@ -353,25 +674,30 @@ export default function SettingsPage() {
                     label="Account ID"
                     name="accountId"
                     autoComplete="off"
-                    defaultValue={storageConfig?.accountId || ""}
+                    value={accountIdValue}
+                    onChange={setAccountIdValue}
                   />
                   <TextField
                     label="Bucket Name"
                     name="bucketName"
                     autoComplete="off"
-                    defaultValue={storageConfig?.bucketName || ""}
+                    value={bucketNameValue}
+                    onChange={setBucketNameValue}
                   />
                   <TextField
                     label="Public Base URL"
                     name="publicBaseUrl"
                     autoComplete="off"
-                    defaultValue={storageConfig?.publicBaseUrl || ""}
+                    value={publicBaseUrlValue}
+                    onChange={setPublicBaseUrlValue}
                     helpText="Used to generate file links, for example https://pub-xxxx.r2.dev"
                   />
                   <TextField
                     label="Access Key ID"
                     name="accessKeyId"
                     autoComplete="off"
+                    value={accessKeyIdValue}
+                    onChange={setAccessKeyIdValue}
                     placeholder={
                       storageConfig?.maskedAccessKeyId
                         ? `Current: ${storageConfig.maskedAccessKeyId}`
@@ -388,24 +714,37 @@ export default function SettingsPage() {
                     name="secretAccessKey"
                     type="password"
                     autoComplete="off"
+                    value={secretAccessKeyValue}
+                    onChange={setSecretAccessKeyValue}
                     placeholder="Enter secret access key"
                     helpText="Leave blank to keep current secret."
                   />
 
+                  <button
+                    ref={testConnectionSubmitRef}
+                    type="submit"
+                    name="intent"
+                    value="test_r2_connection"
+                    style={{ display: "none" }}
+                  />
+                  <button
+                    ref={saveStorageSubmitRef}
+                    type="submit"
+                    name="intent"
+                    value="save_self_managed"
+                    style={{ display: "none" }}
+                  />
+
                   <InlineStack gap="300">
                     <Button
-                      name="intent"
-                      value="test_r2_connection"
-                      submit
+                      onClick={() => testConnectionSubmitRef.current?.click()}
                       loading={isSubmitting}
                     >
                       Test connection
                     </Button>
                     <Button
                       variant="primary"
-                      name="intent"
-                      value="save_self_managed"
-                      submit
+                      onClick={() => saveStorageSubmitRef.current?.click()}
                       loading={isSubmitting}
                     >
                       Save storage
@@ -434,7 +773,8 @@ export default function SettingsPage() {
                 Managed storage
               </Text>
               <Text as="p" tone="subdued">
-                Producer Launchpad will manage private file storage for this shop.
+                Producer Launchpad will manage private file storage for this
+                shop.
               </Text>
             </BlockStack>
           </Card>
@@ -448,11 +788,20 @@ export default function SettingsPage() {
                   Delivery email
                 </Text>
                 <Text as="p" tone="subdued">
-                  Producer Launchpad sends the secure portal link automatically after purchase.
+                  Producer Launchpad sends the secure portal link automatically
+                  after purchase.
                 </Text>
               </BlockStack>
-              <Badge tone={deliveryEmail.status === "configured" ? "success" : "attention"}>
-                {deliveryEmail.status === "configured" ? "Configured" : "Needs setup"}
+              <Badge
+                tone={
+                  deliveryEmail.status === "configured"
+                    ? "success"
+                    : "attention"
+                }
+              >
+                {deliveryEmail.status === "configured"
+                  ? "Configured"
+                  : "Needs setup"}
               </Badge>
             </InlineStack>
 
@@ -469,7 +818,10 @@ export default function SettingsPage() {
               </InlineStack>
               <InlineStack align="space-between">
                 <Text as="span">Reply-to support</Text>
-                <Text as="span" tone={deliveryEmail.replyTo ? "base" : "subdued"}>
+                <Text
+                  as="span"
+                  tone={deliveryEmail.replyTo ? "base" : "subdued"}
+                >
                   {deliveryEmail.replyTo || "Replies go to sender"}
                 </Text>
               </InlineStack>
@@ -479,14 +831,20 @@ export default function SettingsPage() {
               </InlineStack>
               <InlineStack align="space-between">
                 <Text as="span">Delivery tracking</Text>
-                <Badge tone={deliveryEmail.trackingEnabled ? "success" : "info"}>
-                  {deliveryEmail.trackingEnabled ? "Confirmed delivery events" : "Send status only"}
+                <Badge
+                  tone={deliveryEmail.trackingEnabled ? "success" : "info"}
+                >
+                  {deliveryEmail.trackingEnabled
+                    ? "Confirmed delivery events"
+                    : "Send status only"}
                 </Badge>
               </InlineStack>
             </BlockStack>
 
             <Text as="p" tone="subdued">
-              The current email includes a secure portal button, order details, and support fallback instructions. These values are configured at the app level today and apply across deliveries for this shop.
+              The current email includes a secure portal button, order details,
+              and support fallback instructions. These values are configured at
+              the app level today and apply across deliveries for this shop.
             </Text>
 
             <InlineStack gap="300">
@@ -504,7 +862,8 @@ export default function SettingsPage() {
                   Catalog setup health
                 </Text>
                 <Text as="p" tone="subdued">
-                  We keep your product data fields, templates, and delivery connections healthy behind the scenes.
+                  We keep your product data fields, templates, and delivery
+                  connections healthy behind the scenes.
                 </Text>
               </BlockStack>
               <Badge tone={catalogHealthTone}>{catalogHealthLabel}</Badge>
@@ -513,14 +872,32 @@ export default function SettingsPage() {
             <BlockStack gap="200">
               <InlineStack align="space-between">
                 <Text as="span">Product data fields</Text>
-                <Badge tone={setupStatus.productMetafields.missing.length === 0 ? "success" : "attention"}>
-                  {setupStatus.productMetafields.missing.length === 0 ? "Ready" : "Needs repair"}
+                <Badge
+                  tone={
+                    setupStatus.productMetafields.missing.length === 0
+                      ? "success"
+                      : "attention"
+                  }
+                >
+                  {setupStatus.productMetafields.missing.length === 0
+                    ? "Ready"
+                    : "Needs repair"}
                 </Badge>
               </InlineStack>
               <InlineStack align="space-between">
                 <Text as="span">License templates</Text>
-                <Badge tone={setupStatus.beatLicenses.existing >= setupStatus.beatLicenses.required ? "success" : "attention"}>
-                  {setupStatus.beatLicenses.existing >= setupStatus.beatLicenses.required ? "Ready" : "Needs repair"}
+                <Badge
+                  tone={
+                    setupStatus.beatLicenses.existing >=
+                    setupStatus.beatLicenses.required
+                      ? "success"
+                      : "attention"
+                  }
+                >
+                  {setupStatus.beatLicenses.existing >=
+                  setupStatus.beatLicenses.required
+                    ? "Ready"
+                    : "Needs repair"}
                 </Badge>
               </InlineStack>
               <InlineStack align="space-between">
@@ -529,13 +906,27 @@ export default function SettingsPage() {
                   {readiness.needsProfile ? "Needs setup" : "Ready"}
                 </Badge>
               </InlineStack>
+              <InlineStack align="space-between">
+                <Text as="span">Legal identity</Text>
+                <Badge
+                  tone={
+                    setupStatus.licensors.existing >=
+                    setupStatus.licensors.required
+                      ? "success"
+                      : "attention"
+                  }
+                >
+                  {setupStatus.licensors.existing >=
+                  setupStatus.licensors.required
+                    ? "Ready"
+                    : "Needs setup"}
+                </Badge>
+              </InlineStack>
             </BlockStack>
 
             <InlineStack gap="300">
               {readiness.needsProfile ? (
-                <Button url={readiness.onboardingRoute}>
-                  Continue setup
-                </Button>
+                <Button url={readiness.onboardingRoute}>Continue setup</Button>
               ) : (
                 <Form method="post">
                   <input type="hidden" name="intent" value="repair" />

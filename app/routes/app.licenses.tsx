@@ -9,7 +9,7 @@ import {
   useSearchParams,
   useSubmit,
 } from "@remix-run/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Banner,
   Badge,
@@ -26,6 +26,8 @@ import {
   List,
   Page,
   Popover,
+  Select,
+  Tabs,
   Text,
   TextField,
   Tooltip,
@@ -34,7 +36,10 @@ import { CollectionIcon } from "@shopify/polaris-icons";
 import { FileFormatBadge } from "~/components/FileFormatBadge";
 import { LegalGuardrailModal } from "~/components/LegalGuardrailModal";
 import prisma from "~/db.server";
-import { DEFAULT_LICENSES, getStarterPresetVersion } from "~/services/metafieldSetup";
+import {
+  DEFAULT_LICENSES,
+  getStarterPresetVersion,
+} from "~/services/metafieldSetup";
 import { createProductCreatorService } from "~/services/productCreator";
 import { createShopifyClient } from "~/services/shopify";
 import { authenticate } from "~/shopify.server";
@@ -44,13 +49,20 @@ type LicenseTemplate = {
   handle: string;
   licenseId: string;
   licenseName: string;
+  legalTemplateFamily: string;
   streamLimit: string;
   copyLimit: string;
+  videoViewLimit: string;
   termYears: string;
   fileFormats: string;
-  includesStems: boolean;
-  supportsStemsAddon: boolean;
+  stemsPolicy: string;
+  storefrontSummary: string;
   featuresShort: string;
+  contentIdPolicy: string;
+  syncPolicy: string;
+  creditRequirement: string;
+  publishingSplitMode: string;
+  publishingSplitSummary: string;
   terms: string[];
   isStarter: boolean;
   starterVersion: string | null;
@@ -67,13 +79,20 @@ type LicenseFormState = {
   handle: string;
   licenseId: string;
   licenseName: string;
+  legalTemplateFamily: string;
   streamLimit: string;
   copyLimit: string;
+  videoViewLimit: string;
   termYears: string;
   fileFormats: string;
-  includesStems: boolean;
-  supportsStemsAddon: boolean;
+  stemsPolicy: string;
+  storefrontSummary: string;
   featuresShort: string;
+  contentIdPolicy: string;
+  syncPolicy: string;
+  creditRequirement: string;
+  publishingSplitMode: string;
+  publishingSplitSummary: string;
   terms: string[];
 };
 
@@ -88,27 +107,80 @@ type ActionDataShape = {
   starterVersion?: string | null;
 };
 
-const PACKAGE_FORMAT_ORDER: PackageFormat[] = ["MP3", "WAV", "STEMS"];
+type AgreementPreviewData = {
+  success: boolean;
+  family?: string;
+  mode?: "starter" | "resolved";
+  html?: string;
+  error?: string;
+};
 
-const STARTER_HANDLES = new Set(DEFAULT_LICENSES.map((license) => license.handle));
+const PACKAGE_FORMAT_ORDER: PackageFormat[] = ["MP3", "WAV", "STEMS"];
+const LEGAL_TEMPLATE_FAMILY_OPTIONS = [
+  { label: "Basic", value: "basic" },
+  { label: "Premium", value: "premium" },
+  { label: "Unlimited", value: "unlimited" },
+];
+const STEMS_POLICY_OPTIONS = [
+  { label: "Not offered", value: "not_available" },
+  { label: "Available as add-on", value: "available_as_addon" },
+  { label: "Included by default", value: "included_by_default" },
+];
+const CONTENT_ID_POLICY_OPTIONS = [
+  { label: "Not allowed", value: "not_allowed" },
+  {
+    label: "Allowed for the finished song only",
+    value: "allowed_for_new_song_only",
+  },
+];
+const SYNC_POLICY_OPTIONS = [
+  { label: "Not included", value: "not_included" },
+  { label: "Standard online video only", value: "standard_online_video_only" },
+  { label: "Limited sync with approval", value: "limited_sync_with_approval" },
+];
+const CREDIT_REQUIREMENT_OPTIONS = [
+  { label: "Required", value: "required" },
+  { label: "Commercially reasonable", value: "commercially_reasonable" },
+  { label: "Not required", value: "not_required" },
+];
+const PUBLISHING_SPLIT_MODE_OPTIONS = [
+  { label: "Fixed split", value: "fixed_split" },
+  { label: "Custom split summary", value: "custom_split_summary" },
+  { label: "Left to the parties", value: "left_to_parties" },
+];
+
+const STARTER_HANDLES = new Set(
+  DEFAULT_LICENSES.map((license) => license.handle),
+);
 const DYNAMIC_TEMPLATE_FIELDS = [
-  "{{producer_name}}",
-  "{{customer_name}}",
-  "{{beat_name}}",
-  "{{license_terms}}",
+  "[[license_name]]",
+  "[[customer_name]]",
+  "[[governing_law_region]]",
+  "[[stems_clause]]",
 ] as const;
+const AGREEMENT_PREVIEW_TABS = [
+  { id: "resolved", content: "With my settings" },
+  { id: "starter", content: "Starter template" },
+];
 
 const emptyLicenseForm = (): LicenseFormState => ({
   handle: "",
   licenseId: "",
   licenseName: "",
+  legalTemplateFamily: "basic",
   streamLimit: "",
   copyLimit: "",
+  videoViewLimit: "",
   termYears: "",
   fileFormats: "",
-  includesStems: false,
-  supportsStemsAddon: false,
+  stemsPolicy: "available_as_addon",
+  storefrontSummary: "",
   featuresShort: "",
+  contentIdPolicy: "not_allowed",
+  syncPolicy: "not_included",
+  creditRequirement: "required",
+  publishingSplitMode: "fixed_split",
+  publishingSplitSummary: "50% Licensor / 50% Licensee",
   terms: ["", "", "", "", "", ""],
 });
 
@@ -125,6 +197,34 @@ function coerceOptionalNumber(value: FormDataEntryValue | null) {
   return normalized;
 }
 
+function appendLicenseFormFields(
+  formData: FormData,
+  licenseForm: LicenseFormState,
+) {
+  if (licenseForm.id) formData.append("id", licenseForm.id);
+  if (licenseForm.handle) formData.append("handle", licenseForm.handle);
+  if (licenseForm.licenseId)
+    formData.append("licenseId", licenseForm.licenseId);
+  formData.append("licenseName", licenseForm.licenseName);
+  formData.append("legalTemplateFamily", licenseForm.legalTemplateFamily);
+  formData.append("streamLimit", licenseForm.streamLimit);
+  formData.append("copyLimit", licenseForm.copyLimit);
+  formData.append("videoViewLimit", licenseForm.videoViewLimit);
+  formData.append("termYears", licenseForm.termYears);
+  formData.append("fileFormats", licenseForm.fileFormats);
+  formData.append("stemsPolicy", licenseForm.stemsPolicy);
+  formData.append("storefrontSummary", licenseForm.storefrontSummary);
+  formData.append("featuresShort", licenseForm.featuresShort);
+  formData.append("contentIdPolicy", licenseForm.contentIdPolicy);
+  formData.append("syncPolicy", licenseForm.syncPolicy);
+  formData.append("creditRequirement", licenseForm.creditRequirement);
+  formData.append("publishingSplitMode", licenseForm.publishingSplitMode);
+  formData.append("publishingSplitSummary", licenseForm.publishingSplitSummary);
+  licenseForm.terms.forEach((term, index) => {
+    formData.append(`term${index + 1}`, term);
+  });
+}
+
 function buildLicenseForm(license?: LicenseTemplate): LicenseFormState {
   if (!license) return emptyLicenseForm();
 
@@ -133,13 +233,21 @@ function buildLicenseForm(license?: LicenseTemplate): LicenseFormState {
     handle: license.handle,
     licenseId: license.licenseId,
     licenseName: license.licenseName,
+    legalTemplateFamily: license.legalTemplateFamily || "basic",
     streamLimit: license.streamLimit,
     copyLimit: license.copyLimit,
+    videoViewLimit: license.videoViewLimit,
     termYears: license.termYears,
     fileFormats: license.fileFormats,
-    includesStems: license.includesStems,
-    supportsStemsAddon: license.supportsStemsAddon,
+    stemsPolicy: license.stemsPolicy || "not_available",
+    storefrontSummary: license.storefrontSummary,
     featuresShort: license.featuresShort,
+    contentIdPolicy: license.contentIdPolicy || "not_allowed",
+    syncPolicy: license.syncPolicy || "not_included",
+    creditRequirement: license.creditRequirement || "required",
+    publishingSplitMode: license.publishingSplitMode || "fixed_split",
+    publishingSplitSummary:
+      license.publishingSplitSummary || "50% Licensor / 50% Licensee",
     terms: [...license.terms, "", "", "", "", "", ""].slice(0, 6),
   };
 }
@@ -155,6 +263,28 @@ function formatTermLength(value: string) {
   if (!value || value === "0") return "Perpetual term";
   if (value === "1") return "1 year term";
   return `${value} year term`;
+}
+
+function stemsIncludedByDefault(stemsPolicy: string) {
+  return stemsPolicy === "included_by_default";
+}
+
+function stemsAddOnAvailable(stemsPolicy: string) {
+  return stemsPolicy === "available_as_addon";
+}
+
+function formatTemplateFamilyLabel(value: string) {
+  return (
+    LEGAL_TEMPLATE_FAMILY_OPTIONS.find((option) => option.value === value)
+      ?.label || "Basic"
+  );
+}
+
+function formatStemsPolicyLabel(value: string) {
+  return (
+    STEMS_POLICY_OPTIONS.find((option) => option.value === value)?.label ||
+    "Not offered"
+  );
 }
 
 function countCustomTerms(terms: string[]) {
@@ -179,13 +309,17 @@ function normalizePackageFormat(value: string): PackageFormat | null {
   const normalized = value.trim().toUpperCase();
   if (normalized === "MP3") return "MP3";
   if (normalized === "WAV") return "WAV";
-  if (normalized === "STEMS" || normalized === "STEMS ZIP" || normalized === "ZIP") {
+  if (
+    normalized === "STEMS" ||
+    normalized === "STEMS ZIP" ||
+    normalized === "ZIP"
+  ) {
     return "STEMS";
   }
   return null;
 }
 
-function getSelectedPackageFormats(fileFormats: string, includesStems: boolean) {
+function getSelectedPackageFormats(fileFormats: string, stemsPolicy: string) {
   const selected = new Set<PackageFormat>();
 
   parseFileFormatBadges(fileFormats).forEach((format) => {
@@ -193,20 +327,42 @@ function getSelectedPackageFormats(fileFormats: string, includesStems: boolean) 
     if (normalized) selected.add(normalized);
   });
 
-  if (includesStems) {
+  if (stemsIncludedByDefault(stemsPolicy)) {
     selected.add("STEMS");
+  } else {
+    selected.delete("STEMS");
   }
 
   return PACKAGE_FORMAT_ORDER.filter((format) => selected.has(format));
 }
 
 function formatPackageFormats(formats: string[]) {
-  return PACKAGE_FORMAT_ORDER.filter((format) => formats.includes(format)).join(", ");
+  return PACKAGE_FORMAT_ORDER.filter((format) => formats.includes(format)).join(
+    ", ",
+  );
+}
+
+function syncFileFormatsWithStemsPolicy(
+  fileFormats: string,
+  stemsPolicy: string,
+) {
+  const selected = new Set(getSelectedPackageFormats(fileFormats, stemsPolicy));
+
+  if (stemsIncludedByDefault(stemsPolicy)) {
+    selected.add("STEMS");
+  } else {
+    selected.delete("STEMS");
+  }
+
+  return formatPackageFormats(
+    PACKAGE_FORMAT_ORDER.filter((format) => selected.has(format)),
+  );
 }
 
 function normalizeSessionUserId(value: unknown) {
   if (typeof value === "bigint") return value;
-  if (typeof value === "number" && Number.isInteger(value)) return BigInt(value);
+  if (typeof value === "number" && Number.isInteger(value))
+    return BigInt(value);
 
   if (typeof value === "string" && value.trim()) {
     try {
@@ -223,7 +379,11 @@ function getLicenseStatus(
   license: LicenseTemplate,
   usage: LicenseUsageSummary | undefined,
 ): { label: string; tone?: "success" | "attention" } {
-  if (!license.licenseId.trim() || !license.fileFormats.trim()) {
+  if (
+    !license.licenseId.trim() ||
+    !license.fileFormats.trim() ||
+    !license.legalTemplateFamily.trim()
+  ) {
     return { label: "Needs setup", tone: "attention" };
   }
 
@@ -234,9 +394,9 @@ function getLicenseStatus(
   return { label: "Ready", tone: "success" };
 }
 
-async function getLicenseUsage(
-  admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> },
-): Promise<Record<string, LicenseUsageSummary>> {
+async function getLicenseUsage(admin: {
+  graphql: (query: string, options?: Record<string, any>) => Promise<Response>;
+}): Promise<Record<string, LicenseUsageSummary>> {
   const usageByLicenseId = new Map<string, Set<string>>();
   let hasNextPage = true;
   let cursor: string | null = null;
@@ -293,7 +453,8 @@ async function getLicenseUsage(
     for (const product of connection.nodes) {
       const titlesByLicense = product.metafield?.references?.nodes ?? [];
       for (const licenseRef of titlesByLicense) {
-        const existing = usageByLicenseId.get(licenseRef.id) ?? new Set<string>();
+        const existing =
+          usageByLicenseId.get(licenseRef.id) ?? new Set<string>();
         existing.add(product.title);
         usageByLicenseId.set(licenseRef.id, existing);
       }
@@ -320,24 +481,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const starterHandles = [...STARTER_HANDLES];
-    const [licenses, licenseUsageById, guardrailAcceptances] = await Promise.all([
-      productService.getLicenseMetaobjects(),
-      getLicenseUsage(admin),
-      prisma.templateGuardrailAcceptance.findMany({
-        where: {
-          shop: session.shop,
-          templateHandle: { in: starterHandles },
-        },
-        select: {
-          templateHandle: true,
-          starterVersion: true,
-        },
-      }),
-    ]);
+    const [licenses, licenseUsageById, guardrailAcceptances] =
+      await Promise.all([
+        productService.getLicenseMetaobjects(),
+        getLicenseUsage(admin),
+        prisma.templateGuardrailAcceptance.findMany({
+          where: {
+            shop: session.shop,
+            templateHandle: { in: starterHandles },
+          },
+          select: {
+            templateHandle: true,
+            starterVersion: true,
+          },
+        }),
+      ]);
 
     const acceptedStarterKeys = new Set(
       guardrailAcceptances.map(
-        (acceptance) => `${acceptance.templateHandle}:${acceptance.starterVersion}`,
+        (acceptance: { templateHandle: string; starterVersion: string }) =>
+          `${acceptance.templateHandle}:${acceptance.starterVersion}`,
       ),
     );
 
@@ -350,23 +513,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }))
       .map((license) => ({
         ...license,
-        hasAcceptedGuardrail: license.isStarter && license.starterVersion
-          ? acceptedStarterKeys.has(`${license.handle}:${license.starterVersion}`)
-          : true,
+        hasAcceptedGuardrail:
+          license.isStarter && license.starterVersion
+            ? acceptedStarterKeys.has(
+                `${license.handle}:${license.starterVersion}`,
+              )
+            : true,
       }))
       .sort((a, b) => {
         if (a.isStarter !== b.isStarter) return a.isStarter ? -1 : 1;
         return a.licenseName.localeCompare(b.licenseName);
       });
 
-    return json({ licenses: normalizedLicenses, licenseUsageById, error: null });
+    return json({
+      licenses: normalizedLicenses,
+      licenseUsageById,
+      error: null,
+    });
   } catch (error) {
     console.error("License loader error:", error);
     return json(
       {
         licenses: [] as LicenseTemplate[],
         licenseUsageById: {} as Record<string, LicenseUsageSummary>,
-        error: error instanceof Error ? error.message : "Failed to load licenses",
+        error:
+          error instanceof Error ? error.message : "Failed to load licenses",
       },
       { status: 500 },
     );
@@ -378,13 +549,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
   const client = createShopifyClient(session, admin);
+  const sessionUserId = normalizeSessionUserId(
+    (session as { userId?: unknown }).userId,
+  );
+  const sessionEmail =
+    typeof (session as { email?: unknown }).email === "string"
+      ? (session as { email?: string }).email || null
+      : null;
 
   if (intent === "accept_guardrail") {
     const templateHandle = String(formData.get("templateHandle") || "").trim();
-    const templateMetaobjectId = String(formData.get("templateMetaobjectId") || "").trim();
+    const templateMetaobjectId = String(
+      formData.get("templateMetaobjectId") || "",
+    ).trim();
     const starterVersion = getStarterPresetVersion(templateHandle);
 
-    if (!templateHandle || !STARTER_HANDLES.has(templateHandle) || !starterVersion) {
+    if (
+      !templateHandle ||
+      !STARTER_HANDLES.has(templateHandle) ||
+      !starterVersion
+    ) {
       return json(
         {
           success: false,
@@ -406,8 +590,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       update: {
         templateMetaobjectId,
         acceptedAt: new Date(),
-        acceptedByUserId: normalizeSessionUserId(session.userId),
-        acceptedByEmail: session.email || null,
+        acceptedByUserId: sessionUserId,
+        acceptedByEmail: sessionEmail,
       },
       create: {
         shop: session.shop,
@@ -415,19 +599,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         templateMetaobjectId,
         starterVersion,
         acceptedAt: new Date(),
-        acceptedByUserId: normalizeSessionUserId(session.userId),
-        acceptedByEmail: session.email || null,
+        acceptedByUserId: sessionUserId,
+        acceptedByEmail: sessionEmail,
       },
     });
 
-    return json(
-      {
-        success: true,
-        intent,
-        templateHandle,
-        starterVersion,
-      } satisfies ActionDataShape,
-    );
+    return json({
+      success: true,
+      intent,
+      templateHandle,
+      starterVersion,
+    } satisfies ActionDataShape);
   }
 
   const licenseName = String(formData.get("licenseName") || "").trim();
@@ -439,16 +621,64 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const fields = [
     { key: "license_id", value: normalizedLicenseId },
     { key: "license_name", value: licenseName },
-    { key: "stream_limit", value: coerceOptionalNumber(formData.get("streamLimit")) },
-    { key: "copy_limit", value: coerceOptionalNumber(formData.get("copyLimit")) },
-    { key: "term_years", value: coerceOptionalNumber(formData.get("termYears")) },
-    { key: "file_formats", value: String(formData.get("fileFormats") || "").trim() },
-    { key: "includes_stems", value: String(formData.get("includesStems") || "false") },
     {
-      key: "supports_stems_addon",
-      value: String(formData.get("supportsStemsAddon") || "false"),
+      key: "legal_template_family",
+      value: String(formData.get("legalTemplateFamily") || "basic").trim(),
     },
-    { key: "features_short", value: String(formData.get("featuresShort") || "").trim() },
+    {
+      key: "stream_limit",
+      value: coerceOptionalNumber(formData.get("streamLimit")),
+    },
+    {
+      key: "copy_limit",
+      value: coerceOptionalNumber(formData.get("copyLimit")),
+    },
+    {
+      key: "video_view_limit",
+      value: coerceOptionalNumber(formData.get("videoViewLimit")),
+    },
+    {
+      key: "term_years",
+      value: coerceOptionalNumber(formData.get("termYears")),
+    },
+    {
+      key: "file_formats",
+      value: String(formData.get("fileFormats") || "").trim(),
+    },
+    {
+      key: "stems_policy",
+      value: String(formData.get("stemsPolicy") || "not_available"),
+    },
+    {
+      key: "storefront_summary",
+      value: String(formData.get("storefrontSummary") || "").trim(),
+    },
+    {
+      key: "features_short",
+      value: String(formData.get("featuresShort") || "").trim(),
+    },
+    {
+      key: "content_id_policy",
+      value: String(formData.get("contentIdPolicy") || "not_allowed").trim(),
+    },
+    {
+      key: "sync_policy",
+      value: String(formData.get("syncPolicy") || "not_included").trim(),
+    },
+    {
+      key: "credit_requirement",
+      value: String(formData.get("creditRequirement") || "required").trim(),
+    },
+    {
+      key: "publishing_split_mode",
+      value: String(
+        formData.get("publishingSplitMode") || "fixed_split",
+      ).trim(),
+    },
+    {
+      key: "publishing_split_summary",
+      value: String(formData.get("publishingSplitSummary") || "").trim(),
+    },
     { key: "term_1", value: String(formData.get("term1") || "").trim() },
     { key: "term_2", value: String(formData.get("term2") || "").trim() },
     { key: "term_3", value: String(formData.get("term3") || "").trim() },
@@ -459,7 +689,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (!licenseName) {
     return json(
-      { success: false, intent, error: "Template name is required." } satisfies ActionDataShape,
+      {
+        success: false,
+        intent,
+        error: "Template name is required.",
+      } satisfies ActionDataShape,
       { status: 400 },
     );
   }
@@ -469,7 +703,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       {
         success: false,
         intent,
-        error: "A valid template name is required to generate the preset handle.",
+        error:
+          "A valid template name is required to generate the preset handle.",
       },
       { status: 400 },
     );
@@ -492,7 +727,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       if (!id) {
         return json(
-          { success: false, intent, error: "Missing template id." } satisfies ActionDataShape,
+          {
+            success: false,
+            intent,
+            error: "Missing template id.",
+          } satisfies ActionDataShape,
           { status: 400 },
         );
       }
@@ -533,7 +772,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     return json(
-      { success: false, intent, error: "Unknown intent" } satisfies ActionDataShape,
+      {
+        success: false,
+        intent,
+        error: "Unknown intent",
+      } satisfies ActionDataShape,
       { status: 400 },
     );
   } catch (error) {
@@ -542,7 +785,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       {
         success: false,
         intent,
-        error: error instanceof Error ? error.message : "Failed to save template",
+        error:
+          error instanceof Error ? error.message : "Failed to save template",
       },
       { status: 500 },
     );
@@ -550,21 +794,50 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function LicensesPage() {
-  const { licenses, licenseUsageById, error: loaderError } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
-  const guardrailFetcher = useFetcher<typeof action>();
+  const {
+    licenses,
+    licenseUsageById,
+    error: loaderError,
+  } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>() as
+    | ActionDataShape
+    | undefined;
+  const guardrailFetcher = useFetcher<ActionDataShape>();
   const submit = useSubmit();
   const navigate = useNavigate();
   const navigation = useNavigation();
   const [searchParams] = useSearchParams();
 
-  const [licenseForm, setLicenseForm] = useState<LicenseFormState>(emptyLicenseForm);
-  const [activeRightsPopoverId, setActiveRightsPopoverId] = useState<string | null>(null);
-  const [activeDeliveryPopoverId, setActiveDeliveryPopoverId] = useState<string | null>(null);
-  const [activeUsagePopoverId, setActiveUsagePopoverId] = useState<string | null>(null);
-  const [guardrailModalTemplate, setGuardrailModalTemplate] = useState<LicenseTemplate | null>(null);
-  const [pendingEditHandle, setPendingEditHandle] = useState<string | null>(null);
-  const [acceptedStarterVersions, setAcceptedStarterVersions] = useState<Record<string, string>>({});
+  const [licenseForm, setLicenseForm] =
+    useState<LicenseFormState>(emptyLicenseForm);
+  const [selectedPreviewTab, setSelectedPreviewTab] = useState(0);
+  const [activeRightsPopoverId, setActiveRightsPopoverId] = useState<
+    string | null
+  >(null);
+  const [activeDeliveryPopoverId, setActiveDeliveryPopoverId] = useState<
+    string | null
+  >(null);
+  const [activeUsagePopoverId, setActiveUsagePopoverId] = useState<
+    string | null
+  >(null);
+  const [guardrailModalTemplate, setGuardrailModalTemplate] =
+    useState<LicenseTemplate | null>(null);
+  const [pendingEditHandle, setPendingEditHandle] = useState<string | null>(
+    null,
+  );
+  const [previewState, setPreviewState] = useState<{
+    html: string;
+    error: string | null;
+    isLoading: boolean;
+  }>({
+    html: "",
+    error: null,
+    isLoading: false,
+  });
+  const [acceptedStarterVersions, setAcceptedStarterVersions] = useState<
+    Record<string, string>
+  >({});
+  const previewRequestSequence = useRef(0);
 
   const editingHandle = searchParams.get("edit");
   const isCreating = searchParams.get("new") === "1";
@@ -573,9 +846,11 @@ export default function LicensesPage() {
     () =>
       licenses.map((license) => {
         const locallyAcceptedVersion = acceptedStarterVersions[license.handle];
-        const hasAcceptedGuardrail = license.isStarter && license.starterVersion
-          ? license.hasAcceptedGuardrail || locallyAcceptedVersion === license.starterVersion
-          : true;
+        const hasAcceptedGuardrail =
+          license.isStarter && license.starterVersion
+            ? license.hasAcceptedGuardrail ||
+              locallyAcceptedVersion === license.starterVersion
+            : true;
 
         return {
           ...license,
@@ -585,7 +860,10 @@ export default function LicensesPage() {
     [acceptedStarterVersions, licenses],
   );
   const editorLicense = useMemo(
-    () => licensesWithGuardrailState.find((license) => license.handle === editingHandle) || null,
+    () =>
+      licensesWithGuardrailState.find(
+        (license) => license.handle === editingHandle,
+      ) || null,
     [licensesWithGuardrailState, editingHandle],
   );
   const editorMode: "create" | "update" | null = isCreating
@@ -594,11 +872,40 @@ export default function LicensesPage() {
       ? "update"
       : null;
   const isEditorOpen = editorMode !== null;
+  const previewMode = selectedPreviewTab === 0 ? "resolved" : "starter";
+  const previewRequestPayload = useMemo(
+    () =>
+      JSON.stringify({
+        previewMode,
+        handle: licenseForm.handle,
+        licenseId: licenseForm.licenseId,
+        licenseName: licenseForm.licenseName,
+        legalTemplateFamily: licenseForm.legalTemplateFamily,
+        streamLimit: licenseForm.streamLimit,
+        copyLimit: licenseForm.copyLimit,
+        videoViewLimit: licenseForm.videoViewLimit,
+        termYears: licenseForm.termYears,
+        fileFormats: licenseForm.fileFormats,
+        stemsPolicy: licenseForm.stemsPolicy,
+        storefrontSummary: licenseForm.storefrontSummary,
+        featuresShort: licenseForm.featuresShort,
+        contentIdPolicy: licenseForm.contentIdPolicy,
+        syncPolicy: licenseForm.syncPolicy,
+        creditRequirement: licenseForm.creditRequirement,
+        publishingSplitMode: licenseForm.publishingSplitMode,
+        publishingSplitSummary: licenseForm.publishingSplitSummary,
+        terms: licenseForm.terms,
+      }),
+    [licenseForm, previewMode],
+  );
   const actionError = actionData?.error ?? null;
   const guardrailError =
-    guardrailFetcher.data?.intent === "accept_guardrail" && !guardrailFetcher.data.success
+    guardrailFetcher.data?.intent === "accept_guardrail" &&
+    !guardrailFetcher.data.success
       ? guardrailFetcher.data.error || "Unable to record your review right now."
       : null;
+  const previewError = previewState.error;
+  const previewHtml = previewState.html;
   const isSaving =
     navigation.state === "submitting" &&
     navigation.formMethod?.toLowerCase() === "post" &&
@@ -608,30 +915,164 @@ export default function LicensesPage() {
     (navigation.state === "submitting" &&
       navigation.formMethod?.toLowerCase() === "post" &&
       navigation.formData?.get("intent") === "accept_guardrail");
+  const isPreviewLoading = previewState.isLoading;
   const requiresEditorGuardrail = Boolean(
-    editorLicense?.isStarter && editorLicense.starterVersion && !editorLicense.hasAcceptedGuardrail,
+    editorLicense?.isStarter &&
+    editorLicense.starterVersion &&
+    !editorLicense.hasAcceptedGuardrail,
   );
 
   useEffect(() => {
     if (editorMode === "create") {
       setLicenseForm(emptyLicenseForm());
+      setSelectedPreviewTab(0);
       return;
     }
 
     if (editorMode === "update" && editorLicense) {
       setLicenseForm(buildLicenseForm(editorLicense));
+      setSelectedPreviewTab(0);
     }
   }, [editorMode, editorLicense]);
 
   useEffect(() => {
-    if (actionData?.success && (actionData.intent === "update" || actionData.intent === "create")) {
-      const nextSavedState = actionData.intent === "update" ? "updated" : "created";
+    if (!isEditorOpen) {
+      setPreviewState({
+        html: "",
+        error: null,
+        isLoading: false,
+      });
+      return;
+    }
+
+    const previewPayload = JSON.parse(previewRequestPayload) as {
+      previewMode: "starter" | "resolved";
+      handle: string;
+      licenseId: string;
+      licenseName: string;
+      legalTemplateFamily: string;
+      streamLimit: string;
+      copyLimit: string;
+      videoViewLimit: string;
+      termYears: string;
+      fileFormats: string;
+      stemsPolicy: string;
+      storefrontSummary: string;
+      featuresShort: string;
+      contentIdPolicy: string;
+      syncPolicy: string;
+      creditRequirement: string;
+      publishingSplitMode: string;
+      publishingSplitSummary: string;
+      terms: string[];
+    };
+
+    const previewFormData = new FormData();
+    previewFormData.append("previewMode", previewPayload.previewMode);
+    appendLicenseFormFields(previewFormData, {
+      handle: previewPayload.handle,
+      licenseId: previewPayload.licenseId,
+      licenseName: previewPayload.licenseName,
+      legalTemplateFamily: previewPayload.legalTemplateFamily,
+      streamLimit: previewPayload.streamLimit,
+      copyLimit: previewPayload.copyLimit,
+      videoViewLimit: previewPayload.videoViewLimit,
+      termYears: previewPayload.termYears,
+      fileFormats: previewPayload.fileFormats,
+      stemsPolicy: previewPayload.stemsPolicy,
+      storefrontSummary: previewPayload.storefrontSummary,
+      featuresShort: previewPayload.featuresShort,
+      contentIdPolicy: previewPayload.contentIdPolicy,
+      syncPolicy: previewPayload.syncPolicy,
+      creditRequirement: previewPayload.creditRequirement,
+      publishingSplitMode: previewPayload.publishingSplitMode,
+      publishingSplitSummary: previewPayload.publishingSplitSummary,
+      terms: previewPayload.terms,
+    });
+
+    const requestSequence = ++previewRequestSequence.current;
+    const abortController = new AbortController();
+
+    setPreviewState((current) => ({
+      ...current,
+      error: null,
+      isLoading: true,
+    }));
+
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch("/app/licenses/preview", {
+            method: "POST",
+            body: previewFormData,
+            signal: abortController.signal,
+          });
+
+          const data = (await response.json()) as AgreementPreviewData;
+
+          if (
+            abortController.signal.aborted ||
+            requestSequence !== previewRequestSequence.current
+          ) {
+            return;
+          }
+
+          if (!response.ok || !data.success) {
+            setPreviewState((current) => ({
+              ...current,
+              error: data.error || "Unable to render the agreement preview.",
+              isLoading: false,
+            }));
+            return;
+          }
+
+          setPreviewState({
+            html: data.html || "",
+            error: null,
+            isLoading: false,
+          });
+        } catch (error) {
+          if (
+            abortController.signal.aborted ||
+            requestSequence !== previewRequestSequence.current
+          ) {
+            return;
+          }
+
+          setPreviewState((current) => ({
+            ...current,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unable to render the agreement preview.",
+            isLoading: false,
+          }));
+        }
+      })();
+    }, 120);
+
+    return () => {
+      abortController.abort();
+      window.clearTimeout(timeoutId);
+    };
+  }, [isEditorOpen, previewRequestPayload]);
+
+  useEffect(() => {
+    if (
+      actionData?.success &&
+      (actionData.intent === "update" || actionData.intent === "create")
+    ) {
+      const nextSavedState =
+        actionData.intent === "update" ? "updated" : "created";
       navigate(`/app/licenses?saved=${nextSavedState}`, { replace: true });
     }
   }, [actionData, navigate]);
 
   useEffect(() => {
-    if (guardrailFetcher.data?.success && guardrailFetcher.data.intent === "accept_guardrail") {
+    if (
+      guardrailFetcher.data?.success &&
+      guardrailFetcher.data.intent === "accept_guardrail"
+    ) {
       const acceptedHandle = guardrailFetcher.data.templateHandle;
       const acceptedVersion = guardrailFetcher.data.starterVersion;
 
@@ -669,7 +1110,11 @@ export default function LicensesPage() {
 
   const handleOpenEdit = useCallback(
     (license: LicenseTemplate) => {
-      if (license.isStarter && license.starterVersion && !license.hasAcceptedGuardrail) {
+      if (
+        license.isStarter &&
+        license.starterVersion &&
+        !license.hasAcceptedGuardrail
+      ) {
         setPendingEditHandle(license.handle);
         setGuardrailModalTemplate(license);
         return;
@@ -711,45 +1156,44 @@ export default function LicensesPage() {
   }, [guardrailFetcher, guardrailModalTemplate]);
 
   const handleRightsPopoverToggle = useCallback((licenseId: string) => {
-    setActiveRightsPopoverId((current) => (current === licenseId ? null : licenseId));
+    setActiveRightsPopoverId((current) =>
+      current === licenseId ? null : licenseId,
+    );
   }, []);
 
   const handleDeliveryPopoverToggle = useCallback((licenseId: string) => {
-    setActiveDeliveryPopoverId((current) => (current === licenseId ? null : licenseId));
+    setActiveDeliveryPopoverId((current) =>
+      current === licenseId ? null : licenseId,
+    );
   }, []);
 
   const handleUsagePopoverToggle = useCallback((licenseId: string) => {
-    setActiveUsagePopoverId((current) => (current === licenseId ? null : licenseId));
+    setActiveUsagePopoverId((current) =>
+      current === licenseId ? null : licenseId,
+    );
   }, []);
 
   const handleSave = useCallback(() => {
-    if (editorMode === "update" && editorLicense?.isStarter && requiresEditorGuardrail) {
+    if (
+      editorMode === "update" &&
+      editorLicense?.isStarter &&
+      requiresEditorGuardrail
+    ) {
       setGuardrailModalTemplate(editorLicense);
       return;
     }
 
     const formData = new FormData();
     formData.append("intent", editorMode || "create");
-    if (licenseForm.id) formData.append("id", licenseForm.id);
-    if (licenseForm.handle) formData.append("handle", licenseForm.handle);
-    if (licenseForm.licenseId) formData.append("licenseId", licenseForm.licenseId);
-    formData.append("licenseName", licenseForm.licenseName);
-    formData.append("streamLimit", licenseForm.streamLimit);
-    formData.append("copyLimit", licenseForm.copyLimit);
-    formData.append("termYears", licenseForm.termYears);
-    formData.append("fileFormats", licenseForm.fileFormats);
-    formData.append("includesStems", String(licenseForm.includesStems));
-    formData.append("supportsStemsAddon", String(licenseForm.supportsStemsAddon));
-    formData.append("featuresShort", licenseForm.featuresShort);
-    licenseForm.terms.forEach((term, index) => {
-      formData.append(`term${index + 1}`, term);
-    });
+    appendLicenseFormFields(formData, licenseForm);
 
     submit(formData, { method: "post" });
   }, [editorLicense, editorMode, licenseForm, requiresEditorGuardrail, submit]);
 
   if (isEditorOpen) {
-    const usage = editorLicense ? licenseUsageById[editorLicense.id] : undefined;
+    const usage = editorLicense
+      ? licenseUsageById[editorLicense.id]
+      : undefined;
     const usageBeatsUrl = editorLicense
       ? `/app/beats?license=${encodeURIComponent(editorLicense.id)}`
       : "/app/beats";
@@ -758,7 +1202,7 @@ export default function LicensesPage() {
     const customTermCount = countCustomTerms(licenseForm.terms);
     const selectedPackageFormats = getSelectedPackageFormats(
       licenseForm.fileFormats,
-      licenseForm.includesStems,
+      licenseForm.stemsPolicy,
     );
     const isStarter = editorLicense?.isStarter || false;
     const previewStatus =
@@ -771,14 +1215,21 @@ export default function LicensesPage() {
     return (
       <>
         <Page
-          title={editorMode === "create" ? "New Reusable Template" : licenseForm.licenseName || "Edit Template"}
+          fullWidth
+          title={
+            editorMode === "create"
+              ? "New Reusable Template"
+              : licenseForm.licenseName || "Edit Template"
+          }
           subtitle="Configure storefront copy, usage limits, delivery packaging, and reusable agreement language for this template."
           backAction={{ content: "Templates", onAction: handleCloseEditor }}
           primaryAction={{
-            content: editorMode === "create" ? "Create template" : "Save changes",
+            content:
+              editorMode === "create" ? "Create template" : "Save changes",
             onAction: handleSave,
             loading: isSaving,
-            disabled: !licenseForm.licenseName.trim() || requiresEditorGuardrail,
+            disabled:
+              !licenseForm.licenseName.trim() || requiresEditorGuardrail,
           }}
           secondaryActions={[
             {
@@ -824,7 +1275,7 @@ export default function LicensesPage() {
               </Layout.Section>
             ) : null}
 
-            <Layout.Section variant="twoThirds">
+            <Layout.Section>
               <BlockStack gap="400">
                 <Card>
                   <BlockStack gap="400">
@@ -871,7 +1322,20 @@ export default function LicensesPage() {
                         }))
                       }
                       autoComplete="off"
-                      helpText="This name appears in storefront offers, buyer records, and post-purchase delivery details."
+                      helpText="This name is customer-facing and can be used for storefront marketing. The legal rights still follow the selected template family."
+                    />
+
+                    <Select
+                      label="Legal template family"
+                      options={LEGAL_TEMPLATE_FAMILY_OPTIONS}
+                      value={licenseForm.legalTemplateFamily}
+                      onChange={(value) =>
+                        setLicenseForm((current) => ({
+                          ...current,
+                          legalTemplateFamily: value,
+                        }))
+                      }
+                      helpText="This controls the legal rights model behind the offer, regardless of the customer-facing name."
                     />
                   </BlockStack>
                 </Card>
@@ -895,7 +1359,10 @@ export default function LicensesPage() {
                           type="number"
                           value={licenseForm.streamLimit}
                           onChange={(value) =>
-                            setLicenseForm((current) => ({ ...current, streamLimit: value }))
+                            setLicenseForm((current) => ({
+                              ...current,
+                              streamLimit: value,
+                            }))
                           }
                           helpText="Use 0 for unlimited."
                           autoComplete="off"
@@ -905,7 +1372,10 @@ export default function LicensesPage() {
                           type="number"
                           value={licenseForm.copyLimit}
                           onChange={(value) =>
-                            setLicenseForm((current) => ({ ...current, copyLimit: value }))
+                            setLicenseForm((current) => ({
+                              ...current,
+                              copyLimit: value,
+                            }))
                           }
                           helpText="Use 0 for unlimited."
                           autoComplete="off"
@@ -913,11 +1383,28 @@ export default function LicensesPage() {
                       </FormLayout.Group>
 
                       <TextField
+                        label="Video view limit"
+                        type="number"
+                        value={licenseForm.videoViewLimit}
+                        onChange={(value) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            videoViewLimit: value,
+                          }))
+                        }
+                        helpText="Use 0 for unlimited."
+                        autoComplete="off"
+                      />
+
+                      <TextField
                         label="Term (years)"
                         type="number"
                         value={licenseForm.termYears}
                         onChange={(value) =>
-                          setLicenseForm((current) => ({ ...current, termYears: value }))
+                          setLicenseForm((current) => ({
+                            ...current,
+                            termYears: value,
+                          }))
                         }
                         helpText="Use 0 for a perpetual term."
                         autoComplete="off"
@@ -949,11 +1436,22 @@ export default function LicensesPage() {
                         ]}
                         selected={selectedPackageFormats}
                         onChange={(selected) =>
-                          setLicenseForm((current) => ({
-                            ...current,
-                            fileFormats: formatPackageFormats(selected),
-                            includesStems: selected.includes("STEMS"),
-                          }))
+                          setLicenseForm((current) => {
+                            const nextStemsPolicy = selected.includes("STEMS")
+                              ? "included_by_default"
+                              : current.stemsPolicy === "included_by_default"
+                                ? "available_as_addon"
+                                : current.stemsPolicy;
+
+                            return {
+                              ...current,
+                              stemsPolicy: nextStemsPolicy,
+                              fileFormats: syncFileFormatsWithStemsPolicy(
+                                formatPackageFormats(selected),
+                                nextStemsPolicy,
+                              ),
+                            };
+                          })
                         }
                       />
 
@@ -966,31 +1464,52 @@ export default function LicensesPage() {
                       />
 
                       <Text as="p" tone="subdued">
-                        {licenseForm.includesStems
-                          ? "Stems are included in this package."
-                          : "Stems are not included in this package."}
+                        {stemsIncludedByDefault(licenseForm.stemsPolicy)
+                          ? "Stems are included in the base package for this offer."
+                          : stemsAddOnAvailable(licenseForm.stemsPolicy)
+                            ? "Stems are not included by default, but can be sold as an add-on."
+                            : "Stems are not offered on this template."}
                       </Text>
 
-                      <ChoiceList
-                        title="Stems add-on availability"
-                        choices={[
-                          { label: "Offer stems as an add-on for this template", value: "true" },
-                          { label: "Do not offer a stems add-on", value: "false" },
-                        ]}
-                        selected={[String(licenseForm.supportsStemsAddon)]}
-                        onChange={([value]) =>
+                      <Select
+                        label="Stems handling"
+                        options={STEMS_POLICY_OPTIONS}
+                        value={licenseForm.stemsPolicy}
+                        onChange={(value) =>
                           setLicenseForm((current) => ({
                             ...current,
-                            supportsStemsAddon: value === "true",
+                            stemsPolicy: value,
+                            fileFormats: syncFileFormatsWithStemsPolicy(
+                              current.fileFormats,
+                              value,
+                            ),
                           }))
                         }
+                        helpText="Choose whether stems are unavailable, offered as an add-on, or included by default. The final agreement will also reflect whether stems were actually included in the order."
                       />
 
                       <TextField
                         label="Storefront summary"
+                        value={licenseForm.storefrontSummary}
+                        onChange={(value) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            storefrontSummary: value,
+                          }))
+                        }
+                        multiline={3}
+                        autoComplete="off"
+                        helpText="Short paragraph used for customer-facing summary copy."
+                      />
+
+                      <TextField
+                        label="Feature bullets"
                         value={licenseForm.featuresShort}
                         onChange={(value) =>
-                          setLicenseForm((current) => ({ ...current, featuresShort: value }))
+                          setLicenseForm((current) => ({
+                            ...current,
+                            featuresShort: value,
+                          }))
                         }
                         multiline={5}
                         autoComplete="off"
@@ -1004,19 +1523,87 @@ export default function LicensesPage() {
                   <BlockStack gap="400">
                     <BlockStack gap="100">
                       <Text as="h2" variant="headingMd">
-                        Reusable language
+                        Rights configuration
                       </Text>
                       <Text as="p" tone="subdued">
-                        These reusable sections shape the agreement summary your
-                        buyer receives after purchase.
+                        Choose the controlled legal options that will select the
+                        right clause language when Producer Launchpad renders
+                        the final agreement.
                       </Text>
                     </BlockStack>
 
                     <FormLayout>
+                      <Select
+                        label="Content ID policy"
+                        options={CONTENT_ID_POLICY_OPTIONS}
+                        value={licenseForm.contentIdPolicy}
+                        onChange={(value) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            contentIdPolicy: value,
+                          }))
+                        }
+                      />
+
+                      <Select
+                        label="Sync policy"
+                        options={SYNC_POLICY_OPTIONS}
+                        value={licenseForm.syncPolicy}
+                        onChange={(value) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            syncPolicy: value,
+                          }))
+                        }
+                      />
+
+                      <Select
+                        label="Credit requirement"
+                        options={CREDIT_REQUIREMENT_OPTIONS}
+                        value={licenseForm.creditRequirement}
+                        onChange={(value) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            creditRequirement: value,
+                          }))
+                        }
+                      />
+
+                      <Select
+                        label="Publishing split mode"
+                        options={PUBLISHING_SPLIT_MODE_OPTIONS}
+                        value={licenseForm.publishingSplitMode}
+                        onChange={(value) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            publishingSplitMode: value,
+                          }))
+                        }
+                      />
+
+                      <TextField
+                        label="Publishing split summary"
+                        value={licenseForm.publishingSplitSummary}
+                        onChange={(value) =>
+                          setLicenseForm((current) => ({
+                            ...current,
+                            publishingSplitSummary: value,
+                          }))
+                        }
+                        multiline={2}
+                        autoComplete="off"
+                        helpText="Used when the selected publishing mode renders a summary into the agreement."
+                      />
+
+                      <Text as="p" tone="subdued">
+                        Addendum terms below are appended to the starter
+                        agreement. They do not replace the core legal clauses.
+                      </Text>
+
                       {licenseForm.terms.map((term, index) => (
                         <TextField
                           key={`term-${index + 1}`}
-                          label={`Section ${index + 1}`}
+                          label={`Addendum term ${index + 1}`}
                           value={term}
                           onChange={(value) =>
                             setLicenseForm((current) => {
@@ -1041,9 +1628,96 @@ export default function LicensesPage() {
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="center">
                       <Text as="h2" variant="headingMd">
-                        Buyer preview
+                        Agreement preview
                       </Text>
-                      <Badge tone={previewStatus.tone}>{previewStatus.label}</Badge>
+                      <Badge tone={previewStatus.tone}>
+                        {previewStatus.label}
+                      </Badge>
+                    </InlineStack>
+
+                    <Tabs
+                      tabs={AGREEMENT_PREVIEW_TABS}
+                      selected={selectedPreviewTab}
+                      onSelect={setSelectedPreviewTab}
+                      fitted
+                    >
+                      <BlockStack gap="300">
+                        <Text as="p" tone="subdued">
+                          {previewMode === "resolved"
+                            ? "Preview how this agreement reads with your current settings, legal identity, and sample buyer data."
+                            : "Review the starter agreement language with placeholders still visible so you can inspect the raw template structure."}
+                        </Text>
+
+                        <InlineStack gap="200">
+                          <Badge>
+                            {previewMode === "resolved"
+                              ? "Resolved preview"
+                              : "Starter template"}
+                          </Badge>
+                          <Badge>
+                            {formatTemplateFamilyLabel(
+                              licenseForm.legalTemplateFamily,
+                            )}
+                          </Badge>
+                          {isPreviewLoading ? (
+                            <Badge tone="attention">Updating</Badge>
+                          ) : null}
+                        </InlineStack>
+
+                        {previewError ? (
+                          <Banner
+                            title="Unable to render preview"
+                            tone="critical"
+                          >
+                            <p>{previewError}</p>
+                          </Banner>
+                        ) : null}
+
+                        <div
+                          style={{
+                            border: "1px solid var(--p-color-border)",
+                            borderRadius: "12px",
+                            overflow: "hidden",
+                            minHeight: "760px",
+                            background: "var(--p-color-bg-surface)",
+                          }}
+                        >
+                          {previewHtml ? (
+                            <iframe
+                              key={`${previewMode}-${licenseForm.licenseName}-${licenseForm.legalTemplateFamily}`}
+                              title="Agreement preview"
+                              srcDoc={previewHtml}
+                              style={{
+                                width: "100%",
+                                minHeight: "760px",
+                                border: "0",
+                                background: "white",
+                              }}
+                            />
+                          ) : (
+                            <Box padding="400">
+                              <Text as="p" tone="subdued">
+                                {isPreviewLoading
+                                  ? "Rendering agreement preview."
+                                  : "Preview content will appear here as soon as the template has enough data to render."}
+                              </Text>
+                            </Box>
+                          )}
+                        </div>
+                      </BlockStack>
+                    </Tabs>
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="h2" variant="headingMd">
+                        Offer summary
+                      </Text>
+                      <Badge>
+                        {formatStemsPolicyLabel(licenseForm.stemsPolicy)}
+                      </Badge>
                     </InlineStack>
 
                     <BlockStack gap="100">
@@ -1051,10 +1725,19 @@ export default function LicensesPage() {
                         {licenseForm.licenseName || "Untitled template"}
                       </Text>
                       <Text as="p" tone="subdued">
+                        {formatTemplateFamilyLabel(
+                          licenseForm.legalTemplateFamily,
+                        )}{" "}
+                        legal family
+                      </Text>
+                      <Text as="p" tone="subdued">
                         {formatLimit(licenseForm.streamLimit, "streams")}
                       </Text>
                       <Text as="p" tone="subdued">
                         {formatLimit(licenseForm.copyLimit, "copies")}
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        {formatLimit(licenseForm.videoViewLimit, "video views")}
                       </Text>
                       <Text as="p" tone="subdued">
                         {formatTermLength(licenseForm.termYears)}
@@ -1074,14 +1757,20 @@ export default function LicensesPage() {
                     )}
 
                     <InlineStack gap="200">
-                      {licenseForm.includesStems ? (
+                      {stemsIncludedByDefault(licenseForm.stemsPolicy) ? (
                         <Badge tone="success">Stems included</Badge>
-                      ) : licenseForm.supportsStemsAddon ? (
+                      ) : stemsAddOnAvailable(licenseForm.stemsPolicy) ? (
                         <Badge tone="attention">Stems add-on available</Badge>
                       ) : (
                         <Badge>No stems</Badge>
                       )}
                     </InlineStack>
+
+                    {licenseForm.storefrontSummary ? (
+                      <Text as="p" tone="subdued">
+                        {licenseForm.storefrontSummary}
+                      </Text>
+                    ) : null}
 
                     {previewFeatures.length > 0 ? (
                       <List type="bullet">
@@ -1104,10 +1793,10 @@ export default function LicensesPage() {
                       Dynamic fields inserted at checkout
                     </Text>
                     <Text as="p" tone="subdued">
-                      These highlighted variables are filled with store and order
-                      data. They show that Producer Launchpad is inserting your
-                      data into reusable text, not writing bespoke terms on the
-                      fly.
+                      These highlighted variables are filled with store and
+                      order data. They show that Producer Launchpad is inserting
+                      your data into reusable text, not writing bespoke terms on
+                      the fly.
                     </Text>
                     <InlineStack gap="200" wrap>
                       {DYNAMIC_TEMPLATE_FIELDS.map((field) => (
@@ -1147,7 +1836,8 @@ export default function LicensesPage() {
                       <InlineStack align="space-between">
                         <Text as="span">Reusable sections</Text>
                         <Text as="span">
-                          {customTermCount} section{customTermCount === 1 ? "" : "s"}
+                          {customTermCount} section
+                          {customTermCount === 1 ? "" : "s"}
                         </Text>
                       </InlineStack>
                       <InlineStack align="space-between">
@@ -1170,7 +1860,7 @@ export default function LicensesPage() {
                       <Text as="h2" variant="headingMd">
                         Used by beats
                       </Text>
-                      <Badge>{usage?.beatCount || 0}</Badge>
+                      <Badge>{String(usage?.beatCount || 0)}</Badge>
                     </InlineStack>
 
                     {usage?.beatTitles.length ? (
@@ -1239,7 +1929,11 @@ export default function LicensesPage() {
           {savedState && (
             <Layout.Section>
               <Banner
-                title={savedState === "updated" ? "Template updated" : "Template created"}
+                title={
+                  savedState === "updated"
+                    ? "Template updated"
+                    : "Template created"
+                }
                 tone="success"
               />
             </Layout.Section>
@@ -1291,14 +1985,26 @@ export default function LicensesPage() {
                       const usage = licenseUsageById[license.id];
                       const status = getLicenseStatus(license, usage);
                       const customTermCount = countCustomTerms(license.terms);
-                      const storefrontSummary = parseFeatureLines(license.featuresShort);
-                      const fileBadges = parseFileFormatBadges(license.fileFormats);
+                      const storefrontSummary = parseFeatureLines(
+                        license.featuresShort,
+                      );
+                      const fileBadges = parseFileFormatBadges(
+                        license.fileFormats,
+                      );
 
                       return (
-                        <IndexTable.Row key={license.id} id={license.id} position={index}>
+                        <IndexTable.Row
+                          key={license.id}
+                          id={license.id}
+                          position={index}
+                        >
                           <IndexTable.Cell>
                             <BlockStack gap="100">
-                              <Text as="span" variant="bodyMd" fontWeight="semibold">
+                              <Text
+                                as="span"
+                                variant="bodyMd"
+                                fontWeight="semibold"
+                              >
                                 {license.licenseName}
                               </Text>
                               <InlineStack gap="200">
@@ -1307,8 +2013,11 @@ export default function LicensesPage() {
                                 ) : (
                                   <Badge>Reusable Template</Badge>
                                 )}
-                                {license.isStarter && !license.hasAcceptedGuardrail ? (
-                                  <Badge tone="attention">Review required</Badge>
+                                {license.isStarter &&
+                                !license.hasAcceptedGuardrail ? (
+                                  <Badge tone="attention">
+                                    Review required
+                                  </Badge>
                                 ) : null}
                               </InlineStack>
                             </BlockStack>
@@ -1327,7 +2036,9 @@ export default function LicensesPage() {
                                   variant="monochromePlain"
                                   size="slim"
                                   textAlign="left"
-                                  onClick={() => handleRightsPopoverToggle(license.id)}
+                                  onClick={() =>
+                                    handleRightsPopoverToggle(license.id)
+                                  }
                                 >
                                   {formatLimit(license.streamLimit, "streams")}
                                 </Button>
@@ -1336,20 +2047,36 @@ export default function LicensesPage() {
                               <Box padding="400" minWidth="240px">
                                 <BlockStack gap="200">
                                   <InlineStack gap="200" blockAlign="center">
-                                    <Text as="p" variant="headingSm" fontWeight="semibold">
+                                    <Text
+                                      as="p"
+                                      variant="headingSm"
+                                      fontWeight="semibold"
+                                    >
                                       Usage boundaries
                                     </Text>
                                     {license.isStarter ? (
-                                      <Badge tone="success">Starter Preset</Badge>
+                                      <Badge tone="success">
+                                        Starter Preset
+                                      </Badge>
                                     ) : (
                                       <Badge>Reusable Template</Badge>
                                     )}
                                   </InlineStack>
-                                  <Text as="p">{formatLimit(license.streamLimit, "streams")}</Text>
-                                  <Text as="p">{formatLimit(license.copyLimit, "copies")}</Text>
-                                  <Text as="p">{formatTermLength(license.termYears)}</Text>
+                                  <Text as="p">
+                                    {formatLimit(
+                                      license.streamLimit,
+                                      "streams",
+                                    )}
+                                  </Text>
+                                  <Text as="p">
+                                    {formatLimit(license.copyLimit, "copies")}
+                                  </Text>
+                                  <Text as="p">
+                                    {formatTermLength(license.termYears)}
+                                  </Text>
                                   <Text as="p" tone="subdued">
-                                    {customTermCount} reusable section{customTermCount === 1 ? "" : "s"}
+                                    {customTermCount} reusable section
+                                    {customTermCount === 1 ? "" : "s"}
                                   </Text>
                                 </BlockStack>
                               </Box>
@@ -1369,21 +2096,32 @@ export default function LicensesPage() {
                                   variant="monochromePlain"
                                   size="slim"
                                   textAlign="left"
-                                  onClick={() => handleDeliveryPopoverToggle(license.id)}
+                                  onClick={() =>
+                                    handleDeliveryPopoverToggle(license.id)
+                                  }
                                 >
-                                  {fileBadges.length > 0 ? `${fileBadges.length} formats` : "No formats"}
+                                  {fileBadges.length > 0
+                                    ? `${fileBadges.length} formats`
+                                    : "No formats"}
                                 </Button>
                               }
                             >
                               <Box padding="400" minWidth="260px">
                                 <BlockStack gap="300">
-                                  <Text as="p" variant="headingSm" fontWeight="semibold">
+                                  <Text
+                                    as="p"
+                                    variant="headingSm"
+                                    fontWeight="semibold"
+                                  >
                                     Delivery files
                                   </Text>
                                   {fileBadges.length > 0 ? (
                                     <InlineStack gap="200">
                                       {fileBadges.map((format) => (
-                                        <FileFormatBadge key={format} format={format} />
+                                        <FileFormatBadge
+                                          key={format}
+                                          format={format}
+                                        />
                                       ))}
                                     </InlineStack>
                                   ) : (
@@ -1393,10 +2131,18 @@ export default function LicensesPage() {
                                   )}
 
                                   <InlineStack gap="200">
-                                    {license.includesStems ? (
-                                      <Badge tone="success">Stems included</Badge>
-                                    ) : license.supportsStemsAddon ? (
-                                      <Badge tone="attention">Stems add-on available</Badge>
+                                    {stemsIncludedByDefault(
+                                      license.stemsPolicy,
+                                    ) ? (
+                                      <Badge tone="success">
+                                        Stems included
+                                      </Badge>
+                                    ) : stemsAddOnAvailable(
+                                        license.stemsPolicy,
+                                      ) ? (
+                                      <Badge tone="attention">
+                                        Stems add-on available
+                                      </Badge>
                                     ) : (
                                       <Badge>No stems</Badge>
                                     )}
@@ -1404,9 +2150,13 @@ export default function LicensesPage() {
 
                                   {storefrontSummary.length > 0 ? (
                                     <List type="bullet">
-                                      {storefrontSummary.slice(0, 3).map((feature) => (
-                                        <List.Item key={feature}>{feature}</List.Item>
-                                      ))}
+                                      {storefrontSummary
+                                        .slice(0, 3)
+                                        .map((feature) => (
+                                          <List.Item key={feature}>
+                                            {feature}
+                                          </List.Item>
+                                        ))}
                                     </List>
                                   ) : (
                                     <Text as="p" tone="subdued">
@@ -1427,11 +2177,15 @@ export default function LicensesPage() {
                               onClose={() => setActiveUsagePopoverId(null)}
                               activator={
                                 <Button
-                                  disclosure={usage?.beatCount ? "down" : undefined}
+                                  disclosure={
+                                    usage?.beatCount ? "down" : undefined
+                                  }
                                   variant="monochromePlain"
                                   size="slim"
                                   textAlign="left"
-                                  onClick={() => handleUsagePopoverToggle(license.id)}
+                                  onClick={() =>
+                                    handleUsagePopoverToggle(license.id)
+                                  }
                                 >
                                   {usage?.beatCount
                                     ? `${usage.beatCount} beat${usage.beatCount === 1 ? "" : "s"}`
@@ -1441,18 +2195,27 @@ export default function LicensesPage() {
                             >
                               <Box padding="400" minWidth="320px">
                                 <BlockStack gap="300">
-                                  <Text as="p" variant="headingSm" fontWeight="semibold">
+                                  <Text
+                                    as="p"
+                                    variant="headingSm"
+                                    fontWeight="semibold"
+                                  >
                                     Beats using this template
                                   </Text>
                                   {usage?.beatTitles.length ? (
                                     <List type="bullet">
-                                      {usage.beatTitles.slice(0, 6).map((title) => (
-                                        <List.Item key={title}>{title}</List.Item>
-                                      ))}
+                                      {usage.beatTitles
+                                        .slice(0, 6)
+                                        .map((title) => (
+                                          <List.Item key={title}>
+                                            {title}
+                                          </List.Item>
+                                        ))}
                                     </List>
                                   ) : (
                                     <Text as="p" tone="subdued">
-                                      Assign this template to beats from the upload or beat editing flow.
+                                      Assign this template to beats from the
+                                      upload or beat editing flow.
                                     </Text>
                                   )}
                                   <Text as="p" tone="subdued">
@@ -1488,7 +2251,10 @@ export default function LicensesPage() {
                           </IndexTable.Cell>
 
                           <IndexTable.Cell>
-                            <Button variant="plain" onClick={() => handleOpenEdit(license)}>
+                            <Button
+                              variant="plain"
+                              onClick={() => handleOpenEdit(license)}
+                            >
                               Edit
                             </Button>
                           </IndexTable.Cell>

@@ -47,6 +47,19 @@ interface BundleSource {
   body: ReadableStream;
 }
 
+function mergeUniqueFiles(files: BeatFile[]) {
+  const seen = new Set<string>();
+  const ordered: BeatFile[] = [];
+
+  for (const file of files) {
+    if (seen.has(file.id)) continue;
+    seen.add(file.id);
+    ordered.push(file);
+  }
+
+  return ordered;
+}
+
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   const { token, itemId } = params;
 
@@ -60,15 +73,22 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   });
 
   if (!deliveryAccess) {
-    return new Response("This download link is no longer valid.", { status: 403 });
+    return new Response("This download link is no longer valid.", {
+      status: 403,
+    });
   }
 
   const { order } = deliveryAccess;
 
-  const item = order.items.find((orderItem: OrderItem) => orderItem.id === itemId);
+  const item = order.items.find(
+    (orderItem: OrderItem) => orderItem.id === itemId,
+  );
 
   if (!item) {
-    return new Response("This audio package is not available from this download link.", { status: 404 });
+    return new Response(
+      "This audio package is not available from this download link.",
+      { status: 404 },
+    );
   }
 
   const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
@@ -89,13 +109,35 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       sortOrder: "asc",
     },
   });
+  const stemsFile = item.stemsIncludedInOrder
+    ? await prisma.beatFile.findFirst({
+        where: {
+          beatId: `gid://shopify/Product/${item.productId}`,
+          filePurpose: "stems",
+        },
+      })
+    : null;
 
-  const audioFiles = fileMappings
-    .map((mapping: LicenseFileMapping & { beatFile: BeatFile }) => mapping.beatFile)
-    .filter((file: BeatFile) => isAudioDeliverable(file));
+  if (item.stemsIncludedInOrder && !stemsFile) {
+    return new Response(
+      "The stems add-on was purchased for this order, but the stems ZIP is not ready for download yet.",
+      { status: 409 },
+    );
+  }
+
+  const audioFiles = mergeUniqueFiles([
+    ...fileMappings.map(
+      (mapping: LicenseFileMapping & { beatFile: BeatFile }) =>
+        mapping.beatFile,
+    ),
+    ...(stemsFile ? [stemsFile] : []),
+  ]).filter((file: BeatFile) => isAudioDeliverable(file));
 
   if (audioFiles.length === 0) {
-    return new Response("This license does not have any audio files ready for download.", { status: 404 });
+    return new Response(
+      "This license does not have any audio files ready for download.",
+      { status: 404 },
+    );
   }
 
   if (audioFiles.length === 1) {
@@ -109,7 +151,10 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       : getManagedR2Credentials();
 
   if (!creds) {
-    return new Response("We couldn't prepare this audio package right now. Please contact support.", { status: 500 });
+    return new Response(
+      "We couldn't prepare this audio package right now. Please contact support.",
+      { status: 500 },
+    );
   }
 
   const sources: BundleSource[] = [];
@@ -172,7 +217,9 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       });
     } catch (error) {
       console.error("Failed to stream bundled audio package:", error);
-      output.destroy(error instanceof Error ? error : new Error("Failed to stream bundle"));
+      output.destroy(
+        error instanceof Error ? error : new Error("Failed to stream bundle"),
+      );
     }
   })();
 

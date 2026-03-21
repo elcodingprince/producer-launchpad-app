@@ -8,25 +8,40 @@ export interface GraphQLResponse<T> {
 }
 
 export class ShopifyClient {
-  private admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> };
+  private admin: {
+    graphql: (
+      query: string,
+      options?: Record<string, any>,
+    ) => Promise<Response>;
+  };
   private session: any;
 
   constructor(
     session: any,
-    admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+    admin: {
+      graphql: (
+        query: string,
+        options?: Record<string, any>,
+      ) => Promise<Response>;
+    },
   ) {
     this.session = session;
     this.admin = admin;
   }
 
-  async query<T>(query: string, variables?: Record<string, any>): Promise<GraphQLResponse<T>> {
-    const response = (await this.admin.graphql(query, { variables }).then((r) => r.json())) as GraphQLResponse<T>;
+  async query<T>(
+    query: string,
+    variables?: Record<string, any>,
+  ): Promise<GraphQLResponse<T>> {
+    const response = (await this.admin
+      .graphql(query, { variables })
+      .then((r) => r.json())) as GraphQLResponse<T>;
 
     if (response.errors && response.errors.length > 0) {
       throw new Error(
         `Shopify GraphQL error: ${response.errors
           .map((error) => error.message)
-          .join("; ")}`
+          .join("; ")}`,
       );
     }
 
@@ -35,7 +50,9 @@ export class ShopifyClient {
 
   async uploadImage(file: File): Promise<string> {
     const filename = file.name || "cover.jpg";
-    const mimeType = file.type || (filename.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg");
+    const mimeType =
+      file.type ||
+      (filename.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg");
     const fileSize = file.size.toString();
 
     const mutation = `
@@ -80,7 +97,7 @@ export class ShopifyClient {
 
     if (response.data?.stagedUploadsCreate?.userErrors?.length) {
       throw new Error(
-        `Failed to request staged upload: ${response.data.stagedUploadsCreate.userErrors.map((e) => e.message).join(", ")}`
+        `Failed to request staged upload: ${response.data.stagedUploadsCreate.userErrors.map((e) => e.message).join(", ")}`,
       );
     }
 
@@ -102,13 +119,18 @@ export class ShopifyClient {
 
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text();
-      throw new Error(`Failed to upload file to Shopify: ${uploadResponse.status} ${uploadResponse.statusText} ${errorText}`);
+      throw new Error(
+        `Failed to upload file to Shopify: ${uploadResponse.status} ${uploadResponse.statusText} ${errorText}`,
+      );
     }
 
     return target.resourceUrl;
   }
 
-  async getMetafieldDefinitions(ownerType: "PRODUCT" | "PRODUCTVARIANT", namespace?: string) {
+  async getMetafieldDefinitions(
+    ownerType: "PRODUCT" | "PRODUCTVARIANT",
+    namespace?: string,
+  ) {
     const query = `
       query GetMetafieldDefinitions($ownerType: MetafieldOwnerType!, $namespace: String) {
         metafieldDefinitions(
@@ -198,9 +220,11 @@ export class ShopifyClient {
       };
     }>(mutation, { definition });
 
-    if (response.data?.metafieldDefinitionCreate.userErrors.length > 0) {
+    const metafieldDefinitionErrors =
+      response.data?.metafieldDefinitionCreate.userErrors || [];
+    if (metafieldDefinitionErrors.length > 0) {
       throw new Error(
-        `Failed to create metafield definition: ${response.data.metafieldDefinitionCreate.userErrors.map((e) => e.message).join(", ")}`
+        `Failed to create metafield definition: ${metafieldDefinitionErrors.map((e) => e.message).join(", ")}`,
       );
     }
 
@@ -231,7 +255,7 @@ export class ShopifyClient {
       throw new Error(
         `Failed to delete metafield definition: ${response.data.metafieldDefinitionDelete.userErrors
           .map((e) => e.message)
-          .join(", ")}`
+          .join(", ")}`,
       );
     }
 
@@ -317,7 +341,9 @@ export class ShopifyClient {
           name: field.name,
           required: field.required ?? false,
           type: field.type,
-          ...(field.validations?.length ? { validations: field.validations } : {}),
+          ...(field.validations?.length
+            ? { validations: field.validations }
+            : {}),
         },
       })) || []),
       ...(input.deleteFieldKeys?.map((key) => ({
@@ -364,7 +390,7 @@ export class ShopifyClient {
       throw new Error(
         `Failed to update metaobject definition: ${response.data.metaobjectDefinitionUpdate.userErrors
           .map((e) => e.message)
-          .join(", ")}`
+          .join(", ")}`,
       );
     }
   }
@@ -377,7 +403,7 @@ export class ShopifyClient {
       type: string;
       required?: boolean;
       validations?: Array<{ name: string; value: string }>;
-    }>
+    }>,
   ) {
     if (fields.length === 0) return;
     await this.updateMetaobjectDefinition({
@@ -425,9 +451,11 @@ export class ShopifyClient {
       };
     }>(mutation, { definition: input });
 
-    if (response.data?.metaobjectDefinitionCreate.userErrors.length > 0) {
+    const metaobjectDefinitionErrors =
+      response.data?.metaobjectDefinitionCreate.userErrors || [];
+    if (metaobjectDefinitionErrors.length > 0) {
       throw new Error(
-        `Failed to create metaobject definition: ${response.data.metaobjectDefinitionCreate.userErrors.map((e) => e.message).join(", ")}`
+        `Failed to create metaobject definition: ${metaobjectDefinitionErrors.map((e) => e.message).join(", ")}`,
       );
     }
 
@@ -471,9 +499,11 @@ export class ShopifyClient {
       };
     }>(mutation, { metaobject: input });
 
-    if (response.data?.metaobjectCreate.userErrors.length > 0) {
+    const metaobjectCreateErrors =
+      response.data?.metaobjectCreate.userErrors || [];
+    if (metaobjectCreateErrors.length > 0) {
       throw new Error(
-        `Failed to create metaobject: ${response.data.metaobjectCreate.userErrors.map((e) => e.message).join(", ")}`
+        `Failed to create metaobject: ${metaobjectCreateErrors.map((e) => e.message).join(", ")}`,
       );
     }
 
@@ -516,11 +546,11 @@ export class ShopifyClient {
       };
     }>(mutation, { id: input.id, metaobject: { fields: input.fields } });
 
-    if (response.data?.metaobjectUpdate.userErrors.length > 0) {
+    const metaobjectUpdateErrors =
+      response.data?.metaobjectUpdate.userErrors || [];
+    if (metaobjectUpdateErrors.length > 0) {
       throw new Error(
-        `Failed to update metaobject: ${response.data.metaobjectUpdate.userErrors
-          .map((e) => e.message)
-          .join(", ")}`
+        `Failed to update metaobject: ${metaobjectUpdateErrors.map((e) => e.message).join(", ")}`,
       );
     }
 
@@ -558,8 +588,61 @@ export class ShopifyClient {
     return response.data?.metaobjects.nodes || [];
   }
 
+  async getProductByHandle(handle: string) {
+    const query = `
+      query GetProductByHandle($query: String!) {
+        products(first: 5, query: $query) {
+          nodes {
+            id
+            title
+            handle
+            status
+            productType
+            tags
+            variants(first: 20) {
+              nodes {
+                id
+                title
+                price
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      products: {
+        nodes: Array<{
+          id: string;
+          title: string;
+          handle: string;
+          status: string;
+          productType: string | null;
+          tags: string[];
+          variants: {
+            nodes: Array<{
+              id: string;
+              title: string;
+              price: string;
+            }>;
+          };
+        }>;
+      };
+    }>(query, {
+      query: `handle:${handle}`,
+    });
+
+    return (
+      response.data?.products.nodes.find(
+        (product) => product.handle === handle,
+      ) || null
+    );
+  }
+
   async createProduct(input: {
     title: string;
+    handle?: string;
     descriptionHtml?: string;
     status?: "ACTIVE" | "DRAFT";
     vendor?: string;
@@ -591,8 +674,8 @@ export class ShopifyClient {
       new Set(
         variants
           .map((variant) => variant.title?.trim())
-          .filter((value): value is string => !!value)
-      )
+          .filter((value): value is string => !!value),
+      ),
     );
 
     const createInput: Record<string, unknown> = { ...baseInput };
@@ -675,14 +758,21 @@ export class ShopifyClient {
       };
     }>(mutation, { input: createInput, media: mediaInput });
 
-    if (response.data?.productCreate.userErrors.length > 0) {
-      const errors = response.data.productCreate.userErrors;
-      const criticalErrors = errors.filter(e => !e.message.toLowerCase().includes("media processing"));
+    const productCreateErrors = response.data?.productCreate.userErrors || [];
+    if (productCreateErrors.length > 0) {
+      const errors = productCreateErrors;
+      const criticalErrors = errors.filter(
+        (e) => !e.message.toLowerCase().includes("media processing"),
+      );
 
       if (criticalErrors.length > 0) {
-        throw new Error(`Failed to create product: ${criticalErrors.map((e) => e.message).join(", ")}`);
+        throw new Error(
+          `Failed to create product: ${criticalErrors.map((e) => e.message).join(", ")}`,
+        );
       } else {
-        console.warn(`[Shopify Client] Product created, but media failed: ${errors.map(e => e.message).join(", ")}`);
+        console.warn(
+          `[Shopify Client] Product created, but media failed: ${errors.map((e) => e.message).join(", ")}`,
+        );
       }
     }
 
@@ -692,7 +782,9 @@ export class ShopifyClient {
     if (variants.length > 0) {
       const byLicenseValue = new Map<string, string>();
       for (const edge of product.variants.edges) {
-        const selected = edge.node.selectedOptions.find((opt) => opt.name === "License");
+        const selected = edge.node.selectedOptions.find(
+          (opt) => opt.name === "License",
+        );
         if (selected?.value) {
           byLicenseValue.set(selected.value, edge.node.id);
         }
@@ -719,9 +811,7 @@ export class ShopifyClient {
             price: variant.price,
             compareAtPrice: variant.compareAtPrice,
             inventoryPolicy: variant.inventoryPolicy || "CONTINUE",
-            optionValues: [
-              { optionName: "License", name: variant.title },
-            ],
+            optionValues: [{ optionName: "License", name: variant.title }],
             // Metafields can be specified but we actually set them manually later in productCreator
           });
         }
@@ -767,19 +857,30 @@ export class ShopifyClient {
           throw new Error(
             `Failed to update product variants: ${updateResponse.data.productVariantsBulkUpdate.userErrors
               .map((e) => e.message)
-              .join(", ")}`
+              .join(", ")}`,
           );
         }
 
-        const updatedByLicenseValue = new Map<string, { id: string; title: string; price: string; selectedOptions: Array<{name: string, value: string}> }>();
-        for (const variant of updateResponse.data?.productVariantsBulkUpdate.productVariants || []) {
-          const selected = variant.selectedOptions.find((opt) => opt.name === "License");
+        const updatedByLicenseValue = new Map<
+          string,
+          {
+            id: string;
+            title: string;
+            price: string;
+            selectedOptions: Array<{ name: string; value: string }>;
+          }
+        >();
+        for (const variant of updateResponse.data?.productVariantsBulkUpdate
+          .productVariants || []) {
+          const selected = variant.selectedOptions.find(
+            (opt) => opt.name === "License",
+          );
           if (selected?.value) {
             updatedByLicenseValue.set(selected.value, {
               id: variant.id,
               title: variant.title,
               price: variant.price,
-              selectedOptions: variant.selectedOptions
+              selectedOptions: variant.selectedOptions,
             });
           }
         }
@@ -805,7 +906,7 @@ export class ShopifyClient {
               }
             }
           `;
-          
+
           const createResponse = await this.query<{
             productVariantsBulkCreate: {
               productVariants: Array<{
@@ -821,22 +922,27 @@ export class ShopifyClient {
             variants: creates,
           });
 
-          if (createResponse.data?.productVariantsBulkCreate.userErrors.length) {
+          if (
+            createResponse.data?.productVariantsBulkCreate.userErrors.length
+          ) {
             throw new Error(
               `Failed to create product variants: ${createResponse.data.productVariantsBulkCreate.userErrors
                 .map((e) => e.message)
-                .join(", ")}`
+                .join(", ")}`,
             );
           }
 
-          for (const variant of createResponse.data?.productVariantsBulkCreate.productVariants || []) {
-            const selected = variant.selectedOptions.find((opt) => opt.name === "License");
+          for (const variant of createResponse.data?.productVariantsBulkCreate
+            .productVariants || []) {
+            const selected = variant.selectedOptions.find(
+              (opt) => opt.name === "License",
+            );
             if (selected?.value) {
               updatedByLicenseValue.set(selected.value, {
                 id: variant.id,
                 title: variant.title,
                 price: variant.price,
-                selectedOptions: variant.selectedOptions
+                selectedOptions: variant.selectedOptions,
               });
             }
           }
@@ -844,13 +950,26 @@ export class ShopifyClient {
 
         const orderedEdges = variants
           .map((variant, index) => {
-            const selected = variant.title ? updatedByLicenseValue.get(variant.title) : undefined;
+            const selected = variant.title
+              ? updatedByLicenseValue.get(variant.title)
+              : undefined;
             if (selected) {
               return { node: selected };
             }
             return product.variants.edges[index];
           })
-          .filter((edge): edge is { node: { id: string; title: string; price: string; selectedOptions: Array<{name: string, value: string}> } } => !!edge);
+          .filter(
+            (
+              edge,
+            ): edge is {
+              node: {
+                id: string;
+                title: string;
+                price: string;
+                selectedOptions: Array<{ name: string; value: string }>;
+              };
+            } => !!edge,
+          );
 
         const updatedProduct = {
           ...product,
@@ -868,12 +987,23 @@ export class ShopifyClient {
       .map((variant, index) => {
         const matched = product.variants.edges.find((edge) =>
           edge.node.selectedOptions.some(
-            (opt) => opt.name === "License" && opt.value === variant.title
-          )
+            (opt) => opt.name === "License" && opt.value === variant.title,
+          ),
         );
         return matched || product.variants.edges[index];
       })
-      .filter((edge): edge is { node: { id: string; title: string; price: string; selectedOptions: Array<{ name: string; value: string }> } } => !!edge);
+      .filter(
+        (
+          edge,
+        ): edge is {
+          node: {
+            id: string;
+            title: string;
+            price: string;
+            selectedOptions: Array<{ name: string; value: string }>;
+          };
+        } => !!edge,
+      );
 
     const orderedProduct = {
       ...product,
@@ -892,7 +1022,10 @@ export class ShopifyClient {
     return orderedProduct;
   }
 
-  private async publishProductIfNeeded(productId: string, status?: "ACTIVE" | "DRAFT") {
+  private async publishProductIfNeeded(
+    productId: string,
+    status?: "ACTIVE" | "DRAFT",
+  ) {
     if (status !== "ACTIVE") return;
 
     try {
@@ -900,7 +1033,7 @@ export class ShopifyClient {
 
       if (!onlineStorePublicationId) {
         console.warn(
-          `[Shopify Client] Product ${productId} created as ACTIVE, but no Online Store publication was found.`
+          `[Shopify Client] Product ${productId} created as ACTIVE, but no Online Store publication was found.`,
         );
         return;
       }
@@ -910,7 +1043,7 @@ export class ShopifyClient {
       console.warn(
         `[Shopify Client] Product ${productId} created as ACTIVE, but Online Store publication failed: ${
           error instanceof Error ? error.message : String(error)
-        }`
+        }`,
       );
     }
   }
@@ -938,7 +1071,7 @@ export class ShopifyClient {
 
     const publications = response.data?.publications.nodes || [];
     const onlineStore = publications.find(
-      (publication) => publication.name.trim().toLowerCase() === "online store"
+      (publication) => publication.name.trim().toLowerCase() === "online store",
     );
 
     return onlineStore?.id || null;
@@ -969,7 +1102,7 @@ export class ShopifyClient {
       throw new Error(
         `Failed to publish product: ${response.data.publishablePublish.userErrors
           .map((error) => error.message)
-          .join(", ")}`
+          .join(", ")}`,
       );
     }
   }
@@ -981,7 +1114,7 @@ export class ShopifyClient {
       key: string;
       type: string;
       value: string;
-    }>
+    }>,
   ) {
     if (metafields.length === 0) return [];
 
@@ -1013,7 +1146,7 @@ export class ShopifyClient {
       throw new Error(
         `Failed to set metafields: ${response.data.metafieldsSet.userErrors
           .map((e) => e.message)
-          .join(", ")}`
+          .join(", ")}`,
       );
     }
 
@@ -1055,7 +1188,12 @@ export class ShopifyClient {
 
 export function createShopifyClient(
   session: any,
-  admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+  admin: {
+    graphql: (
+      query: string,
+      options?: Record<string, any>,
+    ) => Promise<Response>;
+  },
 ) {
   return new ShopifyClient(session, admin);
 }

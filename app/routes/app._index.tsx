@@ -1,6 +1,11 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
+import {
+  Form,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "@remix-run/react";
 import { useEffect, useState } from "react";
 import prisma from "~/db.server";
 import { authenticate } from "~/shopify.server";
@@ -27,9 +32,7 @@ import {
   ColorIcon,
   PlusIcon,
 } from "@shopify/polaris-icons";
-import {
-  isResendWebhookTrackingEnabled,
-} from "~/services/email.server";
+import { isResendWebhookTrackingEnabled } from "~/services/email.server";
 import { createMetafieldSetupService } from "~/services/metafieldSetup";
 import { createProductCreatorService } from "~/services/productCreator";
 import { getAppReadiness } from "~/services/appReadiness.server";
@@ -178,7 +181,9 @@ async function getPublishedBeatCount(admin: AdminClient): Promise<number> {
     const connection = payload.data?.products;
     if (!connection) break;
 
-    beatCount += connection.nodes.filter((product) => product.status === "ACTIVE").length;
+    beatCount += connection.nodes.filter(
+      (product) => product.status === "ACTIVE",
+    ).length;
     hasNextPage = connection.pageInfo.hasNextPage;
     cursor = connection.pageInfo.endCursor;
   }
@@ -191,7 +196,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const readiness = await getAppReadiness(session, admin);
+    const setupService = createMetafieldSetupService(session, admin);
     const productService = createProductCreatorService(session, admin);
+    const [primaryProducer, defaultLicensor] = await Promise.all([
+      setupService.getPrimaryProducer().catch(() => null),
+      setupService.getDefaultLicensor().catch(() => null),
+    ]);
 
     let overview: {
       licenseCount: number;
@@ -204,42 +214,49 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } | null = null;
 
     if (readiness.coreReady) {
-      const [licenses, publishedBeatCount, draftBeatCount, deliveriesNeedingAttention, recentDeliveries] =
-        await Promise.all([
-          productService.getLicenseMetaobjects().catch(() => []),
-          getPublishedBeatCount(admin).catch(() => 0),
-          prisma.beatDraft.count({ where: { shop: session.shop } }).catch(() => 0),
-          prisma.deliveryAccess.count({
-            where: {
-              shop: session.shop,
-              OR: [
-                { deliveryEmailStatus: "failed" },
-                { deliveryEmailStatus: "skipped" },
-                { deliveryEmailConfirmedStatus: "failed" },
-                { deliveryEmailConfirmedStatus: "bounced" },
-                { deliveryEmailConfirmedStatus: "complained" },
-              ],
-            },
-          }),
-          prisma.deliveryAccess.findMany({
-            where: { shop: session.shop },
-            orderBy: { createdAt: "desc" },
-            take: 5,
-            include: {
-              order: {
-                select: {
-                  orderNumber: true,
-                  items: {
-                    select: {
-                      beatTitle: true,
-                      licenseName: true,
-                    },
+      const [
+        licenses,
+        publishedBeatCount,
+        draftBeatCount,
+        deliveriesNeedingAttention,
+        recentDeliveries,
+      ] = await Promise.all([
+        productService.getLicenseMetaobjects().catch(() => []),
+        getPublishedBeatCount(admin).catch(() => 0),
+        prisma.beatDraft
+          .count({ where: { shop: session.shop } })
+          .catch(() => 0),
+        prisma.deliveryAccess.count({
+          where: {
+            shop: session.shop,
+            OR: [
+              { deliveryEmailStatus: "failed" },
+              { deliveryEmailStatus: "skipped" },
+              { deliveryEmailConfirmedStatus: "failed" },
+              { deliveryEmailConfirmedStatus: "bounced" },
+              { deliveryEmailConfirmedStatus: "complained" },
+            ],
+          },
+        }),
+        prisma.deliveryAccess.findMany({
+          where: { shop: session.shop },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          include: {
+            order: {
+              select: {
+                orderNumber: true,
+                items: {
+                  select: {
+                    beatTitle: true,
+                    licenseName: true,
                   },
                 },
               },
             },
-          }),
-        ]);
+          },
+        }),
+      ]);
 
       overview = {
         licenseCount: licenses.length,
@@ -251,31 +268,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         draftBeatCount,
         deliveriesNeedingAttention,
         emailTrackingEnabled: isResendWebhookTrackingEnabled(),
-        recentDeliveries: recentDeliveries.map((delivery: {
-          id: string;
-          customerEmail: string;
-          createdAt: Date;
-          deliveryEmailStatus: string;
-          deliveryEmailConfirmedStatus: string | null;
-          order: {
-            orderNumber: string;
-            items: Array<{ beatTitle: string; licenseName: string }>;
-          };
-        }) => ({
-          id: delivery.id,
-          orderNumber: delivery.order.orderNumber,
-          customerEmail: delivery.customerEmail,
-          createdAt: delivery.createdAt.toISOString(),
-          itemSummary: buildDeliveryItemSummary(delivery.order.items),
-          deliveryEmailStatus: delivery.deliveryEmailStatus,
-          deliveryEmailConfirmedStatus: delivery.deliveryEmailConfirmedStatus,
-        })),
+        recentDeliveries: recentDeliveries.map(
+          (delivery: {
+            id: string;
+            customerEmail: string;
+            createdAt: Date;
+            deliveryEmailStatus: string;
+            deliveryEmailConfirmedStatus: string | null;
+            order: {
+              orderNumber: string;
+              items: Array<{ beatTitle: string; licenseName: string }>;
+            };
+          }) => ({
+            id: delivery.id,
+            orderNumber: delivery.order.orderNumber,
+            customerEmail: delivery.customerEmail,
+            createdAt: delivery.createdAt.toISOString(),
+            itemSummary: buildDeliveryItemSummary(delivery.order.items),
+            deliveryEmailStatus: delivery.deliveryEmailStatus,
+            deliveryEmailConfirmedStatus: delivery.deliveryEmailConfirmedStatus,
+          }),
+        ),
       };
     }
 
     return json({
       readiness,
       overview,
+      setupDefaults: {
+        initialProducerName:
+          primaryProducer?.fields.find((field) => field.key === "name")
+            ?.value || "",
+        initialLicensorName:
+          defaultLicensor?.fields.find((field) => field.key === "legal_name")
+            ?.value || "",
+      },
       error: null,
     });
   } catch (error) {
@@ -284,7 +311,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       {
         readiness: null,
         overview: null,
-        error: error instanceof Error ? error.message : "Failed to load dashboard",
+        setupDefaults: null,
+        error:
+          error instanceof Error ? error.message : "Failed to load dashboard",
       },
       { status: 500 },
     );
@@ -297,8 +326,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const setupService = createMetafieldSetupService(session, admin);
   const formData = await request.formData();
 
-  const initialProducerName = String(formData.get("initialProducerName") || "").trim();
-  const mode = parseStorageMode(String(formData.get("mode") || "managed")) || "managed";
+  const initialProducerName = String(
+    formData.get("initialProducerName") || "",
+  ).trim();
+  const initialLicensorName = String(
+    formData.get("initialLicensorName") || "",
+  ).trim();
+  const mode =
+    parseStorageMode(String(formData.get("mode") || "managed")) || "managed";
 
   let storageError: string | null = null;
 
@@ -307,11 +342,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const bucketName = String(formData.get("bucketName") || "").trim();
     const publicBaseUrl = String(formData.get("publicBaseUrl") || "").trim();
     const accessKeyIdInput = String(formData.get("accessKeyId") || "").trim();
-    const secretAccessKeyInput = String(formData.get("secretAccessKey") || "").trim();
+    const secretAccessKeyInput = String(
+      formData.get("secretAccessKey") || "",
+    ).trim();
 
     const existing = await getResolvedR2Credentials(shop);
     const accessKeyId = accessKeyIdInput || existing?.accessKeyId || "";
-    const secretAccessKey = secretAccessKeyInput || existing?.secretAccessKey || "";
+    const secretAccessKey =
+      secretAccessKeyInput || existing?.secretAccessKey || "";
 
     const testResult = await testR2Connection({
       accountId,
@@ -342,7 +380,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    const setupResult = await setupService.runFullSetup({ initialProducerName });
+    const setupResult = await setupService.runFullSetup({
+      initialProducerName,
+      initialLicensorName,
+    });
 
     if (setupResult.success && !storageError) {
       return redirect("/app");
@@ -365,17 +406,40 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Dashboard() {
-  const { readiness, overview, error: loaderError } = useLoaderData<typeof loader>();
+  const {
+    readiness,
+    overview,
+    setupDefaults,
+    error: loaderError,
+  } = useLoaderData<typeof loader>();
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
 
   const [step, setStep] = useState(1);
-  const [initialProducerName, setInitialProducerName] = useState("");
+  const [initialProducerName, setInitialProducerName] = useState(
+    setupDefaults?.initialProducerName || "",
+  );
+  const [initialLicensorName, setInitialLicensorName] = useState(
+    setupDefaults?.initialLicensorName ||
+      setupDefaults?.initialProducerName ||
+      "",
+  );
+  const [licensorNameEdited, setLicensorNameEdited] = useState(
+    Boolean(
+      setupDefaults?.initialLicensorName &&
+      setupDefaults.initialLicensorName !==
+        (setupDefaults.initialProducerName || ""),
+    ),
+  );
   const [storageMode, setStorageModeState] = useState(
     readiness?.storageConfig?.mode || "managed",
   );
-  const [accountId, setAccountId] = useState(readiness?.storageConfig?.accountId || "");
-  const [bucketName, setBucketName] = useState(readiness?.storageConfig?.bucketName || "");
+  const [accountId, setAccountId] = useState(
+    readiness?.storageConfig?.accountId || "",
+  );
+  const [bucketName, setBucketName] = useState(
+    readiness?.storageConfig?.bucketName || "",
+  );
   const [publicBaseUrl, setPublicBaseUrl] = useState(
     readiness?.storageConfig?.publicBaseUrl || "",
   );
@@ -389,8 +453,27 @@ export default function Dashboard() {
       setAccountId(readiness.storageConfig?.accountId || "");
       setBucketName(readiness.storageConfig?.bucketName || "");
       setPublicBaseUrl(readiness.storageConfig?.publicBaseUrl || "");
+      setInitialProducerName(setupDefaults?.initialProducerName || "");
+      setInitialLicensorName(
+        setupDefaults?.initialLicensorName ||
+          setupDefaults?.initialProducerName ||
+          "",
+      );
+      setLicensorNameEdited(
+        Boolean(
+          setupDefaults?.initialLicensorName &&
+          setupDefaults.initialLicensorName !==
+            (setupDefaults.initialProducerName || ""),
+        ),
+      );
     }
-  }, [readiness]);
+  }, [readiness, setupDefaults]);
+
+  useEffect(() => {
+    if (!licensorNameEdited) {
+      setInitialLicensorName(initialProducerName);
+    }
+  }, [initialProducerName, licensorNameEdited]);
 
   if (loaderError || !readiness) {
     return (
@@ -415,7 +498,7 @@ export default function Dashboard() {
     return (
       <Page
         title="Get started"
-        subtitle="Set up your producer profile, catalog presets, and delivery storage so Producer Launchpad can automate licensing end to end."
+        subtitle="Set up your producer profile, legal identity, catalog presets, and delivery storage so Producer Launchpad can automate licensing end to end."
       >
         <Layout>
           {readiness.hasStorageIssue && storageConfig?.lastError && (
@@ -487,10 +570,12 @@ export default function Dashboard() {
                   <BlockStack gap="600">
                     <BlockStack gap="200">
                       <Text variant="headingXl" as="h1">
-                        Your producer profile
+                        Your profile and legal identity
                       </Text>
                       <Text variant="bodyLg" as="p" tone="subdued">
-                        Start with the producer or brand name that should appear across your catalog and license records.
+                        Start with the creative name your catalog should use,
+                        then confirm the legal or business name that should
+                        appear on license agreements.
                       </Text>
                     </BlockStack>
 
@@ -504,12 +589,29 @@ export default function Dashboard() {
                       placeholder="e.g. Metro Boomin"
                     />
 
+                    <TextField
+                      label="Licensor / business name"
+                      name="licensorName"
+                      value={initialLicensorName}
+                      onChange={(value) => {
+                        setInitialLicensorName(value);
+                        setLicensorNameEdited(true);
+                      }}
+                      autoComplete="off"
+                      requiredIndicator
+                      placeholder="Defaults to your producer name"
+                      helpText="This is the legal or business name that will appear on your starter agreements. You can refine DBA, entity type, and other legal details later in Settings."
+                    />
+
                     <InlineStack align="end">
                       <Button
                         variant="primary"
                         size="large"
                         onClick={() => setStep(2)}
-                        disabled={!initialProducerName.trim()}
+                        disabled={
+                          !initialProducerName.trim() ||
+                          !initialLicensorName.trim()
+                        }
                       >
                         Next step
                       </Button>
@@ -524,7 +626,8 @@ export default function Dashboard() {
                         Catalog presets
                       </Text>
                       <Text variant="bodyLg" as="p" tone="subdued">
-                        We’ll create the default license templates and genre structure your storefront depends on.
+                        We’ll create the default license templates and genre
+                        structure your storefront depends on.
                       </Text>
                     </BlockStack>
 
@@ -532,7 +635,11 @@ export default function Dashboard() {
                       <Card background="bg-surface-secondary">
                         <BlockStack gap="400">
                           <InlineStack gap="200" blockAlign="center">
-                            <Box background="bg-surface-success" padding="100" borderRadius="100">
+                            <Box
+                              background="bg-surface-success"
+                              padding="100"
+                              borderRadius="100"
+                            >
                               <Icon source={CollectionIcon} tone="success" />
                             </Box>
                             <Text as="h3" variant="headingMd">
@@ -540,7 +647,8 @@ export default function Dashboard() {
                             </Text>
                           </InlineStack>
                           <Text as="p" tone="subdued">
-                            Three proven commercial-use tiers will be ready for your beat variants.
+                            Three proven commercial-use tiers will be ready for
+                            your beat variants.
                           </Text>
                           <BlockStack gap="200">
                             <Badge size="small">Basic License</Badge>
@@ -557,7 +665,11 @@ export default function Dashboard() {
                       <Card background="bg-surface-secondary">
                         <BlockStack gap="400">
                           <InlineStack gap="200" blockAlign="center">
-                            <Box background="bg-surface-success" padding="100" borderRadius="100">
+                            <Box
+                              background="bg-surface-success"
+                              padding="100"
+                              borderRadius="100"
+                            >
                               <Icon source={ColorIcon} tone="success" />
                             </Box>
                             <Text as="h3" variant="headingMd">
@@ -565,7 +677,8 @@ export default function Dashboard() {
                             </Text>
                           </InlineStack>
                           <Text as="p" tone="subdued">
-                            Popular genres and the data fields your storefront needs will be wired automatically.
+                            Popular genres and the data fields your storefront
+                            needs will be wired automatically.
                           </Text>
                           <InlineStack gap="200" wrap>
                             <Badge size="small">Trap</Badge>
@@ -580,14 +693,19 @@ export default function Dashboard() {
                     </InlineGrid>
 
                     <Text as="p" tone="subdued">
-                      You can adjust license details later from Licenses and manage technical repair from Settings.
+                      You can adjust license details later from Licenses and
+                      manage technical repair from Settings.
                     </Text>
 
                     <InlineStack align="space-between">
                       <Button size="large" onClick={() => setStep(1)}>
                         Back
                       </Button>
-                      <Button variant="primary" size="large" onClick={() => setStep(3)}>
+                      <Button
+                        variant="primary"
+                        size="large"
+                        onClick={() => setStep(3)}
+                      >
                         Continue
                       </Button>
                     </InlineStack>
@@ -596,7 +714,16 @@ export default function Dashboard() {
 
                 {step === 3 && (
                   <Form method="post">
-                    <input type="hidden" name="initialProducerName" value={initialProducerName} />
+                    <input
+                      type="hidden"
+                      name="initialProducerName"
+                      value={initialProducerName}
+                    />
+                    <input
+                      type="hidden"
+                      name="initialLicensorName"
+                      value={initialLicensorName}
+                    />
 
                     <BlockStack gap="600">
                       <BlockStack gap="200">
@@ -604,7 +731,8 @@ export default function Dashboard() {
                           Delivery storage
                         </Text>
                         <Text variant="bodyLg" as="p" tone="subdued">
-                          Choose where Producer Launchpad should keep the high-quality files it delivers after purchase.
+                          Choose where Producer Launchpad should keep the
+                          high-quality files it delivers after purchase.
                         </Text>
                       </BlockStack>
 
@@ -635,7 +763,8 @@ export default function Dashboard() {
                                 Managed by Producer Launchpad
                               </Text>
                               <Text as="p" tone="subdued">
-                                Recommended if you want the fastest path to automated delivery.
+                                Recommended if you want the fastest path to
+                                automated delivery.
                               </Text>
                             </BlockStack>
                           </InlineStack>
@@ -667,7 +796,8 @@ export default function Dashboard() {
                                 Connect my own Cloudflare R2 bucket
                               </Text>
                               <Text as="p" tone="subdued">
-                                Best if you already manage your own storage infrastructure.
+                                Best if you already manage your own storage
+                                infrastructure.
                               </Text>
                             </BlockStack>
                           </InlineStack>
@@ -712,7 +842,9 @@ export default function Dashboard() {
                                   ? `Current: ${storageConfig.maskedAccessKeyId}`
                                   : ""
                               }
-                              requiredIndicator={!storageConfig?.maskedAccessKeyId}
+                              requiredIndicator={
+                                !storageConfig?.maskedAccessKeyId
+                              }
                             />
                             <TextField
                               label="Secret access key"
@@ -726,7 +858,9 @@ export default function Dashboard() {
                                   ? "Leave blank to keep current"
                                   : ""
                               }
-                              requiredIndicator={!storageConfig?.maskedAccessKeyId}
+                              requiredIndicator={
+                                !storageConfig?.maskedAccessKeyId
+                              }
                             />
                           </FormLayout>
                         </Box>
@@ -737,7 +871,12 @@ export default function Dashboard() {
                           <Button size="large" onClick={() => setStep(2)}>
                             Back
                           </Button>
-                          <Button variant="primary" size="large" submit loading={isSubmitting}>
+                          <Button
+                            variant="primary"
+                            size="large"
+                            submit
+                            loading={isSubmitting}
+                          >
                             Finish setup
                           </Button>
                         </InlineStack>
@@ -757,9 +896,20 @@ export default function Dashboard() {
                     What Producer Launchpad handles
                   </Text>
                   <List>
-                    <List.Item>Creates the data fields your beat catalog depends on</List.Item>
-                    <List.Item>Generates license agreements automatically after purchase</List.Item>
-                    <List.Item>Delivers files and portal access without manual fulfillment</List.Item>
+                    <List.Item>
+                      Creates the data fields your beat catalog depends on
+                    </List.Item>
+                    <List.Item>
+                      Seeds the hidden stems add-on product used by the
+                      storefront upsell flow
+                    </List.Item>
+                    <List.Item>
+                      Generates license agreements automatically after purchase
+                    </List.Item>
+                    <List.Item>
+                      Delivers files and portal access without manual
+                      fulfillment
+                    </List.Item>
                   </List>
                 </BlockStack>
               </Card>
@@ -770,7 +920,8 @@ export default function Dashboard() {
                     Need to tweak something later?
                   </Text>
                   <Text as="p" tone="subdued">
-                    Ongoing configuration lives in Settings, while license editing and delivery monitoring stay on their own pages.
+                    Ongoing configuration lives in Settings, while license
+                    editing and delivery monitoring stay on their own pages.
                   </Text>
                   <Button url={readiness.settingsRoute}>Open settings</Button>
                 </BlockStack>
@@ -797,43 +948,47 @@ export default function Dashboard() {
     message: string;
     actionLabel?: string;
     actionUrl?: string;
-  } = readiness.hasStorageIssue && storageConfig?.lastError
-    ? {
-        title: "Storage needs attention",
-        tone: "warning",
-        message: "Uploads and post-purchase delivery may fail until storage is fixed.",
-        actionLabel: "Open settings",
-        actionUrl: "/app/settings",
-      }
-    : deliveriesNeedingAttention > 0
+  } =
+    readiness.hasStorageIssue && storageConfig?.lastError
       ? {
-          title: "Delivery needs attention",
+          title: "Storage needs attention",
           tone: "warning",
-          message: `${deliveriesNeedingAttention} recent deliver${
-            deliveriesNeedingAttention === 1 ? "y needs" : "ies need"
-          } review.`,
-          actionLabel: "Open deliveries",
-          actionUrl: "/app/deliveries",
+          message:
+            "Uploads and post-purchase delivery may fail until storage is fixed.",
+          actionLabel: "Open settings",
+          actionUrl: "/app/settings",
         }
-      : isTrueInitialState
+      : deliveriesNeedingAttention > 0
         ? {
-            title: "Upload your first beat",
-            tone: "info",
-            message: "Your licenses and delivery system are ready. Add a beat to start selling and delivering files automatically.",
+            title: "Delivery needs attention",
+            tone: "warning",
+            message: `${deliveriesNeedingAttention} recent deliver${
+              deliveriesNeedingAttention === 1 ? "y needs" : "ies need"
+            } review.`,
+            actionLabel: "Open deliveries",
+            actionUrl: "/app/deliveries",
           }
-        : hasDraftsOnly
+        : isTrueInitialState
           ? {
-              title: "Finish your first beat",
+              title: "Upload your first beat",
               tone: "info",
-              message: `You have ${draftBeatCount} draft${
-                draftBeatCount === 1 ? "" : "s"
-              } saved in Producer Launchpad. Publish one to start accepting orders.`,
+              message:
+                "Your licenses and delivery system are ready. Add a beat to start selling and delivering files automatically.",
             }
-          : {
-              title: "System status: Healthy",
-              tone: "success",
-              message: "Licenses, storage, and delivery are ready for new orders.",
-            };
+          : hasDraftsOnly
+            ? {
+                title: "Finish your first beat",
+                tone: "info",
+                message: `You have ${draftBeatCount} draft${
+                  draftBeatCount === 1 ? "" : "s"
+                } saved in Producer Launchpad. Publish one to start accepting orders.`,
+              }
+            : {
+                title: "System status: Healthy",
+                tone: "success",
+                message:
+                  "Licenses, storage, and delivery are ready for new orders.",
+              };
 
   return (
     <Page
@@ -852,7 +1007,10 @@ export default function Dashboard() {
             tone={statusBanner.tone}
             action={
               statusBanner.actionLabel && statusBanner.actionUrl
-                ? { content: statusBanner.actionLabel, url: statusBanner.actionUrl }
+                ? {
+                    content: statusBanner.actionLabel,
+                    url: statusBanner.actionUrl,
+                  }
                 : undefined
             }
           >
@@ -867,7 +1025,9 @@ export default function Dashboard() {
                 <InlineStack align="space-between" blockAlign="center">
                   <BlockStack gap="100">
                     <Text as="h2" variant="headingMd">
-                      {hasDraftsOnly ? "Finish your first beat" : "Your catalog is empty"}
+                      {hasDraftsOnly
+                        ? "Finish your first beat"
+                        : "Your catalog is empty"}
                     </Text>
                     <Text as="p" tone="subdued">
                       {hasDraftsOnly
@@ -917,23 +1077,36 @@ export default function Dashboard() {
                 {recentDeliveries.length > 0 ? (
                   <BlockStack gap="0">
                     {recentDeliveries.map((delivery, index) => {
-                      const displayedDeliveryEmailStatus = getDisplayedDeliveryEmailStatus(
-                        delivery.deliveryEmailStatus,
-                        delivery.deliveryEmailConfirmedStatus,
-                        emailTrackingEnabled,
-                      );
+                      const displayedDeliveryEmailStatus =
+                        getDisplayedDeliveryEmailStatus(
+                          delivery.deliveryEmailStatus,
+                          delivery.deliveryEmailConfirmedStatus,
+                          emailTrackingEnabled,
+                        );
 
                       return (
                         <Box
                           key={delivery.id}
                           paddingBlockStart={index === 0 ? "0" : "300"}
-                          paddingBlockEnd={index === recentDeliveries.length - 1 ? "0" : "300"}
+                          paddingBlockEnd={
+                            index === recentDeliveries.length - 1 ? "0" : "300"
+                          }
                           borderColor="border"
-                          borderBlockEndWidth={index === recentDeliveries.length - 1 ? "0" : "025"}
+                          borderBlockEndWidth={
+                            index === recentDeliveries.length - 1 ? "0" : "025"
+                          }
                         >
-                          <InlineStack align="space-between" blockAlign="start" gap="400">
+                          <InlineStack
+                            align="space-between"
+                            blockAlign="start"
+                            gap="400"
+                          >
                             <BlockStack gap="100">
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                              <Text
+                                as="p"
+                                variant="bodyMd"
+                                fontWeight="semibold"
+                              >
                                 Order #{delivery.orderNumber}
                               </Text>
                               <Text as="p" tone="subdued">
@@ -948,8 +1121,14 @@ export default function Dashboard() {
                               <Text as="p" tone="subdued">
                                 {formatHomeDate(delivery.createdAt)}
                               </Text>
-                              <Badge tone={getDeliveryEmailBadgeTone(displayedDeliveryEmailStatus)}>
-                                {getDeliveryEmailBadgeLabel(displayedDeliveryEmailStatus)}
+                              <Badge
+                                tone={getDeliveryEmailBadgeTone(
+                                  displayedDeliveryEmailStatus,
+                                )}
+                              >
+                                {getDeliveryEmailBadgeLabel(
+                                  displayedDeliveryEmailStatus,
+                                )}
                               </Badge>
                             </BlockStack>
                           </InlineStack>
@@ -978,7 +1157,8 @@ export default function Dashboard() {
                   License templates
                 </Text>
                 <Text as="p" tone="subdued">
-                  Used for storefront offers, variant mapping, and agreement generation.
+                  Used for storefront offers, variant mapping, and agreement
+                  generation.
                 </Text>
                 {licenseNames.length > 0 ? (
                   <List>
@@ -988,7 +1168,8 @@ export default function Dashboard() {
                   </List>
                 ) : (
                   <Text as="p" tone="subdued">
-                    License templates will appear here after setup runs successfully.
+                    License templates will appear here after setup runs
+                    successfully.
                   </Text>
                 )}
                 <Button icon={CollectionIcon} url="/app/licenses">

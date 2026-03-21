@@ -1,4 +1,8 @@
 export type DeliveryFormat = "mp3" | "wav" | "stems";
+export type StemsPolicy =
+  | "not_available"
+  | "available_as_addon"
+  | "included_by_default";
 
 export const DELIVERY_FORMAT_ORDER: DeliveryFormat[] = ["mp3", "wav", "stems"];
 
@@ -18,9 +22,23 @@ export function normalizeDeliveryFormat(value: string): DeliveryFormat | null {
   return null;
 }
 
+export function stemsIncludedByDefault(stemsPolicy?: string | null) {
+  return stemsPolicy === "included_by_default";
+}
+
+export function stemsAvailableAsAddon(stemsPolicy?: string | null) {
+  return stemsPolicy === "available_as_addon";
+}
+
+export function licenseOffersStems(stemsPolicy?: string | null) {
+  return (
+    stemsIncludedByDefault(stemsPolicy) || stemsAvailableAsAddon(stemsPolicy)
+  );
+}
+
 export function getRequiredDeliveryFormats(license: {
   fileFormats?: string;
-  includesStems?: boolean;
+  stemsPolicy?: string;
 }): DeliveryFormat[] {
   const selected = new Set<DeliveryFormat>();
 
@@ -30,7 +48,7 @@ export function getRequiredDeliveryFormats(license: {
     .filter((format): format is DeliveryFormat => Boolean(format))
     .forEach((format) => selected.add(format));
 
-  if (license.includesStems) {
+  if (stemsIncludedByDefault(license.stemsPolicy)) {
     selected.add("stems");
   }
 

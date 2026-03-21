@@ -1,6 +1,11 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Link, useFetcher, useLoaderData, useSearchParams } from "@remix-run/react";
+import {
+  Link,
+  useFetcher,
+  useLoaderData,
+  useSearchParams,
+} from "@remix-run/react";
 import type { BeatFile, LicenseFileMapping } from "@prisma/client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -32,6 +37,7 @@ import {
   DELIVERY_FORMAT_ORDER,
   formatDeliveryFormatLabel,
   getRequiredDeliveryFormats,
+  stemsAvailableAsAddon,
   normalizeDeliveryFormat,
   type DeliveryFormat,
 } from "~/services/deliveryPackages";
@@ -67,6 +73,7 @@ type BeatOfferSummary = {
   requiredFormats: DeliveryFormat[];
   mappedFormats: DeliveryFormat[];
   missingFormats: DeliveryFormat[];
+  supportNote: string | null;
   hasReference: boolean;
   isReady: boolean;
 };
@@ -146,12 +153,15 @@ function buildDeliverySummary(beat: BeatListItem) {
     return "Missing setup";
   }
 
-  return beat.offers.every((offer) => offer.isReady) ? "Ready" : "Missing files";
+  return beat.offers.every((offer) => offer.isReady)
+    ? "Ready"
+    : "Missing files";
 }
 
-function getBeatStatusBadge(
-  beat: BeatListItem,
-): { label: string; tone?: "success" | "attention" } {
+function getBeatStatusBadge(beat: BeatListItem): {
+  label: string;
+  tone?: "success" | "attention";
+} {
   if (beat.kind === "draft") {
     return { label: "Draft" };
   }
@@ -164,7 +174,12 @@ function getBeatStatusBadge(
 }
 
 async function getActiveBeats(
-  admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> },
+  admin: {
+    graphql: (
+      query: string,
+      options?: Record<string, any>,
+    ) => Promise<Response>;
+  },
   shop: string,
 ): Promise<BeatListItem[]> {
   const beats: Array<{
@@ -177,20 +192,18 @@ async function getActiveBeats(
     sourceLabel: string;
     actionLabel: string;
     actionUrl: string;
-    actionExternal: true;
+    actionExternal: boolean;
     licenseTemplateIds: string[];
     variants: Array<{
       id: string;
       title: string;
       price: string;
-      licenseReference:
-        | {
-            id: string;
-            licenseName: string;
-            fileFormats: string;
-            includesStems: boolean;
-          }
-        | null;
+      licenseReference: {
+        id: string;
+        licenseName: string;
+        fileFormats: string;
+        stemsPolicy: string;
+      } | null;
     }>;
   }> = [];
   let hasNextPage = true;
@@ -301,7 +314,8 @@ async function getActiveBeats(
           actionUrl: `https://${shop}/admin/products/${normalizeShopifyResourceId(product.id)}`,
           actionExternal: true,
           licenseTemplateIds:
-            product.metafield?.references?.nodes.map((license) => license.id) || [],
+            product.metafield?.references?.nodes.map((license) => license.id) ||
+            [],
           variants:
             product.variants?.nodes.map((variant) => ({
               id: variant.id,
@@ -311,17 +325,19 @@ async function getActiveBeats(
                 ? {
                     id: variant.metafield.reference.id,
                     licenseName:
-                      readMetaobjectField(variant.metafield.reference.fields, "license_name") ||
-                      variant.title,
+                      readMetaobjectField(
+                        variant.metafield.reference.fields,
+                        "license_name",
+                      ) || variant.title,
                     fileFormats: readMetaobjectField(
                       variant.metafield.reference.fields,
                       "file_formats",
                     ),
-                    includesStems:
+                    stemsPolicy:
                       readMetaobjectField(
                         variant.metafield.reference.fields,
-                        "includes_stems",
-                      ) === "true",
+                        "stems_policy",
+                      ) || "not_available",
                   }
                 : null,
             })) || [],
@@ -365,21 +381,41 @@ async function getActiveBeats(
       })
     : [];
 
+  const beatIds = Array.from(new Set(beats.map((beat) => beat.id)));
+  const beatsWithSharedStems = new Set(
+    beatIds.length > 0
+      ? (
+          await prisma.beatFile.findMany({
+            where: {
+              beatId: { in: beatIds },
+              filePurpose: "stems",
+            },
+            select: { beatId: true },
+          })
+        ).map((file: { beatId: string }) => file.beatId)
+      : [],
+  );
+
   const filesByVariantId = new Map<string, BeatFile[]>();
 
-  for (const mapping of licenseMappings as Array<LicenseFileMapping & { beatFile: BeatFile }>) {
+  for (const mapping of licenseMappings as Array<
+    LicenseFileMapping & { beatFile: BeatFile }
+  >) {
     const existingFiles = filesByVariantId.get(mapping.variantId) || [];
     existingFiles.push(mapping.beatFile);
     filesByVariantId.set(mapping.variantId, existingFiles);
   }
 
   return beats.map((beat) => {
+    const beatHasSharedStems = beatsWithSharedStems.has(beat.id);
     const offers = beat.variants.map((variant) => {
       const normalizedVariantId = normalizeShopifyResourceId(variant.id);
       const mappedFiles = [
         ...(filesByVariantId.get(variant.id) || []),
         ...(filesByVariantId.get(normalizedVariantId) || []),
-        ...(filesByVariantId.get(`gid://shopify/ProductVariant/${normalizedVariantId}`) || []),
+        ...(filesByVariantId.get(
+          `gid://shopify/ProductVariant/${normalizedVariantId}`,
+        ) || []),
       ];
       const mappedFormats = getUniqueDeliveryFormats(
         Array.from(
@@ -393,18 +429,38 @@ async function getActiveBeats(
       const requiredFormats = variant.licenseReference
         ? getRequiredDeliveryFormats(variant.licenseReference)
         : [];
-      const missingFormats = requiredFormats.filter((format) => !mappedFormats.includes(format));
+      const missingFormats = requiredFormats.filter(
+        (format) => !mappedFormats.includes(format),
+      );
+      const missingSharedStems =
+        variant.licenseReference &&
+        stemsAvailableAsAddon(variant.licenseReference.stemsPolicy) &&
+        !beatHasSharedStems;
+      const supportNote = variant.licenseReference
+        ? stemsAvailableAsAddon(variant.licenseReference.stemsPolicy)
+          ? beatHasSharedStems
+            ? "Shared stems ZIP ready for stems add-on orders."
+            : "Upload one shared stems ZIP to fulfill stems add-on orders."
+          : null
+        : null;
 
       return {
         variantId: variant.id,
         licenseMetaobjectId: variant.licenseReference?.id || null,
-        licenseName: variant.licenseReference?.licenseName || variant.title || "Untitled offer",
+        licenseName:
+          variant.licenseReference?.licenseName ||
+          variant.title ||
+          "Untitled offer",
         price: variant.price,
         requiredFormats,
         mappedFormats,
         missingFormats,
+        supportNote,
         hasReference: Boolean(variant.licenseReference?.id),
-        isReady: Boolean(variant.licenseReference?.id) && missingFormats.length === 0,
+        isReady:
+          Boolean(variant.licenseReference?.id) &&
+          missingFormats.length === 0 &&
+          !missingSharedStems,
       };
     });
 
@@ -438,13 +494,19 @@ async function getDraftBeats(shop: string): Promise<BeatListItem[]> {
     orderBy: { updatedAt: "desc" },
   });
 
-  return drafts.map((draft) => ({
+  return drafts.map((draft: (typeof drafts)[number]) => ({
     id: draft.id,
     title: draft.title || "Untitled draft",
     status: "draft" as const,
     coverArt:
-      parseJsonField<{ shopifyResourceUrl?: string | null; storageUrl?: string | null } | null>(draft.coverArtFileJson, null)?.shopifyResourceUrl ||
-      parseJsonField<{ shopifyResourceUrl?: string | null; storageUrl?: string | null } | null>(draft.coverArtFileJson, null)?.storageUrl ||
+      parseJsonField<{
+        shopifyResourceUrl?: string | null;
+        storageUrl?: string | null;
+      } | null>(draft.coverArtFileJson, null)?.shopifyResourceUrl ||
+      parseJsonField<{
+        shopifyResourceUrl?: string | null;
+        storageUrl?: string | null;
+      } | null>(draft.coverArtFileJson, null)?.storageUrl ||
       null,
     kind: "draft" as const,
     updatedAt: draft.updatedAt.toISOString(),
@@ -469,7 +531,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     beats: [...draftBeats, ...activeBeats],
     uploadSuccess: url.searchParams.get("success") === "true",
-    uploadStatus: url.searchParams.get("status") === "draft" ? "draft" : "active",
+    uploadStatus:
+      url.searchParams.get("status") === "draft" ? "draft" : "active",
   });
 };
 
@@ -523,7 +586,9 @@ export default function BeatsList() {
   const deleteFetcher = useFetcher<typeof action>();
   const { mode, setMode } = useSetIndexFiltersMode();
   const [queryValue, setQueryValue] = useState("");
-  const [sortSelected, setSortSelected] = useState<string[]>(["updatedAt desc"]);
+  const [sortSelected, setSortSelected] = useState<string[]>([
+    "updatedAt desc",
+  ]);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [activePopover, setActivePopover] = useState<{
     beatId: string;
@@ -546,7 +611,8 @@ export default function BeatsList() {
     [],
   );
 
-  const selectedStatusFilter = statusViews[selectedView]?.id as BeatStatusFilter;
+  const selectedStatusFilter = statusViews[selectedView]
+    ?.id as BeatStatusFilter;
 
   useEffect(() => {
     shopify.saveBar.hide("beat-upload-save-bar");
@@ -578,7 +644,10 @@ export default function BeatsList() {
         return false;
       }
 
-      if (selectedLicenseId && !beat.licenseTemplateIds.includes(selectedLicenseId)) {
+      if (
+        selectedLicenseId &&
+        !beat.licenseTemplateIds.includes(selectedLicenseId)
+      ) {
         return false;
       }
 
@@ -611,7 +680,13 @@ export default function BeatsList() {
     });
 
     return nextBeats;
-  }, [beats, queryValue, selectedLicenseId, selectedStatusFilter, sortSelected]);
+  }, [
+    beats,
+    queryValue,
+    selectedLicenseId,
+    selectedStatusFilter,
+    sortSelected,
+  ]);
 
   const {
     selectedResources,
@@ -631,14 +706,27 @@ export default function BeatsList() {
   );
 
   const hasOnlyDraftSelection =
-    selectedResources.length > 0 && selectedDrafts.length === selectedResources.length;
+    selectedResources.length > 0 &&
+    selectedDrafts.length === selectedResources.length;
 
   const sortOptions = useMemo<IndexFiltersProps["sortOptions"]>(
     () => [
-      { label: "Newest first", value: "updatedAt desc", directionLabel: "Newest first" },
-      { label: "Oldest first", value: "updatedAt asc", directionLabel: "Oldest first" },
+      {
+        label: "Newest first",
+        value: "updatedAt desc",
+        directionLabel: "Newest first",
+      },
+      {
+        label: "Oldest first",
+        value: "updatedAt asc",
+        directionLabel: "Oldest first",
+      },
       { label: "Title (A-Z)", value: "title asc", directionLabel: "Ascending" },
-      { label: "Title (Z-A)", value: "title desc", directionLabel: "Descending" },
+      {
+        label: "Title (Z-A)",
+        value: "title desc",
+        directionLabel: "Descending",
+      },
     ],
     [],
   );
@@ -696,7 +784,12 @@ export default function BeatsList() {
   }, [isDeletingDrafts]);
 
   const handleDeleteDrafts = useCallback(() => {
-    if (!hasOnlyDraftSelection || selectedDrafts.length === 0 || isDeletingDrafts) return;
+    if (
+      !hasOnlyDraftSelection ||
+      selectedDrafts.length === 0 ||
+      isDeletingDrafts
+    )
+      return;
 
     const deletingMessage =
       selectedDrafts.length === 1
@@ -710,8 +803,17 @@ export default function BeatsList() {
       formData.append("draftIds", draft.id);
     });
 
-    deleteFetcher.submit(formData, { method: "post", action: "/app/beats/delete-drafts" });
-  }, [deleteFetcher, hasOnlyDraftSelection, isDeletingDrafts, selectedDrafts, shopify]);
+    deleteFetcher.submit(formData, {
+      method: "post",
+      action: "/app/beats/delete-drafts",
+    });
+  }, [
+    deleteFetcher,
+    hasOnlyDraftSelection,
+    isDeletingDrafts,
+    selectedDrafts,
+    shopify,
+  ]);
 
   useEffect(() => {
     if (!deleteFetcher.data?.success) return;
@@ -737,11 +839,12 @@ export default function BeatsList() {
     setActivePopover(null);
   }, []);
 
-  const handlePopoverActivatorPointerDown = useCallback((
-    event: { stopPropagation: () => void },
-  ) => {
-    event.stopPropagation();
-  }, []);
+  const handlePopoverActivatorPointerDown = useCallback(
+    (event: { stopPropagation: () => void }) => {
+      event.stopPropagation();
+    },
+    [],
+  );
 
   const handlePopoverActivatorClick = useCallback(
     (
@@ -776,7 +879,10 @@ export default function BeatsList() {
             <EmptyState
               heading="No beats yet"
               image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-              action={{ content: "Upload your first beat", url: "/app/beats/new" }}
+              action={{
+                content: "Upload your first beat",
+                url: "/app/beats/new",
+              }}
             >
               <p>Upload a beat to start building your licensing catalog.</p>
             </EmptyState>
@@ -817,14 +923,17 @@ export default function BeatsList() {
               onDismiss={() => {
                 const next = new URLSearchParams(searchParams);
                 next.delete("success");
-                setSearchParams(next, { replace: true, preventScrollReset: true });
+                setSearchParams(next, {
+                  replace: true,
+                  preventScrollReset: true,
+                });
               }}
             >
               <p>
                 {uploadStatus === "draft" ? (
                   <>
-                    <Link to="/app/beats/new">Upload another beat</Link>, or reopen this draft any
-                    time from the Draft tab.
+                    <Link to="/app/beats/new">Upload another beat</Link>, or
+                    reopen this draft any time from the Draft tab.
                   </>
                 ) : (
                   <>
@@ -878,7 +987,11 @@ export default function BeatsList() {
             {filteredBeats.length === 0 ? (
               <Card>
                 <EmptyState
-                  heading={selectedTabLabel(selectedView) === "Draft" ? "No draft beats" : "No beats match"}
+                  heading={
+                    selectedTabLabel(selectedView) === "Draft"
+                      ? "No draft beats"
+                      : "No beats match"
+                  }
                   image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
                 >
                   <p>
@@ -907,7 +1020,6 @@ export default function BeatsList() {
                             selectedDrafts.length === 1
                               ? "Delete draft"
                               : "Delete drafts",
-                          destructive: true,
                           onAction: handleOpenDeleteModal,
                         },
                       ]
@@ -922,7 +1034,7 @@ export default function BeatsList() {
                   { title: "Action" },
                 ]}
               >
-                {filteredBeats.map((beat, index) => (
+                {filteredBeats.map((beat, index) =>
                   (() => {
                     const beatStatus = getBeatStatusBadge(beat);
                     const offerSummary = buildOfferSummary(beat.offers);
@@ -936,22 +1048,43 @@ export default function BeatsList() {
                         selected={selectedResources.includes(beat.id)}
                       >
                         <IndexTable.Cell>
-                          <div style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "44px" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "12px",
+                              minHeight: "44px",
+                            }}
+                          >
                             <Thumbnail
                               source={beat.coverArt || ImageIcon}
                               alt={beat.title}
                               size="small"
                             />
-                            <div style={{ display: "flex", flexDirection: "column", gap: "0px", lineHeight: 1.2 }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "0px",
+                                lineHeight: 1.2,
+                              }}
+                            >
                               {beat.actionExternal ? (
                                 <a
                                   href={beat.actionUrl}
                                   target="_blank"
                                   rel="noreferrer"
                                   data-primary-link
-                                  style={{ color: "inherit", textDecoration: "none" }}
+                                  style={{
+                                    color: "inherit",
+                                    textDecoration: "none",
+                                  }}
                                 >
-                                  <Text as="span" variant="bodyMd" fontWeight="semibold">
+                                  <Text
+                                    as="span"
+                                    variant="bodyMd"
+                                    fontWeight="semibold"
+                                  >
                                     {beat.title}
                                   </Text>
                                 </a>
@@ -959,9 +1092,16 @@ export default function BeatsList() {
                                 <Link
                                   to={beat.actionUrl}
                                   data-primary-link
-                                  style={{ color: "inherit", textDecoration: "none" }}
+                                  style={{
+                                    color: "inherit",
+                                    textDecoration: "none",
+                                  }}
                                 >
-                                  <Text as="span" variant="bodyMd" fontWeight="semibold">
+                                  <Text
+                                    as="span"
+                                    variant="bodyMd"
+                                    fontWeight="semibold"
+                                  >
                                     {beat.title}
                                   </Text>
                                 </Link>
@@ -973,7 +1113,9 @@ export default function BeatsList() {
                           <Text as="span">{formatDate(beat.updatedAt)}</Text>
                         </IndexTable.Cell>
                         <IndexTable.Cell>
-                          <Badge tone={beatStatus.tone}>{beatStatus.label}</Badge>
+                          <Badge tone={beatStatus.tone}>
+                            {beatStatus.label}
+                          </Badge>
                         </IndexTable.Cell>
                         <IndexTable.Cell>
                           <Popover
@@ -985,32 +1127,55 @@ export default function BeatsList() {
                             activator={
                               <div
                                 onClickCapture={(event) =>
-                                  handlePopoverActivatorClick(event, beat.id, "licenses")
+                                  handlePopoverActivatorClick(
+                                    event,
+                                    beat.id,
+                                    "licenses",
+                                  )
                                 }
-                                onMouseDownCapture={handlePopoverActivatorPointerDown}
-                                onPointerDownCapture={handlePopoverActivatorPointerDown}
+                                onMouseDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
+                                onPointerDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
                               >
                                 <Button
-                                  disclosure={beat.offers.length > 0 ? "down" : undefined}
+                                  disclosure={
+                                    beat.offers.length > 0 ? "down" : undefined
+                                  }
                                   variant="monochromePlain"
                                   size="slim"
                                   textAlign="left"
                                 >
-                                  {beat.kind === "draft" ? "Saved draft" : offerSummary}
+                                  {beat.kind === "draft"
+                                    ? "Saved draft"
+                                    : offerSummary}
                                 </Button>
                               </div>
                             }
                           >
                             <div style={{ minWidth: "320px", padding: "16px" }}>
                               <BlockStack gap="300">
-                                <Text as="p" variant="headingSm" fontWeight="semibold">
+                                <Text
+                                  as="p"
+                                  variant="headingSm"
+                                  fontWeight="semibold"
+                                >
                                   License offers
                                 </Text>
                                 {beat.offers.length > 0 ? (
                                   beat.offers.map((offer) => (
                                     <BlockStack key={offer.variantId} gap="100">
-                                      <InlineStack align="space-between" blockAlign="center">
-                                        <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                      <InlineStack
+                                        align="space-between"
+                                        blockAlign="center"
+                                      >
+                                        <Text
+                                          as="p"
+                                          variant="bodyMd"
+                                          fontWeight="semibold"
+                                        >
                                           {offer.licenseName}
                                         </Text>
                                         <Text as="p" tone="subdued">
@@ -1019,25 +1184,33 @@ export default function BeatsList() {
                                       </InlineStack>
                                       {offer.requiredFormats.length > 0 ? (
                                         <InlineStack gap="200">
-                                          {offer.requiredFormats.map((format) => (
-                                            <FileFormatBadge key={`${offer.variantId}-${format}`} format={format} />
-                                          ))}
+                                          {offer.requiredFormats.map(
+                                            (format) => (
+                                              <FileFormatBadge
+                                                key={`${offer.variantId}-${format}`}
+                                                format={format}
+                                              />
+                                            ),
+                                          )}
                                         </InlineStack>
                                       ) : (
                                         <Text as="p" tone="subdued">
-                                          No delivery package listed on the current template
+                                          No delivery package listed on the
+                                          current template
                                         </Text>
                                       )}
                                       {!offer.hasReference ? (
                                         <Text as="p" tone="critical">
-                                          Missing template reference on this offer
+                                          Missing template reference on this
+                                          offer
                                         </Text>
                                       ) : null}
                                     </BlockStack>
                                   ))
                                 ) : (
                                   <Text as="p" tone="subdued">
-                                    Finish this draft in the upload flow to configure offers and pricing.
+                                    Finish this draft in the upload flow to
+                                    configure offers and pricing.
                                   </Text>
                                 )}
                               </BlockStack>
@@ -1054,13 +1227,23 @@ export default function BeatsList() {
                             activator={
                               <div
                                 onClickCapture={(event) =>
-                                  handlePopoverActivatorClick(event, beat.id, "delivery")
+                                  handlePopoverActivatorClick(
+                                    event,
+                                    beat.id,
+                                    "delivery",
+                                  )
                                 }
-                                onMouseDownCapture={handlePopoverActivatorPointerDown}
-                                onPointerDownCapture={handlePopoverActivatorPointerDown}
+                                onMouseDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
+                                onPointerDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
                               >
                                 <Button
-                                  disclosure={beat.offers.length > 0 ? "down" : undefined}
+                                  disclosure={
+                                    beat.offers.length > 0 ? "down" : undefined
+                                  }
                                   variant="monochromePlain"
                                   size="slim"
                                   textAlign="left"
@@ -1072,47 +1255,103 @@ export default function BeatsList() {
                           >
                             <div style={{ minWidth: "340px", padding: "16px" }}>
                               <BlockStack gap="300">
-                                <Text as="p" variant="headingSm" fontWeight="semibold">
+                                <Text
+                                  as="p"
+                                  variant="headingSm"
+                                  fontWeight="semibold"
+                                >
                                   Delivery readiness
                                 </Text>
                                 {beat.offers.length > 0 ? (
                                   beat.offers.map((offer) => (
-                                    <BlockStack key={`${offer.variantId}-delivery`} gap="100">
-                                      <InlineStack align="space-between" blockAlign="center">
-                                        <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                    <BlockStack
+                                      key={`${offer.variantId}-delivery`}
+                                      gap="100"
+                                    >
+                                      <InlineStack
+                                        align="space-between"
+                                        blockAlign="center"
+                                      >
+                                        <Text
+                                          as="p"
+                                          variant="bodyMd"
+                                          fontWeight="semibold"
+                                        >
                                           {offer.licenseName}
                                         </Text>
-                                        <Badge tone={offer.isReady ? "success" : "attention"}>
-                                          {offer.isReady ? "Ready" : "Missing files"}
+                                        <Badge
+                                          tone={
+                                            offer.isReady
+                                              ? "success"
+                                              : "attention"
+                                          }
+                                        >
+                                          {offer.isReady
+                                            ? "Ready"
+                                            : "Missing files"}
                                         </Badge>
                                       </InlineStack>
                                       {offer.requiredFormats.length > 0 ? (
                                         <Text as="p" tone="subdued">
-                                          Needs {offer.requiredFormats.map((format) => formatDeliveryFormatLabel(format)).join(", ")}
+                                          Needs{" "}
+                                          {offer.requiredFormats
+                                            .map((format) =>
+                                              formatDeliveryFormatLabel(format),
+                                            )
+                                            .join(", ")}
                                         </Text>
                                       ) : (
                                         <Text as="p" tone="subdued">
-                                          No required package formats found on the template
+                                          No required package formats found on
+                                          the template
                                         </Text>
                                       )}
                                       <Text as="p" tone="subdued">
-                                        Mapped {offer.mappedFormats.length > 0 ? offer.mappedFormats.map((format) => formatDeliveryFormatLabel(format)).join(", ") : "no files yet"}
+                                        Mapped{" "}
+                                        {offer.mappedFormats.length > 0
+                                          ? offer.mappedFormats
+                                              .map((format) =>
+                                                formatDeliveryFormatLabel(
+                                                  format,
+                                                ),
+                                              )
+                                              .join(", ")
+                                          : "no files yet"}
                                       </Text>
                                       {offer.missingFormats.length > 0 ? (
                                         <Text as="p" tone="critical">
-                                          Missing {offer.missingFormats.map((format) => formatDeliveryFormatLabel(format)).join(", ")}
+                                          Missing{" "}
+                                          {offer.missingFormats
+                                            .map((format) =>
+                                              formatDeliveryFormatLabel(format),
+                                            )
+                                            .join(", ")}
+                                        </Text>
+                                      ) : null}
+                                      {offer.supportNote ? (
+                                        <Text
+                                          as="p"
+                                          tone={
+                                            offer.isReady
+                                              ? "subdued"
+                                              : "critical"
+                                          }
+                                        >
+                                          {offer.supportNote}
                                         </Text>
                                       ) : null}
                                       {!offer.hasReference ? (
                                         <Text as="p" tone="critical">
-                                          This offer no longer points to a valid template.
+                                          This offer no longer points to a valid
+                                          template.
                                         </Text>
                                       ) : null}
                                     </BlockStack>
                                   ))
                                 ) : (
                                   <Text as="p" tone="subdued">
-                                    Delivery files will appear here after this beat is activated.
+                                    Delivery files will appear here after this
+                                    beat is activated.
                                   </Text>
                                 )}
                               </BlockStack>
@@ -1130,8 +1369,8 @@ export default function BeatsList() {
                         </IndexTable.Cell>
                       </IndexTable.Row>
                     );
-                  })()
-                ))}
+                  })(),
+                )}
               </IndexTable>
             )}
           </Card>
@@ -1141,19 +1380,26 @@ export default function BeatsList() {
       <Modal
         open={deleteModalOpen}
         onClose={handleCloseDeleteModal}
-        title={selectedDrafts.length === 1 ? "Delete 1 draft?" : `Delete ${selectedDrafts.length} drafts?`}
+        title={
+          selectedDrafts.length === 1
+            ? "Delete 1 draft?"
+            : `Delete ${selectedDrafts.length} drafts?`
+        }
       >
         <Modal.Section>
           <Layout>
             <Layout.Section>
               <Text as="p" variant="bodyMd">
-                This can&apos;t be undone. Any cover art saved with these drafts will also be removed
-                from Producer Launchpad.
+                This can&apos;t be undone. Any cover art saved with these drafts
+                will also be removed from Producer Launchpad.
               </Text>
             </Layout.Section>
             <Layout.Section>
               <InlineStack align="end" gap="300">
-                <Button onClick={handleCloseDeleteModal} disabled={isDeletingDrafts}>
+                <Button
+                  onClick={handleCloseDeleteModal}
+                  disabled={isDeletingDrafts}
+                >
                   Cancel
                 </Button>
                 <Button

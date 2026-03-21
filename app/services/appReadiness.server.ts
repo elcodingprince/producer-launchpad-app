@@ -34,7 +34,9 @@ export async function getAppReadiness(
     getStorageConfigForDisplay(session.shop),
   ]);
 
-  const needsProfile = setupStatus.producers.existing < setupStatus.producers.required;
+  const needsProfile =
+    setupStatus.producers.existing < setupStatus.producers.required ||
+    setupStatus.licensors.existing < setupStatus.licensors.required;
   const needsCoreSetup = !setupStatus.isComplete;
   const needsStorage = shouldHardBlockUpload(storageConfig);
   const hasStorageIssue = shouldSoftWarnUpload(storageConfig);

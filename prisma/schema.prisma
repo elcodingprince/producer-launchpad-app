@@ -26,11 +26,11 @@ model Session {
 }
 
 model ShopStorageConfig {
-  id                 String   @id @default(cuid())
-  shop               String   @unique
-  mode               String   @default("disconnected")
+  id                 String    @id @default(cuid())
+  shop               String    @unique
+  mode               String    @default("disconnected")
   provider           String?
-  status             String   @default("disconnected")
+  status             String    @default("disconnected")
   accountId          String?
   bucketName         String?
   publicBaseUrl      String?
@@ -39,18 +39,30 @@ model ShopStorageConfig {
   lastTestedAt       DateTime?
   lastError          String?
   errorType          String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+model ShopCatalogConfig {
+  id                  String   @id @default(cuid())
+  shop                String   @unique
+  stemsAddonProductId String?
+  stemsAddonVariantId String?
+  stemsAddonHandle    String?
+  stemsAddonTitle     String?
+  stemsAddonPrice     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 model BeatFile {
   id          String   @id @default(cuid())
-  beatId      String   // Shopify product ID or internal beat identifier
+  beatId      String // Shopify product ID or internal beat identifier
   filename    String
   storageUrl  String
-  fileType    String   // audio/mpeg, audio/wav, application/zip, image/jpeg, etc.
-  filePurpose String   // preview, mp3, wav, stems, cover, license_pdf
-  size        Int      // file size in bytes
+  fileType    String // audio/mpeg, audio/wav, application/zip, image/jpeg, etc.
+  filePurpose String // preview, mp3, wav, stems, cover, license_pdf
+  size        Int // file size in bytes
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -62,111 +74,115 @@ model BeatFile {
 }
 
 model BeatDraft {
-  id               String   @id @default(cuid())
-  shop             String
-  title            String
-  bpm              Int?
-  key              String?
-  producerAlias    String?
-  genreGidsJson    String   @default("[]")
-  producerGidsJson String   @default("[]")
-  licenseFilesJson String   @default("{}")
-  licensePricesJson String  @default("{}")
-  uploadedFilesJson String  @default("[]")
-  previewFileJson  String?
-  coverArtFileJson String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                String   @id @default(cuid())
+  shop              String
+  title             String
+  bpm               Int?
+  key               String?
+  producerAlias     String?
+  genreGidsJson     String   @default("[]")
+  producerGidsJson  String   @default("[]")
+  licenseFilesJson  String   @default("{}")
+  licensePricesJson String   @default("{}")
+  uploadedFilesJson String   @default("[]")
+  previewFileJson   String?
+  coverArtFileJson  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([shop])
   @@index([shop, updatedAt])
 }
 
 model LicenseFileMapping {
-  id           String   @id @default(cuid())
-  variantId    String   // Shopify product variant ID
-  fileId       String
-  sortOrder    Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id        String   @id @default(cuid())
+  variantId String // Shopify product variant ID
+  fileId    String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  beatFile     BeatFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  beatFile BeatFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
 
   @@index([variantId])
   @@index([fileId])
 }
 
 model Order {
-  id              String   @id @default(cuid())
-  shop            String
-  shopifyOrderId  String   @unique
-  orderNumber     String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  status          String   @default("active")
+  id             String   @id @default(cuid())
+  shop           String
+  shopifyOrderId String   @unique
+  orderNumber    String
+  browserIp      String?
+  userAgent      String?
+  acceptLanguage String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  status         String   @default("active")
 
-  items           OrderItem[]
-  deliveryAccess  DeliveryAccess?
+  items          OrderItem[]
+  deliveryAccess DeliveryAccess?
 
   @@index([shop, shopifyOrderId])
 }
 
 model OrderItem {
-  id              String   @id @default(cuid())
-  orderId         String
-  shopifyLineId   String
-  productId       String
-  variantId       String
-  beatTitle       String
-  licenseName     String
-  downloadCount   Int      @default(0)
-  createdAt       DateTime @default(now())
+  id                   String   @id @default(cuid())
+  orderId              String
+  shopifyLineId        String
+  productId            String
+  variantId            String
+  beatTitle            String
+  licenseName          String
+  stemsIncludedInOrder Boolean  @default(false)
+  downloadCount        Int      @default(0)
+  createdAt            DateTime @default(now())
 
   // Relations
-  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@index([variantId])
 }
 
 model DeliveryAccess {
-  id                    String   @id @default(cuid())
-  orderId               String   @unique
-  shop                  String
-  customerEmail         String
-  customerName          String?
-  downloadToken         String   @unique
-  deliveryEmailStatus   String   @default("pending")
-  deliveryEmailSentAt   DateTime?
-  deliveryEmailError    String?
-  deliveryEmailRecipient String?
-  deliveryEmailMessageId String?
+  id                           String    @id @default(cuid())
+  orderId                      String    @unique
+  shop                         String
+  customerEmail                String
+  customerName                 String?
+  downloadToken                String    @unique
+  deliveryEmailStatus          String    @default("pending")
+  deliveryEmailSentAt          DateTime?
+  deliveryEmailError           String?
+  deliveryEmailRecipient       String?
+  deliveryEmailMessageId       String?
   deliveryEmailConfirmedStatus String?
   deliveryEmailConfirmedAt     DateTime?
   deliveryEmailConfirmedError  String?
   deliveryEmailLastEvent       String?
   deliveryEmailLastEventAt     DateTime?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
 
-  order                 Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([shop])
   @@index([downloadToken])
 }
 
 model TemplateGuardrailAcceptance {
-  id               String   @id @default(cuid())
-  shop             String
-  templateHandle   String
+  id                   String   @id @default(cuid())
+  shop                 String
+  templateHandle       String
   templateMetaobjectId String
-  starterVersion   String
-  acceptedAt       DateTime
-  acceptedByUserId BigInt?
-  acceptedByEmail  String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  starterVersion       String
+  acceptedAt           DateTime
+  acceptedByUserId     BigInt?
+  acceptedByEmail      String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   @@unique([shop, templateHandle, starterVersion])
   @@index([shop])
