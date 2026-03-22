@@ -49,14 +49,15 @@ Launch archetypes stay intentionally narrow:
   - stems add-on capable: `yes`
 - `unlimited`
   - agreement family: `unlimited`
-  - base files: `MP3, WAV, STEMS`
-  - stems included by default: `yes`
-  - stems add-on capable: `not needed`
+  - base files: `MP3, WAV`, with optional bundled stems
+  - stems included by default: `template-controlled`
+  - stems add-on capable: `yes`, when stems are not bundled in the base package
 
 Important launch simplification:
 
 - `Basic` and `Premium` can optionally sell a stems add-on per beat.
-- `Unlimited` includes stems by default.
+- `Unlimited` can either bundle stems in the base package or sell stems as an
+  optional add-on, controlled on the live template.
 - If you later want combinations like `Premium with stems included`, add a new
   locked archetype instead of reopening live template editing.
 
@@ -101,8 +102,10 @@ Interpretation rules:
   offer currently sells the stems add-on
 - if archetype is `basic` or `premium` and `stems_addon_enabled = false`, that
   offer does not currently sell the stems add-on
-- if archetype is `unlimited`, stems are included by default regardless of this
-  boolean
+- if archetype is `unlimited`, the live template decides whether stems are
+  bundled in the base package or sold as an optional add-on
+- the variant-level boolean remains the source of truth only for `basic` and
+  `premium`
 
 ### Executed agreement
 
@@ -180,10 +183,14 @@ Upload page UX:
   - `Basic` / `Premium`
     - checkbox or toggle: `Offer stems add-on for this beat`
   - `Unlimited`
-    - read-only note: `Includes stems by default`
+    - read-only note derived from the live template:
+      - `Includes stems by default`
+      - or `Sells stems as optional add-on`
 - default `Basic` and `Premium` stems add-on toggles to `off` for launch
 - if the merchant enables stems for at least one eligible offer, require the
   shared stems ZIP before publish
+- if the selected `Unlimited` template bundles stems in the base package,
+  require the shared stems ZIP before publish
 
 Why this is better than keeping the switch on the template:
 
@@ -191,6 +198,8 @@ Why this is better than keeping the switch on the template:
 - shared templates stay clean and predictable
 - live template edits no longer retroactively change storefront availability for
   every beat using that template
+- `Unlimited` can still support a bundled or add-on stems model without
+  creating a separate archetype
 
 Test guide:
 
@@ -204,6 +213,11 @@ Test guide:
 5. Turn one toggle on and confirm publishing requires a shared stems ZIP.
 6. Confirm the saved Shopify variants contain `custom.stems_addon_enabled`
    values that match the upload toggles.
+7. Edit an `Unlimited` template so stems are sold as an add-on and confirm live
+   storefront products immediately reflect the change.
+8. Place orders with and without stems on an older uploaded beat and confirm
+   delivery matches the resolved order entitlement rather than stale upload-time
+   mappings.
 
 ## Phase 3: Replace Freeform Limits With Presets
 

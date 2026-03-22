@@ -16,6 +16,13 @@ type OfferArchetypeConfig = {
   stemsBehaviorHelpText: string;
 };
 
+export type OfferLimitPresetConfig = {
+  streamLimit: string[];
+  copyLimit: string[];
+  videoViewLimit: string[];
+  termYears: string[];
+};
+
 const OFFER_ARCHETYPE_CONFIG: Record<OfferArchetype, OfferArchetypeConfig> = {
   basic: {
     value: "basic",
@@ -52,6 +59,30 @@ const OFFER_ARCHETYPE_CONFIG: Record<OfferArchetype, OfferArchetypeConfig> = {
     stemsBehaviorLabel: "Stems included",
     stemsBehaviorHelpText:
       "Stems are always part of the base package for beats using this template.",
+  },
+};
+
+const OFFER_LIMIT_PRESET_CONFIG: Record<
+  OfferArchetype,
+  OfferLimitPresetConfig
+> = {
+  basic: {
+    streamLimit: ["10000", "25000", "50000", "100000", "250000"],
+    copyLimit: ["1000", "2500", "5000", "10000", "25000"],
+    videoViewLimit: ["10000", "50000", "100000", "250000", "500000"],
+    termYears: ["1", "3", "5", "10"],
+  },
+  premium: {
+    streamLimit: ["100000", "250000", "500000", "1000000", "5000000"],
+    copyLimit: ["2500", "5000", "10000", "25000", "50000"],
+    videoViewLimit: ["100000", "250000", "500000", "1000000", "5000000"],
+    termYears: ["1", "3", "5", "10"],
+  },
+  unlimited: {
+    streamLimit: ["0"],
+    copyLimit: ["0"],
+    videoViewLimit: ["0"],
+    termYears: ["0"],
   },
 };
 
@@ -106,6 +137,13 @@ export function getOfferArchetypeConfig(
 ): OfferArchetypeConfig {
   const archetype = normalizeOfferArchetype(value);
   return OFFER_ARCHETYPE_CONFIG[archetype];
+}
+
+export function getOfferLimitPresetConfig(
+  value?: OfferArchetype | string | null,
+): OfferLimitPresetConfig {
+  const archetype = normalizeOfferArchetype(value);
+  return OFFER_LIMIT_PRESET_CONFIG[archetype];
 }
 
 export function buildDerivedLicenseFields(

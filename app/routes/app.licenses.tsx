@@ -39,6 +39,7 @@ import prisma from "~/db.server";
 import {
   buildDerivedLicenseFields,
   getOfferArchetypeConfig,
+  getOfferLimitPresetConfig,
   OFFER_ARCHETYPE_OPTIONS,
   resolveOfferArchetype,
 } from "~/services/licenses/archetypes";
@@ -80,6 +81,12 @@ type LicenseUsageSummary = {
   beatCount: number;
   beatTitles: string[];
 };
+
+type LimitPresetFieldKey =
+  | "streamLimit"
+  | "copyLimit"
+  | "videoViewLimit"
+  | "termYears";
 
 type LicenseFormState = {
   id?: string;
@@ -164,16 +171,51 @@ function buildArchetypeBoundForm(
   const derivedFields = buildDerivedLicenseFields(offerArchetype, {
     stemsPolicy: overrides.stemsPolicy,
   });
+  const presetConfig = getOfferLimitPresetConfig(derivedFields.offerArchetype);
+
+  const resolvePresetValue = (
+    presetValues: string[],
+    overrideValue?: string,
+  ): string => {
+    if (overrideValue && presetValues.includes(overrideValue)) {
+      return overrideValue;
+    }
+
+    if (overrideValue) {
+      const normalizedValue = Number(overrideValue);
+      if (!Number.isNaN(normalizedValue) && presetValues.length > 0) {
+        return presetValues.reduce((closest, candidate) => {
+          const candidateNumber = Number(candidate);
+          if (Number.isNaN(candidateNumber)) {
+            return closest;
+          }
+
+          const closestDistance = Math.abs(Number(closest) - normalizedValue);
+          const candidateDistance = Math.abs(candidateNumber - normalizedValue);
+
+          return candidateDistance < closestDistance ? candidate : closest;
+        }, presetValues[0]);
+      }
+    }
+
+    return presetValues[0] || "";
+  };
 
   return {
     handle: overrides.handle || "",
     offerArchetype: derivedFields.offerArchetype,
     licenseName: overrides.licenseName || "",
     legalTemplateFamily: derivedFields.legalTemplateFamily,
-    streamLimit: overrides.streamLimit || "",
-    copyLimit: overrides.copyLimit || "",
-    videoViewLimit: overrides.videoViewLimit || "",
-    termYears: overrides.termYears || "",
+    streamLimit: resolvePresetValue(
+      presetConfig.streamLimit,
+      overrides.streamLimit,
+    ),
+    copyLimit: resolvePresetValue(presetConfig.copyLimit, overrides.copyLimit),
+    videoViewLimit: resolvePresetValue(
+      presetConfig.videoViewLimit,
+      overrides.videoViewLimit,
+    ),
+    termYears: resolvePresetValue(presetConfig.termYears, overrides.termYears),
     fileFormats: derivedFields.fileFormats,
     stemsPolicy: derivedFields.stemsPolicy,
     storefrontSummary: overrides.storefrontSummary || "",
@@ -278,6 +320,35 @@ function formatTermLength(value: string) {
 
 function formatTemplateFamilyLabel(value: string) {
   return getOfferArchetypeConfig(value).label;
+}
+
+function formatPresetValue(field: LimitPresetFieldKey, value: string): string {
+  if (field === "termYears") {
+    return formatTermLength(value);
+  }
+
+  if (value === "0") {
+    if (field === "streamLimit") return "Unlimited streams";
+    if (field === "copyLimit") return "Unlimited copies";
+    return "Unlimited video views";
+  }
+
+  const numeric = Number(value);
+  const formatted = Number.isNaN(numeric) ? value : numeric.toLocaleString();
+
+  if (field === "streamLimit") return `${formatted} streams`;
+  if (field === "copyLimit") return `${formatted} copies`;
+  return `${formatted} video views`;
+}
+
+function buildPresetOptions(
+  field: LimitPresetFieldKey,
+  presetValues: string[],
+) {
+  return presetValues.map((value) => ({
+    label: formatPresetValue(field, value),
+    value,
+  }));
 }
 
 function getTemplateStemsBadgeTone(
@@ -1149,6 +1220,9 @@ export default function LicensesPage() {
     const fileBadges = parseFileFormatBadges(licenseForm.fileFormats);
     const customTermCount = countCustomTerms(licenseForm.terms);
     const archetypeConfig = getOfferArchetypeConfig(licenseForm.offerArchetype);
+    const limitPresetConfig = getOfferLimitPresetConfig(
+      licenseForm.offerArchetype,
+    );
     const templateDerivedFields = buildDerivedLicenseFields(
       licenseForm.offerArchetype,
       {
@@ -1294,16 +1368,19 @@ export default function LicensesPage() {
                         Rights and limits
                       </Text>
                       <Text as="p" tone="subdued">
-                        Set the usage boundaries buyers receive when they select
-                        this template.
+                        Choose from curated caps for this template type so
+                        reusable offers stay predictable across beats.
                       </Text>
                     </BlockStack>
 
                     <FormLayout>
                       <FormLayout.Group>
-                        <TextField
+                        <Select
                           label="Stream limit"
-                          type="number"
+                          options={buildPresetOptions(
+                            "streamLimit",
+                            limitPresetConfig.streamLimit,
+                          )}
                           value={licenseForm.streamLimit}
                           onChange={(value) =>
                             setLicenseForm((current) => ({
@@ -1311,12 +1388,14 @@ export default function LicensesPage() {
                               streamLimit: value,
                             }))
                           }
-                          helpText="Use 0 for unlimited."
-                          autoComplete="off"
+                          helpText="Curated stream caps for this archetype. Unlimited templates stay locked to unlimited."
                         />
-                        <TextField
+                        <Select
                           label="Copy limit"
-                          type="number"
+                          options={buildPresetOptions(
+                            "copyLimit",
+                            limitPresetConfig.copyLimit,
+                          )}
                           value={licenseForm.copyLimit}
                           onChange={(value) =>
                             setLicenseForm((current) => ({
@@ -1324,14 +1403,16 @@ export default function LicensesPage() {
                               copyLimit: value,
                             }))
                           }
-                          helpText="Use 0 for unlimited."
-                          autoComplete="off"
+                          helpText="Choose the maximum number of copies permitted under this template."
                         />
                       </FormLayout.Group>
 
-                      <TextField
+                      <Select
                         label="Video view limit"
-                        type="number"
+                        options={buildPresetOptions(
+                          "videoViewLimit",
+                          limitPresetConfig.videoViewLimit,
+                        )}
                         value={licenseForm.videoViewLimit}
                         onChange={(value) =>
                           setLicenseForm((current) => ({
@@ -1339,13 +1420,15 @@ export default function LicensesPage() {
                             videoViewLimit: value,
                           }))
                         }
-                        helpText="Use 0 for unlimited."
-                        autoComplete="off"
+                        helpText="Use a preset so storefront copy and agreement previews stay in sync."
                       />
 
-                      <TextField
+                      <Select
                         label="Term (years)"
-                        type="number"
+                        options={buildPresetOptions(
+                          "termYears",
+                          limitPresetConfig.termYears,
+                        )}
                         value={licenseForm.termYears}
                         onChange={(value) =>
                           setLicenseForm((current) => ({
@@ -1353,9 +1436,14 @@ export default function LicensesPage() {
                             termYears: value,
                           }))
                         }
-                        helpText="Use 0 for a perpetual term."
-                        autoComplete="off"
+                        helpText="Perpetual terms are available only where the archetype allows them."
                       />
+
+                      <Text as="p" tone="subdued">
+                        Each template type uses a curated set of caps so
+                        storefront copy, agreement previews, and delivery
+                        expectations stay aligned.
+                      </Text>
                     </FormLayout>
                   </BlockStack>
                 </Card>
