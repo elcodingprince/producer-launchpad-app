@@ -1,10 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import prisma from "~/db.server";
 import { resolveOfferStemsPolicy } from "~/services/deliveryPackages";
-import {
-  buildDerivedLicenseFields,
-  resolveOfferArchetype,
-} from "~/services/licenses/archetypes";
+import { normalizeTemplateFields } from "~/services/licenses/archetypes";
 import { renderAgreementPreview } from "~/services/licenses/agreementRenderer.server";
 import {
   createMetafieldSetupService,
@@ -300,7 +297,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     const licensorFields = licensorMetaobject.fields || [];
     const licenseHandle =
       shopifyData.licenseReference.handle || "license-template";
-    const offerArchetype = resolveOfferArchetype({
+    const normalizedFields = normalizeTemplateFields({
       offerArchetype: getFieldValue(licenseFields, "offer_archetype"),
       licenseId: getFieldValue(licenseFields, "license_id"),
       legalTemplateFamily: getFieldValue(
@@ -308,9 +305,11 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
         "legal_template_family",
       ),
       handle: licenseHandle,
-    });
-    const derivedFields = buildDerivedLicenseFields(offerArchetype, {
       stemsPolicy: getFieldValue(licenseFields, "stems_policy"),
+      streamLimit: getFieldValue(licenseFields, "stream_limit"),
+      copyLimit: getFieldValue(licenseFields, "copy_limit"),
+      videoViewLimit: getFieldValue(licenseFields, "video_view_limit"),
+      termYears: getFieldValue(licenseFields, "term_years"),
     });
     const licensor = {
       legalName: getFieldValue(licensorFields, "legal_name"),
@@ -332,19 +331,19 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       licensor.legalName;
     const license = {
       handle: licenseHandle,
-      offerArchetype,
+      offerArchetype: normalizedFields.offerArchetype,
       licenseName:
         getFieldValue(licenseFields, "license_name") || item.licenseName,
-      legalTemplateFamily: derivedFields.legalTemplateFamily,
-      streamLimit: getFieldValue(licenseFields, "stream_limit"),
-      copyLimit: getFieldValue(licenseFields, "copy_limit"),
-      videoViewLimit: getFieldValue(licenseFields, "video_view_limit"),
-      termYears: getFieldValue(licenseFields, "term_years"),
-      fileFormats: derivedFields.fileFormats,
+      legalTemplateFamily: normalizedFields.legalTemplateFamily,
+      streamLimit: normalizedFields.streamLimit,
+      copyLimit: normalizedFields.copyLimit,
+      videoViewLimit: normalizedFields.videoViewLimit,
+      termYears: normalizedFields.termYears,
+      fileFormats: normalizedFields.fileFormats,
       stemsPolicy: resolveOfferStemsPolicy(
-        derivedFields.stemsPolicy,
+        normalizedFields.stemsPolicy,
         shopifyData.stemsAddonEnabled,
-        offerArchetype,
+        normalizedFields.offerArchetype,
       ),
       contentIdPolicy:
         getFieldValue(licenseFields, "content_id_policy") || "not_allowed",

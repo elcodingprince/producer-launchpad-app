@@ -1,8 +1,5 @@
 import { createShopifyClient, ShopifyClient } from "./shopify";
-import {
-  buildDerivedLicenseFields,
-  resolveOfferArchetype,
-} from "./licenses/archetypes";
+import { normalizeTemplateFields } from "./licenses/archetypes";
 
 export interface LicensePricing {
   licenseId: string;
@@ -214,30 +211,32 @@ export class ProductCreatorService {
 
     return metaobjects.map((obj) => {
       const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
-      const offerArchetype = resolveOfferArchetype({
+      const normalizedFields = normalizeTemplateFields({
         offerArchetype: fields.get("offer_archetype") || "",
         licenseId: fields.get("license_id") || "",
         legalTemplateFamily: fields.get("legal_template_family") || "",
         handle: obj.handle,
-      });
-      const derivedFields = buildDerivedLicenseFields(offerArchetype, {
         stemsPolicy: fields.get("stems_policy") || "",
+        streamLimit: fields.get("stream_limit") || "",
+        copyLimit: fields.get("copy_limit") || "",
+        videoViewLimit: fields.get("video_view_limit") || "",
+        termYears: fields.get("term_years") || "",
       });
 
       return {
         id: obj.id,
         handle: obj.handle,
-        offerArchetype,
-        licenseId: derivedFields.licenseId,
+        offerArchetype: normalizedFields.offerArchetype,
+        licenseId: normalizedFields.licenseId,
         licenseName: fields.get("license_name") || "",
         displayName: fields.get("license_name") || "",
-        legalTemplateFamily: derivedFields.legalTemplateFamily,
-        streamLimit: fields.get("stream_limit") || "",
-        copyLimit: fields.get("copy_limit") || "",
-        videoViewLimit: fields.get("video_view_limit") || "",
-        termYears: fields.get("term_years") || "",
-        fileFormats: derivedFields.fileFormats,
-        stemsPolicy: derivedFields.stemsPolicy,
+        legalTemplateFamily: normalizedFields.legalTemplateFamily,
+        streamLimit: normalizedFields.streamLimit,
+        copyLimit: normalizedFields.copyLimit,
+        videoViewLimit: normalizedFields.videoViewLimit,
+        termYears: normalizedFields.termYears,
+        fileFormats: normalizedFields.fileFormats,
+        stemsPolicy: normalizedFields.stemsPolicy,
         storefrontSummary: fields.get("storefront_summary") || "",
         featuresShort: fields.get("features_short") || "",
         contentIdPolicy: fields.get("content_id_policy") || "",

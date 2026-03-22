@@ -277,7 +277,11 @@ Implementation:
 - remove any inconsistent live template stems settings and map them into:
   - archetype defaults
   - per-variant `stems_addon_enabled` values where appropriate
-- flag any custom template that cannot be cleanly normalized for one-time review
+- normalize existing beta templates behind the scenes so the launch model is
+  already in place before release
+- existing beats should continue reading stems state from their Shopify variant
+  metafields after template cleanup; no separate beat rewrite should be needed
+  if the variant data is already present
 
 Expected result:
 

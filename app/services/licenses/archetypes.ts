@@ -23,6 +23,24 @@ export type OfferLimitPresetConfig = {
   termYears: string[];
 };
 
+export type NormalizedTemplateLimitFields = {
+  streamLimit: string;
+  copyLimit: string;
+  videoViewLimit: string;
+  termYears: string;
+};
+
+export type NormalizedTemplateFields = NormalizedTemplateLimitFields & {
+  offerArchetype: OfferArchetype;
+  licenseId: string;
+  legalTemplateFamily: OfferArchetype;
+  fileFormats: string;
+  stemsPolicy: StemsPolicy;
+  deliveryProfileLabel: string;
+  stemsBehaviorLabel: string;
+  stemsBehaviorHelpText: string;
+};
+
 const OFFER_ARCHETYPE_CONFIG: Record<OfferArchetype, OfferArchetypeConfig> = {
   basic: {
     value: "basic",
@@ -76,7 +94,7 @@ const OFFER_LIMIT_PRESET_CONFIG: Record<
     streamLimit: ["100000", "250000", "500000", "1000000", "5000000"],
     copyLimit: ["2500", "5000", "10000", "25000", "50000"],
     videoViewLimit: ["100000", "250000", "500000", "1000000", "5000000"],
-    termYears: ["1", "3", "5", "10"],
+    termYears: ["1", "2", "3", "5", "10"],
   },
   unlimited: {
     streamLimit: ["0"],
@@ -146,6 +164,62 @@ export function getOfferLimitPresetConfig(
   return OFFER_LIMIT_PRESET_CONFIG[archetype];
 }
 
+function normalizePresetNumberValue(
+  value: string | null | undefined,
+  presetValues: string[],
+) {
+  if (!value || presetValues.length === 0) {
+    return presetValues[0] || "";
+  }
+
+  if (presetValues.includes(value)) {
+    return value;
+  }
+
+  const normalizedValue = Number(value);
+  if (Number.isNaN(normalizedValue)) {
+    return presetValues[0] || "";
+  }
+
+  return presetValues.reduce((closest, candidate) => {
+    const candidateNumber = Number(candidate);
+    if (Number.isNaN(candidateNumber)) {
+      return closest;
+    }
+
+    const closestDistance = Math.abs(Number(closest) - normalizedValue);
+    const candidateDistance = Math.abs(candidateNumber - normalizedValue);
+
+    return candidateDistance < closestDistance ? candidate : closest;
+  }, presetValues[0]);
+}
+
+export function normalizeTemplateLimitFields(
+  offerArchetype?: OfferArchetype | string | null,
+  input: Partial<NormalizedTemplateLimitFields> = {},
+): NormalizedTemplateLimitFields {
+  const presetConfig = getOfferLimitPresetConfig(offerArchetype);
+
+  return {
+    streamLimit: normalizePresetNumberValue(
+      input.streamLimit,
+      presetConfig.streamLimit,
+    ),
+    copyLimit: normalizePresetNumberValue(
+      input.copyLimit,
+      presetConfig.copyLimit,
+    ),
+    videoViewLimit: normalizePresetNumberValue(
+      input.videoViewLimit,
+      presetConfig.videoViewLimit,
+    ),
+    termYears: normalizePresetNumberValue(
+      input.termYears,
+      presetConfig.termYears,
+    ),
+  };
+}
+
 export function buildDerivedLicenseFields(
   offerArchetype?: OfferArchetype | string | null,
   options: {
@@ -189,5 +263,40 @@ export function buildDerivedLicenseFields(
     deliveryProfileLabel: config.deliveryProfileLabel,
     stemsBehaviorLabel: config.stemsBehaviorLabel,
     stemsBehaviorHelpText: config.stemsBehaviorHelpText,
+  };
+}
+
+export function normalizeTemplateFields(input: {
+  offerArchetype?: string | null;
+  licenseId?: string | null;
+  legalTemplateFamily?: string | null;
+  handle?: string | null;
+  stemsPolicy?: string | null;
+  streamLimit?: string | null;
+  copyLimit?: string | null;
+  videoViewLimit?: string | null;
+  termYears?: string | null;
+}): NormalizedTemplateFields {
+  const offerArchetype = resolveOfferArchetype(input);
+  const derivedFields = buildDerivedLicenseFields(offerArchetype, {
+    stemsPolicy: input.stemsPolicy,
+  });
+  const normalizedLimits = normalizeTemplateLimitFields(offerArchetype, {
+    streamLimit: input.streamLimit || "",
+    copyLimit: input.copyLimit || "",
+    videoViewLimit: input.videoViewLimit || "",
+    termYears: input.termYears || "",
+  });
+
+  return {
+    offerArchetype,
+    licenseId: derivedFields.licenseId,
+    legalTemplateFamily: derivedFields.legalTemplateFamily,
+    fileFormats: derivedFields.fileFormats,
+    stemsPolicy: derivedFields.stemsPolicy,
+    deliveryProfileLabel: derivedFields.deliveryProfileLabel,
+    stemsBehaviorLabel: derivedFields.stemsBehaviorLabel,
+    stemsBehaviorHelpText: derivedFields.stemsBehaviorHelpText,
+    ...normalizedLimits,
   };
 }
