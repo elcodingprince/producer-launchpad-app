@@ -6,7 +6,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
-import type { BeatFile, DeliveryAccess, LicenseFileMapping, Order, OrderItem } from "@prisma/client";
+import type {
+  BeatFile,
+  DeliveryAccess,
+  LicenseFileMapping,
+  Order,
+  OrderItem,
+} from "@prisma/client";
 import type { IndexFiltersProps } from "@shopify/polaris";
 import {
   Banner,
@@ -25,8 +31,14 @@ import {
   useIndexResourceState,
   useSetIndexFiltersMode,
 } from "@shopify/polaris";
-import { buildDownloadPortalUrl, formatStoreName } from "~/services/appUrl.server";
-import { isResendWebhookTrackingEnabled, sendDeliveryEmail } from "~/services/email.server";
+import {
+  buildDownloadPortalUrl,
+  formatStoreName,
+} from "~/services/appUrl.server";
+import {
+  isResendWebhookTrackingEnabled,
+  sendDeliveryEmail,
+} from "~/services/email.server";
 
 interface DeliverySummary {
   id: string;
@@ -59,7 +71,10 @@ interface DeliverySummary {
   deliveryEmailLastEventAt: string | null;
 }
 
-type DeliveryOrder = Order & { items: OrderItem[]; deliveryAccess: DeliveryAccess | null };
+type DeliveryOrder = Order & {
+  items: OrderItem[];
+  deliveryAccess: DeliveryAccess | null;
+};
 
 type DeliveryStatusFilter = "all" | "active" | "expired";
 type DeliveryEmailFilter = "pending" | "delivered" | "failed" | "bounced";
@@ -103,19 +118,19 @@ function formatOptionalDate(value: string | null) {
 function getCustomerLastName(customerName: string | null) {
   if (!customerName) return null;
 
-  const segments = customerName
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const segments = customerName.trim().split(/\s+/).filter(Boolean);
 
   return segments.length > 0 ? segments[segments.length - 1] : null;
 }
 
-function getDeliveryEmailBadgeTone(status: string): "success" | "critical" | "attention" | undefined {
+function getDeliveryEmailBadgeTone(
+  status: string,
+): "success" | "critical" | "attention" | undefined {
   if (status === "sent" || status === "delivered") return "success";
   if (status === "failed") return "critical";
   if (status === "bounced" || status === "complained") return "critical";
-  if (status === "skipped" || status === "pending" || status === "delayed") return "attention";
+  if (status === "skipped" || status === "pending" || status === "delayed")
+    return "attention";
 
   return undefined;
 }
@@ -157,7 +172,9 @@ function getDisplayedDeliveryEmailStatus(
   return sendStatus;
 }
 
-function getDeliveryEmailFilterValue(status: string): DeliveryEmailFilter | null {
+function getDeliveryEmailFilterValue(
+  status: string,
+): DeliveryEmailFilter | null {
   if (status === "delivered") return "delivered";
   if (status === "bounced") return "bounced";
   if (status === "failed" || status === "skipped" || status === "complained") {
@@ -199,7 +216,9 @@ function getIncludedFileLabel(file: BeatFile) {
   if (file.filePurpose === "cover") return "Cover";
   if (file.filePurpose === "preview") return "Preview";
 
-  return file.filePurpose.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return file.filePurpose
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -220,7 +239,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     new Set(
       orders.flatMap((order: DeliveryOrder) =>
         order.items.flatMap((item: OrderItem) => {
-          const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
+          const normalizedVariantId = normalizeShopifyResourceId(
+            item.variantId,
+          );
           return [
             item.variantId,
             normalizedVariantId,
@@ -247,71 +268,87 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const filesByVariantId = new Map<string, BeatFile[]>();
 
-  for (const mapping of licenseMappings as Array<LicenseFileMapping & { beatFile: BeatFile }>) {
+  for (const mapping of licenseMappings as Array<
+    LicenseFileMapping & { beatFile: BeatFile }
+  >) {
     const existingFiles = filesByVariantId.get(mapping.variantId) || [];
     existingFiles.push(mapping.beatFile);
     filesByVariantId.set(mapping.variantId, existingFiles);
   }
 
   return json({
-    deliveries: orders.map((order: DeliveryOrder): DeliverySummary => ({
-      id: order.id,
-      orderNumber: order.orderNumber,
-      customerEmail: order.deliveryAccess?.customerEmail || "",
-      customerName: order.deliveryAccess?.customerName || null,
-      customerLastName: getCustomerLastName(order.deliveryAccess?.customerName || null),
-      createdAt: order.createdAt.toISOString(),
-      status: order.status,
-      downloadToken: order.deliveryAccess?.downloadToken || "",
-      portalUrl: order.deliveryAccess
-        ? buildDownloadPortalUrl(order.deliveryAccess.downloadToken, request)
-        : "",
-      itemCount: order.items.length,
-      itemSummary: order.items
-        .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
-        .join(", "),
-      itemDetails: order.items.map((item: OrderItem) => {
-        const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
-        const includedFiles = [
-          ...(filesByVariantId.get(item.variantId) || []),
-          ...(filesByVariantId.get(normalizedVariantId) || []),
-          ...(filesByVariantId.get(`gid://shopify/ProductVariant/${normalizedVariantId}`) || []),
-        ];
+    deliveries: orders.map(
+      (order: DeliveryOrder): DeliverySummary => ({
+        id: order.id,
+        orderNumber: order.orderNumber,
+        customerEmail: order.deliveryAccess?.customerEmail || "",
+        customerName: order.deliveryAccess?.customerName || null,
+        customerLastName: getCustomerLastName(
+          order.deliveryAccess?.customerName || null,
+        ),
+        createdAt: order.createdAt.toISOString(),
+        status: order.status,
+        downloadToken: order.deliveryAccess?.downloadToken || "",
+        portalUrl: order.deliveryAccess
+          ? buildDownloadPortalUrl(order.deliveryAccess.downloadToken, request)
+          : "",
+        itemCount: order.items.length,
+        itemSummary: order.items
+          .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
+          .join(", "),
+        itemDetails: order.items.map((item: OrderItem) => {
+          const normalizedVariantId = normalizeShopifyResourceId(
+            item.variantId,
+          );
+          const includedFiles = [
+            ...(filesByVariantId.get(item.variantId) || []),
+            ...(filesByVariantId.get(normalizedVariantId) || []),
+            ...(filesByVariantId.get(
+              `gid://shopify/ProductVariant/${normalizedVariantId}`,
+            ) || []),
+          ];
 
-        const uniqueIncludedFiles = Array.from(
-          new Set(
-            includedFiles
-              .filter((file) => !["preview", "cover"].includes(file.filePurpose))
-              .map((file) => getIncludedFileLabel(file)),
-          ),
-        );
+          const uniqueIncludedFiles = Array.from(
+            new Set(
+              includedFiles
+                .filter(
+                  (file) => !["preview", "cover"].includes(file.filePurpose),
+                )
+                .map((file) => getIncludedFileLabel(file)),
+            ),
+          );
 
-        return {
-          id: item.id,
-          beatTitle: item.beatTitle,
-          licenseName: item.licenseName,
-          includedFiles: uniqueIncludedFiles,
-          downloadCount: item.downloadCount,
-        };
+          return {
+            id: item.id,
+            beatTitle: item.beatTitle,
+            licenseName: item.licenseName,
+            includedFiles: uniqueIncludedFiles,
+            downloadCount: item.downloadCount,
+          };
+        }),
+        totalDownloadCount: order.items.reduce(
+          (sum: number, item: OrderItem) => sum + item.downloadCount,
+          0,
+        ),
+        deliveryEmailStatus:
+          order.deliveryAccess?.deliveryEmailStatus || "missing",
+        deliveryEmailConfirmedStatus:
+          order.deliveryAccess?.deliveryEmailConfirmedStatus || null,
+        deliveryEmailRecipient:
+          order.deliveryAccess?.deliveryEmailRecipient || null,
+        deliveryEmailSentAt:
+          order.deliveryAccess?.deliveryEmailSentAt?.toISOString() || null,
+        deliveryEmailError: order.deliveryAccess?.deliveryEmailError || null,
+        deliveryEmailConfirmedAt:
+          order.deliveryAccess?.deliveryEmailConfirmedAt?.toISOString() || null,
+        deliveryEmailConfirmedError:
+          order.deliveryAccess?.deliveryEmailConfirmedError || null,
+        deliveryEmailLastEvent:
+          order.deliveryAccess?.deliveryEmailLastEvent || null,
+        deliveryEmailLastEventAt:
+          order.deliveryAccess?.deliveryEmailLastEventAt?.toISOString() || null,
       }),
-      totalDownloadCount: order.items.reduce(
-        (sum: number, item: OrderItem) => sum + item.downloadCount,
-        0,
-      ),
-      deliveryEmailStatus: order.deliveryAccess?.deliveryEmailStatus || "missing",
-      deliveryEmailConfirmedStatus:
-        order.deliveryAccess?.deliveryEmailConfirmedStatus || null,
-      deliveryEmailRecipient: order.deliveryAccess?.deliveryEmailRecipient || null,
-      deliveryEmailSentAt: order.deliveryAccess?.deliveryEmailSentAt?.toISOString() || null,
-      deliveryEmailError: order.deliveryAccess?.deliveryEmailError || null,
-      deliveryEmailConfirmedAt:
-        order.deliveryAccess?.deliveryEmailConfirmedAt?.toISOString() || null,
-      deliveryEmailConfirmedError:
-        order.deliveryAccess?.deliveryEmailConfirmedError || null,
-      deliveryEmailLastEvent: order.deliveryAccess?.deliveryEmailLastEvent || null,
-      deliveryEmailLastEventAt:
-        order.deliveryAccess?.deliveryEmailLastEventAt?.toISOString() || null,
-    })),
+    ),
     emailConfirmationEnabled,
   });
 };
@@ -323,7 +360,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const intent = String(formData.get("intent") || "");
   const orderId = String(formData.get("orderId") || "");
 
-  if ((intent !== "regenerate_token" && intent !== "resend_email") || !orderId) {
+  if (
+    (intent !== "regenerate_token" && intent !== "resend_email") ||
+    !orderId
+  ) {
     return json(
       { success: false, intent: "unknown", error: "Invalid delivery action." },
       { status: 400 },
@@ -417,8 +457,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       to: deliveryAccess.customerEmail,
       portalUrl: buildDownloadPortalUrl(deliveryAccess.downloadToken, request),
       storeName: formatStoreName(deliveryAccess.order.shop),
-      customerFirstName:
-        deliveryAccess.customerName?.trim().split(/\s+/).filter(Boolean)[0] || null,
+      customerName: deliveryAccess.customerName,
       orderNumber: deliveryAccess.order.orderNumber,
       itemSummary: deliveryAccess.order.items
         .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
@@ -433,7 +472,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         deliveryEmailRecipient: deliveryAccess.customerEmail,
         deliveryEmailMessageId: emailResult.messageId,
         deliveryEmailError: null,
-        deliveryEmailConfirmedStatus: isResendWebhookTrackingEnabled() ? "pending" : null,
+        deliveryEmailConfirmedStatus: isResendWebhookTrackingEnabled()
+          ? "pending"
+          : null,
         deliveryEmailConfirmedAt: null,
         deliveryEmailConfirmedError: null,
         deliveryEmailLastEvent: null,
@@ -472,7 +513,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function DeliveriesPage() {
-  const { deliveries, emailConfirmationEnabled } = useLoaderData<typeof loader>();
+  const { deliveries, emailConfirmationEnabled } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<ActionData>();
   const submit = useSubmit();
   const shopify = useAppBridge();
@@ -484,8 +526,12 @@ export default function DeliveriesPage() {
   } | null>(null);
   const [queryValue, setQueryValue] = useState("");
   const [selectedView, setSelectedView] = useState(0);
-  const [selectedEmailStatuses, setSelectedEmailStatuses] = useState<DeliveryEmailFilter[]>([]);
-  const [sortSelected, setSortSelected] = useState<string[]>(["createdAt desc"]);
+  const [selectedEmailStatuses, setSelectedEmailStatuses] = useState<
+    DeliveryEmailFilter[]
+  >([]);
+  const [sortSelected, setSortSelected] = useState<string[]>([
+    "createdAt desc",
+  ]);
 
   const statusViews = useMemo(
     () => [
@@ -496,23 +542,49 @@ export default function DeliveriesPage() {
     [],
   );
 
-  const selectedStatusFilter = statusViews[selectedView]?.id as DeliveryStatusFilter;
+  const selectedStatusFilter = statusViews[selectedView]
+    ?.id as DeliveryStatusFilter;
 
   const sortOptions = useMemo<IndexFiltersProps["sortOptions"]>(
     () => [
-      { label: "Newest first", value: "createdAt desc", directionLabel: "Newest first" },
-      { label: "Oldest first", value: "createdAt asc", directionLabel: "Oldest first" },
-      { label: "Order number (A-Z)", value: "orderNumber asc", directionLabel: "Ascending" },
-      { label: "Order number (Z-A)", value: "orderNumber desc", directionLabel: "Descending" },
-      { label: "Customer email (A-Z)", value: "customerEmail asc", directionLabel: "Ascending" },
-      { label: "Customer email (Z-A)", value: "customerEmail desc", directionLabel: "Descending" },
+      {
+        label: "Newest first",
+        value: "createdAt desc",
+        directionLabel: "Newest first",
+      },
+      {
+        label: "Oldest first",
+        value: "createdAt asc",
+        directionLabel: "Oldest first",
+      },
+      {
+        label: "Order number (A-Z)",
+        value: "orderNumber asc",
+        directionLabel: "Ascending",
+      },
+      {
+        label: "Order number (Z-A)",
+        value: "orderNumber desc",
+        directionLabel: "Descending",
+      },
+      {
+        label: "Customer email (A-Z)",
+        value: "customerEmail asc",
+        directionLabel: "Ascending",
+      },
+      {
+        label: "Customer email (Z-A)",
+        value: "customerEmail desc",
+        directionLabel: "Descending",
+      },
     ],
     [],
   );
 
   const filteredDeliveries = useMemo(() => {
     const normalizedQuery = queryValue.trim().toLowerCase();
-    const activeSort = (sortSelected[0] || "createdAt desc") as DeliverySortValue;
+    const activeSort = (sortSelected[0] ||
+      "createdAt desc") as DeliverySortValue;
 
     let nextDeliveries = deliveries.filter((delivery: DeliverySummary) => {
       const displayedDeliveryEmailStatus = getDisplayedDeliveryEmailStatus(
@@ -534,7 +606,8 @@ export default function DeliveriesPage() {
 
       if (
         selectedEmailStatuses.length > 0 &&
-        (!emailStatusFilterValue || !selectedEmailStatuses.includes(emailStatusFilterValue))
+        (!emailStatusFilterValue ||
+          !selectedEmailStatuses.includes(emailStatusFilterValue))
       ) {
         return false;
       }
@@ -630,28 +703,35 @@ export default function DeliveriesPage() {
   useEffect(() => {
     if (!actionData?.success) return;
     if (actionData.intent === "regenerate_token") {
-      shopify.toast.show(`Portal link regenerated for order #${actionData.orderNumber}`);
+      shopify.toast.show(
+        `Portal link regenerated for order #${actionData.orderNumber}`,
+      );
       return;
     }
 
     if (actionData.intent === "resend_email") {
-      shopify.toast.show(`Delivery email resent for order #${actionData.orderNumber}`);
+      shopify.toast.show(
+        `Delivery email resent for order #${actionData.orderNumber}`,
+      );
     }
   }, [actionData, shopify]);
 
-  const handleCopy = useCallback(async (orderId: string, portalUrl: string) => {
-    try {
-      await navigator.clipboard.writeText(portalUrl);
-      shopify.toast.show("Portal link copied");
-      setCopiedOrderId(orderId);
-      window.setTimeout(() => {
-        setCopiedOrderId((current) => (current === orderId ? null : current));
-      }, 2500);
-    } catch (error) {
-      console.error("Failed to copy portal link:", error);
-      shopify.toast.show("Could not copy portal link", { isError: true });
-    }
-  }, [shopify]);
+  const handleCopy = useCallback(
+    async (orderId: string, portalUrl: string) => {
+      try {
+        await navigator.clipboard.writeText(portalUrl);
+        shopify.toast.show("Portal link copied");
+        setCopiedOrderId(orderId);
+        window.setTimeout(() => {
+          setCopiedOrderId((current) => (current === orderId ? null : current));
+        }, 2500);
+      } catch (error) {
+        console.error("Failed to copy portal link:", error);
+        shopify.toast.show("Could not copy portal link", { isError: true });
+      }
+    },
+    [shopify],
+  );
 
   const handleRegenerate = useCallback(
     (orderId: string) => {
@@ -687,11 +767,12 @@ export default function DeliveriesPage() {
     setActivePopover(null);
   }, []);
 
-  const handlePopoverActivatorPointerDown = useCallback((
-    event: { stopPropagation: () => void },
-  ) => {
-    event.stopPropagation();
-  }, []);
+  const handlePopoverActivatorPointerDown = useCallback(
+    (event: { stopPropagation: () => void }) => {
+      event.stopPropagation();
+    },
+    [],
+  );
 
   const handlePopoverActivatorClick = useCallback(
     (
@@ -724,7 +805,9 @@ export default function DeliveriesPage() {
             { label: "Bounced", value: "bounced" },
           ]}
           selected={selectedEmailStatuses}
-          onChange={(value) => setSelectedEmailStatuses(value as DeliveryEmailFilter[])}
+          onChange={(value) =>
+            setSelectedEmailStatuses(value as DeliveryEmailFilter[])
+          }
           allowMultiple
         />
       ),
@@ -741,7 +824,9 @@ export default function DeliveriesPage() {
             { label: "Active", value: "active" },
             { label: "Expired", value: "expired" },
           ]}
-          selected={selectedStatusFilter === "all" ? [] : [selectedStatusFilter]}
+          selected={
+            selectedStatusFilter === "all" ? [] : [selectedStatusFilter]
+          }
           onChange={(value) => {
             const nextValue = value[0] as DeliveryStatusFilter | undefined;
             if (!nextValue) {
@@ -749,7 +834,9 @@ export default function DeliveriesPage() {
               return;
             }
 
-            const nextIndex = statusViews.findIndex((view) => view.id === nextValue);
+            const nextIndex = statusViews.findIndex(
+              (view) => view.id === nextValue,
+            );
             setSelectedView(nextIndex >= 0 ? nextIndex : 0);
           }}
           allowMultiple={false}
@@ -772,8 +859,12 @@ export default function DeliveriesPage() {
         ...(selectedDelivery.portalUrl
           ? [
               {
-                content: copiedOrderId === selectedDelivery.id ? "Copied" : "Copy portal link",
-                onAction: () => handleCopy(selectedDelivery.id, selectedDelivery.portalUrl),
+                content:
+                  copiedOrderId === selectedDelivery.id
+                    ? "Copied"
+                    : "Copy portal link",
+                onAction: () =>
+                  handleCopy(selectedDelivery.id, selectedDelivery.portalUrl),
               },
               {
                 content: "Regenerate portal link",
@@ -822,7 +913,8 @@ export default function DeliveriesPage() {
                 image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
               >
                 <p>
-                  Monitor delivery email, portal access, and download activity after purchase.
+                  Monitor delivery email, portal access, and download activity
+                  after purchase.
                 </p>
               </EmptyState>
             </Card>
@@ -874,238 +966,331 @@ export default function DeliveriesPage() {
                   { title: "Downloads" },
                 ]}
               >
-                {filteredDeliveries.map((delivery: DeliverySummary, index: number) => {
-                  const displayedDeliveryEmailStatus = getDisplayedDeliveryEmailStatus(
-                    delivery.deliveryEmailStatus,
-                    delivery.deliveryEmailConfirmedStatus,
-                    emailConfirmationEnabled,
-                  );
+                {filteredDeliveries.map(
+                  (delivery: DeliverySummary, index: number) => {
+                    const displayedDeliveryEmailStatus =
+                      getDisplayedDeliveryEmailStatus(
+                        delivery.deliveryEmailStatus,
+                        delivery.deliveryEmailConfirmedStatus,
+                        emailConfirmationEnabled,
+                      );
 
-                  return (
-                    <IndexTable.Row
-                      key={delivery.id}
-                      id={delivery.id}
-                      position={index}
-                      selected={selectedResources.includes(delivery.id)}
-                    >
-                      <IndexTable.Cell>
-                        <Text as="span" variant="bodyMd" fontWeight="semibold">
-                          Order #{delivery.orderNumber}
-                        </Text>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Text as="span">
-                          {formatDate(delivery.createdAt)}
-                        </Text>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Popover
-                          active={isPopoverOpen(delivery.id, "customer")}
-                          autofocusTarget="first-node"
-                          preferredAlignment="left"
-                          preferredPosition="below"
-                          onClose={closePopover}
-                          activator={
-                            <div
-                              onClickCapture={(event) =>
-                                handlePopoverActivatorClick(event, delivery.id, "customer")
-                              }
-                              onMouseDownCapture={handlePopoverActivatorPointerDown}
-                              onPointerDownCapture={handlePopoverActivatorPointerDown}
-                            >
-                              <Button
-                                disclosure
-                                variant="monochromePlain"
-                                size="slim"
-                                textAlign="left"
+                    return (
+                      <IndexTable.Row
+                        key={delivery.id}
+                        id={delivery.id}
+                        position={index}
+                        selected={selectedResources.includes(delivery.id)}
+                      >
+                        <IndexTable.Cell>
+                          <Text
+                            as="span"
+                            variant="bodyMd"
+                            fontWeight="semibold"
+                          >
+                            Order #{delivery.orderNumber}
+                          </Text>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <Text as="span">
+                            {formatDate(delivery.createdAt)}
+                          </Text>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <Popover
+                            active={isPopoverOpen(delivery.id, "customer")}
+                            autofocusTarget="first-node"
+                            preferredAlignment="left"
+                            preferredPosition="below"
+                            onClose={closePopover}
+                            activator={
+                              <div
+                                onClickCapture={(event) =>
+                                  handlePopoverActivatorClick(
+                                    event,
+                                    delivery.id,
+                                    "customer",
+                                  )
+                                }
+                                onMouseDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
+                                onPointerDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
                               >
-                                {delivery.customerLastName || delivery.customerName || "Customer"}
-                              </Button>
+                                <Button
+                                  disclosure
+                                  variant="monochromePlain"
+                                  size="slim"
+                                  textAlign="left"
+                                >
+                                  {delivery.customerLastName ||
+                                    delivery.customerName ||
+                                    "Customer"}
+                                </Button>
+                              </div>
+                            }
+                          >
+                            <div style={{ minWidth: "240px", padding: "16px" }}>
+                              <BlockStack gap="200">
+                                <Text
+                                  as="p"
+                                  variant="headingSm"
+                                  fontWeight="semibold"
+                                >
+                                  {delivery.customerName || "Customer"}
+                                </Text>
+                                {delivery.customerEmail ? (
+                                  <Text as="p" tone="subdued">
+                                    {delivery.customerEmail}
+                                  </Text>
+                                ) : (
+                                  <Text as="p" tone="subdued">
+                                    No customer email available
+                                  </Text>
+                                )}
+                              </BlockStack>
                             </div>
-                          }
-                        >
-                          <div style={{ minWidth: "240px", padding: "16px" }}>
-                            <BlockStack gap="200">
-                              <Text as="p" variant="headingSm" fontWeight="semibold">
-                                {delivery.customerName || "Customer"}
-                              </Text>
-                              {delivery.customerEmail ? (
-                                <Text as="p" tone="subdued">
-                                  {delivery.customerEmail}
-                                </Text>
-                              ) : (
-                                <Text as="p" tone="subdued">
-                                  No customer email available
-                                </Text>
-                              )}
-                            </BlockStack>
-                          </div>
-                        </Popover>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Popover
-                          active={isPopoverOpen(delivery.id, "items")}
-                          autofocusTarget="first-node"
-                          preferredAlignment="left"
-                          preferredPosition="below"
-                          onClose={closePopover}
-                          activator={
-                            <div
-                              onClickCapture={(event) =>
-                                handlePopoverActivatorClick(event, delivery.id, "items")
-                              }
-                              onMouseDownCapture={handlePopoverActivatorPointerDown}
-                              onPointerDownCapture={handlePopoverActivatorPointerDown}
-                            >
-                              <Button
-                                disclosure={delivery.itemCount > 0 ? "down" : undefined}
-                                variant="monochromePlain"
-                                size="slim"
-                                textAlign="left"
+                          </Popover>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <Popover
+                            active={isPopoverOpen(delivery.id, "items")}
+                            autofocusTarget="first-node"
+                            preferredAlignment="left"
+                            preferredPosition="below"
+                            onClose={closePopover}
+                            activator={
+                              <div
+                                onClickCapture={(event) =>
+                                  handlePopoverActivatorClick(
+                                    event,
+                                    delivery.id,
+                                    "items",
+                                  )
+                                }
+                                onMouseDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
+                                onPointerDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
                               >
-                                {`${delivery.itemCount} item${delivery.itemCount === 1 ? "" : "s"}`}
-                              </Button>
+                                <Button
+                                  disclosure={
+                                    delivery.itemCount > 0 ? "down" : undefined
+                                  }
+                                  variant="monochromePlain"
+                                  size="slim"
+                                  textAlign="left"
+                                >
+                                  {`${delivery.itemCount} item${delivery.itemCount === 1 ? "" : "s"}`}
+                                </Button>
+                              </div>
+                            }
+                          >
+                            <div style={{ minWidth: "320px", padding: "16px" }}>
+                              <BlockStack gap="300">
+                                {delivery.itemDetails.map((item) => (
+                                  <BlockStack key={item.id} gap="100">
+                                    <Text
+                                      as="p"
+                                      variant="bodyMd"
+                                      fontWeight="semibold"
+                                    >
+                                      {item.beatTitle}
+                                    </Text>
+                                    <Text as="p" tone="subdued">
+                                      {item.licenseName}
+                                    </Text>
+                                    <Text as="p" tone="subdued">
+                                      Includes{" "}
+                                      {item.includedFiles.length > 0
+                                        ? item.includedFiles.join(", ")
+                                        : "no mapped files yet"}
+                                    </Text>
+                                  </BlockStack>
+                                ))}
+                              </BlockStack>
                             </div>
-                          }
-                        >
-                          <div style={{ minWidth: "320px", padding: "16px" }}>
-                            <BlockStack gap="300">
-                              {delivery.itemDetails.map((item) => (
-                                <BlockStack key={item.id} gap="100">
-                                  <Text as="p" variant="bodyMd" fontWeight="semibold">
-                                    {item.beatTitle}
-                                  </Text>
-                                  <Text as="p" tone="subdued">
-                                    {item.licenseName}
-                                  </Text>
-                                  <Text as="p" tone="subdued">
-                                    Includes {item.includedFiles.length > 0 ? item.includedFiles.join(", ") : "no mapped files yet"}
-                                  </Text>
-                                </BlockStack>
-                              ))}
-                            </BlockStack>
-                          </div>
-                        </Popover>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Popover
-                          active={isPopoverOpen(delivery.id, "email")}
-                          autofocusTarget="first-node"
-                          preferredAlignment="left"
-                          preferredPosition="below"
-                          onClose={closePopover}
-                          activator={
-                            <button
-                              type="button"
-                              aria-label={`Show delivery email details for order #${delivery.orderNumber}`}
-                              onClick={(event) =>
-                                handlePopoverActivatorClick(event, delivery.id, "email")
-                              }
-                              onMouseDown={handlePopoverActivatorPointerDown}
-                              onPointerDown={handlePopoverActivatorPointerDown}
-                              style={{
-                                background: "none",
-                                border: 0,
-                                padding: 0,
-                                cursor: "pointer",
-                              }}
-                            >
-                              <Badge tone={getDeliveryEmailBadgeTone(displayedDeliveryEmailStatus)}>
-                                {getDeliveryEmailBadgeLabel(displayedDeliveryEmailStatus)}
-                              </Badge>
-                            </button>
-                          }
-                        >
-                          <div style={{ minWidth: "280px", padding: "16px" }}>
-                            <BlockStack gap="300">
-                              <Text as="p" variant="headingSm" fontWeight="semibold">
-                                Delivery email
-                              </Text>
-                              <Text as="p" tone="subdued">
-                                Recipient: {delivery.deliveryEmailRecipient || delivery.customerEmail || "Not available"}
-                              </Text>
-                              <Text as="p" tone="subdued">
-                                Sent: {formatOptionalDate(delivery.deliveryEmailSentAt)}
-                              </Text>
-                              <Text as="p" tone="subdued">
-                                Last Resend event: {formatWebhookEventLabel(delivery.deliveryEmailLastEvent)}
-                                {delivery.deliveryEmailLastEventAt
-                                  ? ` • ${formatDate(delivery.deliveryEmailLastEventAt)}`
-                                  : ""}
-                              </Text>
-                              {displayedDeliveryEmailStatus === "delivered" &&
-                              delivery.deliveryEmailConfirmedAt ? (
-                                <Text as="p" tone="subdued">
-                                  Confirmed delivered: {formatDate(delivery.deliveryEmailConfirmedAt)}
-                                </Text>
-                              ) : null}
-                              {(delivery.deliveryEmailConfirmedError || delivery.deliveryEmailError) ? (
-                                <Text as="p" tone="critical">
-                                  Error: {delivery.deliveryEmailConfirmedError || delivery.deliveryEmailError}
-                                </Text>
-                              ) : null}
-                              {!emailConfirmationEnabled ? (
-                                <Text as="p" tone="subdued">
-                                  Resend webhook tracking is not enabled for this store.
-                                </Text>
-                              ) : null}
-                            </BlockStack>
-                          </div>
-                        </Popover>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Badge tone={delivery.status === "active" ? "success" : undefined}>
-                          {delivery.status === "active" ? "Active" : delivery.status}
-                        </Badge>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Popover
-                          active={isPopoverOpen(delivery.id, "downloads")}
-                          autofocusTarget="first-node"
-                          preferredAlignment="left"
-                          preferredPosition="below"
-                          onClose={closePopover}
-                          activator={
-                            <div
-                              onClickCapture={(event) =>
-                                handlePopoverActivatorClick(event, delivery.id, "downloads")
-                              }
-                              onMouseDownCapture={handlePopoverActivatorPointerDown}
-                              onPointerDownCapture={handlePopoverActivatorPointerDown}
-                            >
-                              <Button
-                                disclosure={delivery.itemCount > 0 ? "down" : undefined}
-                                variant="monochromePlain"
-                                size="slim"
-                                textAlign="left"
+                          </Popover>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <Popover
+                            active={isPopoverOpen(delivery.id, "email")}
+                            autofocusTarget="first-node"
+                            preferredAlignment="left"
+                            preferredPosition="below"
+                            onClose={closePopover}
+                            activator={
+                              <button
+                                type="button"
+                                aria-label={`Show delivery email details for order #${delivery.orderNumber}`}
+                                onClick={(event) =>
+                                  handlePopoverActivatorClick(
+                                    event,
+                                    delivery.id,
+                                    "email",
+                                  )
+                                }
+                                onMouseDown={handlePopoverActivatorPointerDown}
+                                onPointerDown={
+                                  handlePopoverActivatorPointerDown
+                                }
+                                style={{
+                                  background: "none",
+                                  border: 0,
+                                  padding: 0,
+                                  cursor: "pointer",
+                                }}
                               >
-                                {`${delivery.totalDownloadCount} tracked download${delivery.totalDownloadCount === 1 ? "" : "s"}`}
-                              </Button>
+                                <Badge
+                                  tone={getDeliveryEmailBadgeTone(
+                                    displayedDeliveryEmailStatus,
+                                  )}
+                                >
+                                  {getDeliveryEmailBadgeLabel(
+                                    displayedDeliveryEmailStatus,
+                                  )}
+                                </Badge>
+                              </button>
+                            }
+                          >
+                            <div style={{ minWidth: "280px", padding: "16px" }}>
+                              <BlockStack gap="300">
+                                <Text
+                                  as="p"
+                                  variant="headingSm"
+                                  fontWeight="semibold"
+                                >
+                                  Delivery email
+                                </Text>
+                                <Text as="p" tone="subdued">
+                                  Recipient:{" "}
+                                  {delivery.deliveryEmailRecipient ||
+                                    delivery.customerEmail ||
+                                    "Not available"}
+                                </Text>
+                                <Text as="p" tone="subdued">
+                                  Sent:{" "}
+                                  {formatOptionalDate(
+                                    delivery.deliveryEmailSentAt,
+                                  )}
+                                </Text>
+                                <Text as="p" tone="subdued">
+                                  Last Resend event:{" "}
+                                  {formatWebhookEventLabel(
+                                    delivery.deliveryEmailLastEvent,
+                                  )}
+                                  {delivery.deliveryEmailLastEventAt
+                                    ? ` • ${formatDate(delivery.deliveryEmailLastEventAt)}`
+                                    : ""}
+                                </Text>
+                                {displayedDeliveryEmailStatus === "delivered" &&
+                                delivery.deliveryEmailConfirmedAt ? (
+                                  <Text as="p" tone="subdued">
+                                    Confirmed delivered:{" "}
+                                    {formatDate(
+                                      delivery.deliveryEmailConfirmedAt,
+                                    )}
+                                  </Text>
+                                ) : null}
+                                {delivery.deliveryEmailConfirmedError ||
+                                delivery.deliveryEmailError ? (
+                                  <Text as="p" tone="critical">
+                                    Error:{" "}
+                                    {delivery.deliveryEmailConfirmedError ||
+                                      delivery.deliveryEmailError}
+                                  </Text>
+                                ) : null}
+                                {!emailConfirmationEnabled ? (
+                                  <Text as="p" tone="subdued">
+                                    Resend webhook tracking is not enabled for
+                                    this store.
+                                  </Text>
+                                ) : null}
+                              </BlockStack>
                             </div>
-                          }
-                        >
-                          <div style={{ minWidth: "320px", padding: "16px" }}>
-                            <BlockStack gap="300">
-                              {delivery.itemDetails.map((item) => (
-                                <BlockStack key={item.id} gap="100">
-                                  <Text as="p" variant="bodyMd" fontWeight="semibold">
-                                    {item.beatTitle}
-                                  </Text>
-                                  <Text as="p" tone="subdued">
-                                    {item.licenseName}
-                                  </Text>
-                                  <Text as="p" tone="subdued">
-                                    {item.downloadCount} download{item.downloadCount === 1 ? "" : "s"}
-                                  </Text>
-                                </BlockStack>
-                              ))}
-                            </BlockStack>
-                          </div>
-                        </Popover>
-                      </IndexTable.Cell>
-                    </IndexTable.Row>
-                  );
-                })}
+                          </Popover>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <Badge
+                            tone={
+                              delivery.status === "active"
+                                ? "success"
+                                : undefined
+                            }
+                          >
+                            {delivery.status === "active"
+                              ? "Active"
+                              : delivery.status}
+                          </Badge>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <Popover
+                            active={isPopoverOpen(delivery.id, "downloads")}
+                            autofocusTarget="first-node"
+                            preferredAlignment="left"
+                            preferredPosition="below"
+                            onClose={closePopover}
+                            activator={
+                              <div
+                                onClickCapture={(event) =>
+                                  handlePopoverActivatorClick(
+                                    event,
+                                    delivery.id,
+                                    "downloads",
+                                  )
+                                }
+                                onMouseDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
+                                onPointerDownCapture={
+                                  handlePopoverActivatorPointerDown
+                                }
+                              >
+                                <Button
+                                  disclosure={
+                                    delivery.itemCount > 0 ? "down" : undefined
+                                  }
+                                  variant="monochromePlain"
+                                  size="slim"
+                                  textAlign="left"
+                                >
+                                  {`${delivery.totalDownloadCount} tracked download${delivery.totalDownloadCount === 1 ? "" : "s"}`}
+                                </Button>
+                              </div>
+                            }
+                          >
+                            <div style={{ minWidth: "320px", padding: "16px" }}>
+                              <BlockStack gap="300">
+                                {delivery.itemDetails.map((item) => (
+                                  <BlockStack key={item.id} gap="100">
+                                    <Text
+                                      as="p"
+                                      variant="bodyMd"
+                                      fontWeight="semibold"
+                                    >
+                                      {item.beatTitle}
+                                    </Text>
+                                    <Text as="p" tone="subdued">
+                                      {item.licenseName}
+                                    </Text>
+                                    <Text as="p" tone="subdued">
+                                      {item.downloadCount} download
+                                      {item.downloadCount === 1 ? "" : "s"}
+                                    </Text>
+                                  </BlockStack>
+                                ))}
+                              </BlockStack>
+                            </div>
+                          </Popover>
+                        </IndexTable.Cell>
+                      </IndexTable.Row>
+                    );
+                  },
+                )}
               </IndexTable>
             </Card>
           )}

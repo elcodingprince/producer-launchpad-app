@@ -21,9 +21,9 @@ function normalizeShopifyResourceId(id: string) {
 
 function buildCustomerName(payload: any) {
   const nameCandidates = [
-    payload.customer,
     payload.billing_address,
     payload.shipping_address,
+    payload.customer,
     payload.default_address,
   ];
 
@@ -398,13 +398,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         to: customerEmail,
         portalUrl: buildDownloadPortalUrl(token, request),
         storeName: formatStoreName(shop),
-        customerFirstName:
-          String(
-            payload.customer?.first_name ||
-              payload.billing_address?.first_name ||
-              payload.shipping_address?.first_name ||
-              "",
-          ).trim() || null,
+        customerName,
         orderNumber,
         itemSummary: createdOrder.items
           .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)

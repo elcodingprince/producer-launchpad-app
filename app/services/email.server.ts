@@ -6,7 +6,7 @@ export interface SendDeliveryEmailInput {
   portalUrl: string;
   storeName: string;
   brandName?: string;
-  customerFirstName?: string | null;
+  customerName?: string | null;
   orderNumber?: string | null;
   itemSummary?: string | null;
   items?: DeliveryReadyEmailItem[] | null;
@@ -95,7 +95,7 @@ export async function sendDeliveryEmail(
     subject: `Your files are ready from ${input.storeName}`,
     brandName,
     storeName: input.storeName,
-    customerFirstName: input.customerFirstName,
+    customerName: input.customerName,
     portalUrl: input.portalUrl,
     orderNumber: input.orderNumber,
     itemSummary: input.itemSummary,

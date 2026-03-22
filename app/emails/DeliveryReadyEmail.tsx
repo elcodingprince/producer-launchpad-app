@@ -17,7 +17,7 @@ import {
 export interface DeliveryReadyEmailProps {
   brandName: string;
   storeName: string;
-  customerFirstName?: string | null;
+  customerName?: string | null;
   portalUrl: string;
   orderNumber?: string | null;
   itemSummary?: string | null;
@@ -35,7 +35,7 @@ export interface DeliveryReadyEmailItem {
 export function DeliveryReadyEmail({
   brandName,
   storeName,
-  customerFirstName,
+  customerName,
   portalUrl,
   orderNumber,
   itemSummary,
@@ -44,7 +44,7 @@ export function DeliveryReadyEmail({
   logoUrl,
 }: DeliveryReadyEmailProps) {
   const previewText = `Your files from ${storeName} are ready`;
-  const greetingName = customerFirstName?.trim() || "there";
+  const greetingName = customerName?.trim() || "there";
   const hasItems = Boolean(items?.length);
 
   return (
