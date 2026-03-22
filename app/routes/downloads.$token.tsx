@@ -16,6 +16,10 @@ function isAudioDeliverable(file: BeatFile) {
   return !["preview", "license_pdf", "cover"].includes(file.filePurpose);
 }
 
+function isBaseAudioDeliverable(file: BeatFile) {
+  return isAudioDeliverable(file) && file.filePurpose !== "stems";
+}
+
 function getFileLabel(file: BeatFile) {
   if (file.filePurpose === "stems") return "STEMS";
   if (file.filePurpose === "wav") return "WAV";
@@ -118,7 +122,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
           (mapping: LicenseFileMapping & { beatFile: BeatFile }): BeatFile =>
             mapping.beatFile,
         )
-        .filter((file: BeatFile) => isAudioDeliverable(file));
+        .filter((file: BeatFile) => isBaseAudioDeliverable(file));
       const stemsRequirementMissing =
         item.stemsIncludedInOrder && !Boolean(stemsFile);
 

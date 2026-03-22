@@ -2,6 +2,10 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { getStarterPresetVersion } from "~/services/metafieldSetup";
 import { createMetafieldSetupService } from "~/services/metafieldSetup";
+import {
+  buildDerivedLicenseFields,
+  resolveOfferArchetype,
+} from "~/services/licenses/archetypes";
 import { renderAgreementPreview } from "~/services/licenses/agreementRenderer.server";
 import { authenticate } from "~/shopify.server";
 
@@ -25,9 +29,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const previewMode =
     formData.get("previewMode") === "starter" ? "starter" : "resolved";
   const licenseHandle = String(formData.get("handle") || "").trim();
-  const legalTemplateFamily = String(
-    formData.get("legalTemplateFamily") || "basic",
-  ).trim();
+  const offerArchetype = resolveOfferArchetype({
+    offerArchetype: String(formData.get("offerArchetype") || "").trim(),
+    licenseId: String(formData.get("licenseId") || "").trim(),
+    legalTemplateFamily: String(
+      formData.get("legalTemplateFamily") || "",
+    ).trim(),
+    handle: licenseHandle,
+  });
+  const derivedFields = buildDerivedLicenseFields(offerArchetype, {
+    stemsPolicy: String(formData.get("stemsPolicy") || "").trim(),
+  });
 
   const [licensorMetaobject, producerMetaobject] = await Promise.all([
     setupService.getDefaultLicensor(),
@@ -43,13 +55,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const license = {
     handle: licenseHandle,
     licenseName: String(formData.get("licenseName") || "").trim(),
-    legalTemplateFamily,
+    offerArchetype,
+    legalTemplateFamily: derivedFields.legalTemplateFamily,
     streamLimit: String(formData.get("streamLimit") || "").trim(),
     copyLimit: String(formData.get("copyLimit") || "").trim(),
     videoViewLimit: String(formData.get("videoViewLimit") || "").trim(),
     termYears: String(formData.get("termYears") || "").trim(),
-    fileFormats: String(formData.get("fileFormats") || "").trim(),
-    stemsPolicy: String(formData.get("stemsPolicy") || "not_available").trim(),
+    fileFormats: derivedFields.fileFormats,
+    stemsPolicy: derivedFields.stemsPolicy,
     contentIdPolicy: String(
       formData.get("contentIdPolicy") || "not_allowed",
     ).trim(),
@@ -87,7 +100,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     licensor.legalName;
   const starterVersion =
     (licenseHandle && getStarterPresetVersion(licenseHandle)) ||
-    `preview-${legalTemplateFamily || "basic"}`;
+    `preview-${derivedFields.legalTemplateFamily || "basic"}`;
 
   try {
     const preview = await renderAgreementPreview({

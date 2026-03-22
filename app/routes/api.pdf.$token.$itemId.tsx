@@ -1,5 +1,10 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import prisma from "~/db.server";
+import { resolveOfferStemsPolicy } from "~/services/deliveryPackages";
+import {
+  buildDerivedLicenseFields,
+  resolveOfferArchetype,
+} from "~/services/licenses/archetypes";
 import { renderAgreementPreview } from "~/services/licenses/agreementRenderer.server";
 import {
   createMetafieldSetupService,
@@ -80,6 +85,9 @@ async function fetchAgreementDocumentData(
         id
         title
         price
+        stemsAddonEnabledMetafield: metafield(namespace: "custom", key: "stems_addon_enabled") {
+          value
+        }
         product {
           id
           title
@@ -149,6 +157,9 @@ async function fetchAgreementDocumentData(
           title: string;
           vendor: string;
           metafield?: { value?: string | null } | null;
+        } | null;
+        stemsAddonEnabledMetafield?: {
+          value?: string | null;
         } | null;
         metafield?: {
           reference?: {
@@ -228,6 +239,7 @@ async function fetchAgreementDocumentData(
     producerAlias: variant.product?.metafield?.value?.trim() || "",
     producerVendor: variant.product?.vendor?.trim() || "",
     clientIp: payload.data?.order?.clientIp?.trim() || "",
+    stemsAddonEnabled: variant.stemsAddonEnabledMetafield?.value === "true",
     licenseReference,
     licensePrice: priceMoney
       ? formatMoney(priceMoney.amount, priceMoney.currencyCode)
@@ -288,10 +300,18 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     const licensorFields = licensorMetaobject.fields || [];
     const licenseHandle =
       shopifyData.licenseReference.handle || "license-template";
-    const legalTemplateFamily =
-      getFieldValue(licenseFields, "legal_template_family") ||
-      getFieldValue(licenseFields, "license_id") ||
-      "basic";
+    const offerArchetype = resolveOfferArchetype({
+      offerArchetype: getFieldValue(licenseFields, "offer_archetype"),
+      licenseId: getFieldValue(licenseFields, "license_id"),
+      legalTemplateFamily: getFieldValue(
+        licenseFields,
+        "legal_template_family",
+      ),
+      handle: licenseHandle,
+    });
+    const derivedFields = buildDerivedLicenseFields(offerArchetype, {
+      stemsPolicy: getFieldValue(licenseFields, "stems_policy"),
+    });
     const licensor = {
       legalName: getFieldValue(licensorFields, "legal_name"),
       dbaName: getFieldValue(licensorFields, "dba_name"),
@@ -312,16 +332,20 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       licensor.legalName;
     const license = {
       handle: licenseHandle,
+      offerArchetype,
       licenseName:
         getFieldValue(licenseFields, "license_name") || item.licenseName,
-      legalTemplateFamily,
+      legalTemplateFamily: derivedFields.legalTemplateFamily,
       streamLimit: getFieldValue(licenseFields, "stream_limit"),
       copyLimit: getFieldValue(licenseFields, "copy_limit"),
       videoViewLimit: getFieldValue(licenseFields, "video_view_limit"),
       termYears: getFieldValue(licenseFields, "term_years"),
-      fileFormats: getFieldValue(licenseFields, "file_formats"),
-      stemsPolicy:
-        getFieldValue(licenseFields, "stems_policy") || "not_available",
+      fileFormats: derivedFields.fileFormats,
+      stemsPolicy: resolveOfferStemsPolicy(
+        derivedFields.stemsPolicy,
+        shopifyData.stemsAddonEnabled,
+        offerArchetype,
+      ),
       contentIdPolicy:
         getFieldValue(licenseFields, "content_id_policy") || "not_allowed",
       syncPolicy: getFieldValue(licenseFields, "sync_policy") || "not_included",

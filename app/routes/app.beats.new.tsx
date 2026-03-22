@@ -26,6 +26,7 @@ import {
   getRequiredDeliveryFormats,
   licenseOffersStems,
   normalizeDeliveryFormat,
+  resolveOfferStemsPolicy,
   type DeliveryFormat,
 } from "~/services/deliveryPackages";
 import {
@@ -42,6 +43,7 @@ import {
   LicenseFileAssignment,
   type UploadedFile,
   type LicenseFiles,
+  type StemsAddonSelections,
 } from "../components/LicenseFileAssignment";
 import { MultiSelectCombobox } from "../components/MultiSelectCombobox";
 
@@ -202,6 +204,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               draftRecord.licensePricesJson,
               {},
             ),
+            stemsAddonSelections: parseJsonField<StemsAddonSelections>(
+              draftRecord.stemsAddonSelectionsJson,
+              {},
+            ),
             uploadedFiles: parseJsonField<UploadedFile[]>(
               draftRecord.uploadedFilesJson,
               [],
@@ -274,6 +280,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
     const licensePricesData = JSON.parse(
       (formData.get("licensePrices") as string) || "{}",
+    );
+    const stemsAddonSelectionsData = parseJsonField<StemsAddonSelections>(
+      (formData.get("stemsAddonSelections") as string) || "{}",
+      {},
     );
     const uploadedFilesStateRaw = formData.get("uploadedFilesState") as
       | string
@@ -411,7 +421,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     const stemsSourceRequired = dbLicenses.some((license) =>
-      licenseOffersStems(license.stemsPolicy),
+      licenseOffersStems(
+        resolveOfferStemsPolicy(
+          license.stemsPolicy,
+          stemsAddonSelectionsData[license.licenseId],
+          license.offerArchetype,
+        ),
+      ),
     );
     const sharedStemsFilePresent = hasSharedStemsSourceFile(
       existingUploadedFiles,
@@ -419,7 +435,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (!isDraft && stemsSourceRequired && !sharedStemsFilePresent) {
       const affectedLicenses = dbLicenses
-        .filter((license) => licenseOffersStems(license.stemsPolicy))
+        .filter((license) =>
+          licenseOffersStems(
+            resolveOfferStemsPolicy(
+              license.stemsPolicy,
+              stemsAddonSelectionsData[license.licenseId],
+              license.offerArchetype,
+            ),
+          ),
+        )
         .map((license) => license.licenseName);
 
       return json(
@@ -638,6 +662,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         producerGidsJson: JSON.stringify(producerGids),
         licenseFilesJson: JSON.stringify(licenseFilesData),
         licensePricesJson: JSON.stringify(licensePricesData),
+        stemsAddonSelectionsJson: JSON.stringify(stemsAddonSelectionsData),
         uploadedFilesJson: JSON.stringify(mergedUploadedFiles),
         previewFileJson: mergedPreviewFile
           ? JSON.stringify(mergedPreviewFile)
@@ -667,7 +692,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Get actual license GIDs from the database
     const licenses = dbLicenses;
-    const licenseMap = new Map(licenses.map((l) => [l.licenseId, l.id]));
 
     // === CREATE SHOPIFY PRODUCT ===
     console.info("[upload] creating Shopify product");
@@ -682,6 +706,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         licenseName: lp.licenseName,
         price: isNaN(customPrice) ? 0 : customPrice,
         compareAtPrice: undefined,
+        stemsAddonEnabled:
+          resolveOfferStemsPolicy(
+            lp.stemsPolicy,
+            stemsAddonSelectionsData[lp.licenseId],
+            lp.offerArchetype,
+          ) === "available_as_addon",
       };
     });
 
@@ -861,6 +891,14 @@ export default function NewBeatPage() {
         .forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || ""));
     return obj;
   }, [draft?.licensePrices, licenses]);
+  const initialStemsAddonSelections = useMemo(() => {
+    const obj: StemsAddonSelections = draft?.stemsAddonSelections || {};
+    if (licenses)
+      licenses.filter(Boolean).forEach((license) => {
+        obj[license!.licenseId] = Boolean(obj[license!.licenseId]);
+      });
+    return obj;
+  }, [draft?.stemsAddonSelections, licenses]);
   const initialPreviewFile = (draft?.previewFile ||
     null) as UploadedFile | null;
   const initialCoverArtFile = (draft?.coverArtFile ||
@@ -883,6 +921,8 @@ export default function NewBeatPage() {
     useState<LicenseFiles>(initialLicenseFiles);
   const [licensePrices, setLicensePrices] =
     useState<Record<string, string>>(initialLicensePrices);
+  const [stemsAddonSelections, setStemsAddonSelections] =
+    useState<StemsAddonSelections>(initialStemsAddonSelections);
   const [previewFile, setPreviewFile] = useState<UploadedFile | null>(
     initialPreviewFile,
   );
@@ -974,6 +1014,7 @@ export default function NewBeatPage() {
         uploadedFiles: serializeUploadedFiles(initialUploadedFiles),
         licenseFiles: initialLicenseFiles,
         licensePrices: initialLicensePrices,
+        stemsAddonSelections: initialStemsAddonSelections,
         previewFile: serializeUploadedFile(initialPreviewFile),
         coverArtFile: serializeUploadedFile(initialCoverArtFile),
       }),
@@ -984,6 +1025,7 @@ export default function NewBeatPage() {
       initialKey,
       initialLicenseFiles,
       initialLicensePrices,
+      initialStemsAddonSelections,
       initialPreviewFile,
       initialProducerAlias,
       initialProducerGids,
@@ -1006,6 +1048,7 @@ export default function NewBeatPage() {
         uploadedFiles: serializeUploadedFiles(uploadedFiles),
         licenseFiles,
         licensePrices,
+        stemsAddonSelections,
         previewFile: serializeUploadedFile(previewFile),
         coverArtFile: serializeUploadedFile(coverArtFile),
       }),
@@ -1016,6 +1059,7 @@ export default function NewBeatPage() {
       key,
       licenseFiles,
       licensePrices,
+      stemsAddonSelections,
       previewFile,
       producerAlias,
       producerGids,
@@ -1033,7 +1077,15 @@ export default function NewBeatPage() {
     const sharedStemsFilePresent = hasSharedStemsSourceFile(uploadedFiles);
     const sharedStemsRequired = licenses
       .filter(Boolean)
-      .some((license) => licenseOffersStems(license!.stemsPolicy));
+      .some((license) =>
+        licenseOffersStems(
+          resolveOfferStemsPolicy(
+            license!.stemsPolicy,
+            stemsAddonSelections[license!.licenseId],
+            license!.offerArchetype,
+          ),
+        ),
+      );
     const hasAllLicenseFiles = licenses.filter(Boolean).every((license) => {
       const requiredFormats = getRequiredDeliveryFormats(license!);
       const assignedFileIds = licenseFiles[license!.licenseId] || [];
@@ -1088,6 +1140,7 @@ export default function NewBeatPage() {
     setUploadedFiles(initialUploadedFiles);
     setLicenseFiles(initialLicenseFiles);
     setLicensePrices(initialLicensePrices);
+    setStemsAddonSelections(initialStemsAddonSelections);
     setPreviewFile(initialPreviewFile);
     setCoverArtFile(initialCoverArtFile);
     setUploadError(null);
@@ -1098,6 +1151,7 @@ export default function NewBeatPage() {
     initialKey,
     initialLicenseFiles,
     initialLicensePrices,
+    initialStemsAddonSelections,
     initialPreviewFile,
     initialProducerAlias,
     initialProducerGids,
@@ -1124,6 +1178,10 @@ export default function NewBeatPage() {
     formData.append("status", resolvedStatus);
     formData.append("licenseFiles", JSON.stringify(licenseFiles));
     formData.append("licensePrices", JSON.stringify(licensePrices));
+    formData.append(
+      "stemsAddonSelections",
+      JSON.stringify(stemsAddonSelections),
+    );
     formData.append(
       "uploadedFilesState",
       JSON.stringify(
@@ -1251,7 +1309,13 @@ export default function NewBeatPage() {
       : "Not set",
     description: l!.displayName,
     packageFormats: getRequiredDeliveryFormats(l!),
-    stemsPolicy: l!.stemsPolicy,
+    stemsPolicy: resolveOfferStemsPolicy(
+      l!.stemsPolicy,
+      stemsAddonSelections[l!.licenseId],
+      l!.offerArchetype,
+    ),
+    templateStemsPolicy: l!.stemsPolicy,
+    stemsAddonEnabled: Boolean(stemsAddonSelections[l!.licenseId]),
   }));
 
   const genreOptions = genres.filter(Boolean).map((g) => ({
@@ -1478,6 +1542,7 @@ export default function NewBeatPage() {
                 uploadedFiles={uploadedFiles}
                 licenseFiles={licenseFiles}
                 licensePrices={licensePrices}
+                stemsAddonSelections={stemsAddonSelections}
                 previewFile={previewFile}
                 coverArtFile={coverArtFile}
                 onChange={({
@@ -1486,12 +1551,14 @@ export default function NewBeatPage() {
                   previewFile: newPreviewFile,
                   coverArtFile: newCoverArtFile,
                   licensePrices: newLicensePrices,
+                  stemsAddonSelections: newStemsAddonSelections,
                 }) => {
                   setUploadedFiles(newFiles);
                   setLicenseFiles(newLicenseFiles);
                   setPreviewFile(newPreviewFile);
                   setCoverArtFile(newCoverArtFile);
                   setLicensePrices(newLicensePrices);
+                  setStemsAddonSelections(newStemsAddonSelections);
                 }}
                 onUpload={handleFileUpload}
                 uploading={isUploading}

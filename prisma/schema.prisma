@@ -74,21 +74,22 @@ model BeatFile {
 }
 
 model BeatDraft {
-  id                String   @id @default(cuid())
-  shop              String
-  title             String
-  bpm               Int?
-  key               String?
-  producerAlias     String?
-  genreGidsJson     String   @default("[]")
-  producerGidsJson  String   @default("[]")
-  licenseFilesJson  String   @default("{}")
-  licensePricesJson String   @default("{}")
-  uploadedFilesJson String   @default("[]")
-  previewFileJson   String?
-  coverArtFileJson  String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                       String   @id @default(cuid())
+  shop                     String
+  title                    String
+  bpm                      Int?
+  key                      String?
+  producerAlias            String?
+  genreGidsJson            String   @default("[]")
+  producerGidsJson         String   @default("[]")
+  licenseFilesJson         String   @default("{}")
+  licensePricesJson        String   @default("{}")
+  stemsAddonSelectionsJson String   @default("{}")
+  uploadedFilesJson        String   @default("[]")
+  previewFileJson          String?
+  coverArtFileJson         String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 
   @@index([shop])
   @@index([shop, updatedAt])

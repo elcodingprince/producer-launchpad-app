@@ -17,7 +17,7 @@ import {
   Box,
   Button,
   Card,
-  ChoiceList,
+  Checkbox,
   FormLayout,
   Icon,
   IndexTable,
@@ -37,6 +37,12 @@ import { FileFormatBadge } from "~/components/FileFormatBadge";
 import { LegalGuardrailModal } from "~/components/LegalGuardrailModal";
 import prisma from "~/db.server";
 import {
+  buildDerivedLicenseFields,
+  getOfferArchetypeConfig,
+  OFFER_ARCHETYPE_OPTIONS,
+  resolveOfferArchetype,
+} from "~/services/licenses/archetypes";
+import {
   DEFAULT_LICENSES,
   getStarterPresetVersion,
 } from "~/services/metafieldSetup";
@@ -47,6 +53,7 @@ import { authenticate } from "~/shopify.server";
 type LicenseTemplate = {
   id: string;
   handle: string;
+  offerArchetype: string;
   licenseId: string;
   licenseName: string;
   legalTemplateFamily: string;
@@ -77,7 +84,7 @@ type LicenseUsageSummary = {
 type LicenseFormState = {
   id?: string;
   handle: string;
-  licenseId: string;
+  offerArchetype: string;
   licenseName: string;
   legalTemplateFamily: string;
   streamLimit: string;
@@ -96,8 +103,6 @@ type LicenseFormState = {
   terms: string[];
 };
 
-type PackageFormat = "MP3" | "WAV" | "STEMS";
-
 type ActionDataShape = {
   success: boolean;
   intent?: string;
@@ -115,17 +120,6 @@ type AgreementPreviewData = {
   error?: string;
 };
 
-const PACKAGE_FORMAT_ORDER: PackageFormat[] = ["MP3", "WAV", "STEMS"];
-const LEGAL_TEMPLATE_FAMILY_OPTIONS = [
-  { label: "Basic", value: "basic" },
-  { label: "Premium", value: "premium" },
-  { label: "Unlimited", value: "unlimited" },
-];
-const STEMS_POLICY_OPTIONS = [
-  { label: "Not offered", value: "not_available" },
-  { label: "Available as add-on", value: "available_as_addon" },
-  { label: "Included by default", value: "included_by_default" },
-];
 const CONTENT_ID_POLICY_OPTIONS = [
   { label: "Not allowed", value: "not_allowed" },
   {
@@ -163,26 +157,40 @@ const AGREEMENT_PREVIEW_TABS = [
   { id: "starter", content: "Starter template" },
 ];
 
-const emptyLicenseForm = (): LicenseFormState => ({
-  handle: "",
-  licenseId: "",
-  licenseName: "",
-  legalTemplateFamily: "basic",
-  streamLimit: "",
-  copyLimit: "",
-  videoViewLimit: "",
-  termYears: "",
-  fileFormats: "",
-  stemsPolicy: "available_as_addon",
-  storefrontSummary: "",
-  featuresShort: "",
-  contentIdPolicy: "not_allowed",
-  syncPolicy: "not_included",
-  creditRequirement: "required",
-  publishingSplitMode: "fixed_split",
-  publishingSplitSummary: "50% Licensor / 50% Licensee",
-  terms: ["", "", "", "", "", ""],
-});
+function buildArchetypeBoundForm(
+  offerArchetype: string,
+  overrides: Partial<LicenseFormState> = {},
+): LicenseFormState {
+  const derivedFields = buildDerivedLicenseFields(offerArchetype, {
+    stemsPolicy: overrides.stemsPolicy,
+  });
+
+  return {
+    handle: overrides.handle || "",
+    offerArchetype: derivedFields.offerArchetype,
+    licenseName: overrides.licenseName || "",
+    legalTemplateFamily: derivedFields.legalTemplateFamily,
+    streamLimit: overrides.streamLimit || "",
+    copyLimit: overrides.copyLimit || "",
+    videoViewLimit: overrides.videoViewLimit || "",
+    termYears: overrides.termYears || "",
+    fileFormats: derivedFields.fileFormats,
+    stemsPolicy: derivedFields.stemsPolicy,
+    storefrontSummary: overrides.storefrontSummary || "",
+    featuresShort: overrides.featuresShort || "",
+    contentIdPolicy: overrides.contentIdPolicy || "not_allowed",
+    syncPolicy: overrides.syncPolicy || "not_included",
+    creditRequirement: overrides.creditRequirement || "required",
+    publishingSplitMode: overrides.publishingSplitMode || "fixed_split",
+    publishingSplitSummary:
+      overrides.publishingSplitSummary || "50% Licensor / 50% Licensee",
+    terms: [...(overrides.terms || []), "", "", "", "", "", ""].slice(0, 6),
+    ...(overrides.id ? { id: overrides.id } : {}),
+  };
+}
+
+const emptyLicenseForm = (): LicenseFormState =>
+  buildArchetypeBoundForm("basic");
 
 function slugify(value: string) {
   return value
@@ -203,8 +211,7 @@ function appendLicenseFormFields(
 ) {
   if (licenseForm.id) formData.append("id", licenseForm.id);
   if (licenseForm.handle) formData.append("handle", licenseForm.handle);
-  if (licenseForm.licenseId)
-    formData.append("licenseId", licenseForm.licenseId);
+  formData.append("offerArchetype", licenseForm.offerArchetype);
   formData.append("licenseName", licenseForm.licenseName);
   formData.append("legalTemplateFamily", licenseForm.legalTemplateFamily);
   formData.append("streamLimit", licenseForm.streamLimit);
@@ -228,18 +235,22 @@ function appendLicenseFormFields(
 function buildLicenseForm(license?: LicenseTemplate): LicenseFormState {
   if (!license) return emptyLicenseForm();
 
-  return {
+  const offerArchetype = resolveOfferArchetype({
+    offerArchetype: license.offerArchetype,
+    licenseId: license.licenseId,
+    legalTemplateFamily: license.legalTemplateFamily,
+    handle: license.handle,
+  });
+
+  return buildArchetypeBoundForm(offerArchetype, {
     id: license.id,
     handle: license.handle,
-    licenseId: license.licenseId,
     licenseName: license.licenseName,
-    legalTemplateFamily: license.legalTemplateFamily || "basic",
+    stemsPolicy: license.stemsPolicy,
     streamLimit: license.streamLimit,
     copyLimit: license.copyLimit,
     videoViewLimit: license.videoViewLimit,
     termYears: license.termYears,
-    fileFormats: license.fileFormats,
-    stemsPolicy: license.stemsPolicy || "not_available",
     storefrontSummary: license.storefrontSummary,
     featuresShort: license.featuresShort,
     contentIdPolicy: license.contentIdPolicy || "not_allowed",
@@ -248,8 +259,8 @@ function buildLicenseForm(license?: LicenseTemplate): LicenseFormState {
     publishingSplitMode: license.publishingSplitMode || "fixed_split",
     publishingSplitSummary:
       license.publishingSplitSummary || "50% Licensor / 50% Licensee",
-    terms: [...license.terms, "", "", "", "", "", ""].slice(0, 6),
-  };
+    terms: license.terms,
+  });
 }
 
 function formatLimit(value: string, unit: string) {
@@ -265,26 +276,14 @@ function formatTermLength(value: string) {
   return `${value} year term`;
 }
 
-function stemsIncludedByDefault(stemsPolicy: string) {
-  return stemsPolicy === "included_by_default";
-}
-
-function stemsAddOnAvailable(stemsPolicy: string) {
-  return stemsPolicy === "available_as_addon";
-}
-
 function formatTemplateFamilyLabel(value: string) {
-  return (
-    LEGAL_TEMPLATE_FAMILY_OPTIONS.find((option) => option.value === value)
-      ?.label || "Basic"
-  );
+  return getOfferArchetypeConfig(value).label;
 }
 
-function formatStemsPolicyLabel(value: string) {
-  return (
-    STEMS_POLICY_OPTIONS.find((option) => option.value === value)?.label ||
-    "Not offered"
-  );
+function getTemplateStemsBadgeTone(
+  stemsPolicy?: string | null,
+): "success" | "attention" {
+  return stemsPolicy === "included_by_default" ? "success" : "attention";
 }
 
 function countCustomTerms(terms: string[]) {
@@ -303,60 +302,6 @@ function parseFileFormatBadges(value: string) {
     .split(",")
     .map((format) => format.trim())
     .filter(Boolean);
-}
-
-function normalizePackageFormat(value: string): PackageFormat | null {
-  const normalized = value.trim().toUpperCase();
-  if (normalized === "MP3") return "MP3";
-  if (normalized === "WAV") return "WAV";
-  if (
-    normalized === "STEMS" ||
-    normalized === "STEMS ZIP" ||
-    normalized === "ZIP"
-  ) {
-    return "STEMS";
-  }
-  return null;
-}
-
-function getSelectedPackageFormats(fileFormats: string, stemsPolicy: string) {
-  const selected = new Set<PackageFormat>();
-
-  parseFileFormatBadges(fileFormats).forEach((format) => {
-    const normalized = normalizePackageFormat(format);
-    if (normalized) selected.add(normalized);
-  });
-
-  if (stemsIncludedByDefault(stemsPolicy)) {
-    selected.add("STEMS");
-  } else {
-    selected.delete("STEMS");
-  }
-
-  return PACKAGE_FORMAT_ORDER.filter((format) => selected.has(format));
-}
-
-function formatPackageFormats(formats: string[]) {
-  return PACKAGE_FORMAT_ORDER.filter((format) => formats.includes(format)).join(
-    ", ",
-  );
-}
-
-function syncFileFormatsWithStemsPolicy(
-  fileFormats: string,
-  stemsPolicy: string,
-) {
-  const selected = new Set(getSelectedPackageFormats(fileFormats, stemsPolicy));
-
-  if (stemsIncludedByDefault(stemsPolicy)) {
-    selected.add("STEMS");
-  } else {
-    selected.delete("STEMS");
-  }
-
-  return formatPackageFormats(
-    PACKAGE_FORMAT_ORDER.filter((format) => selected.has(format)),
-  );
 }
 
 function normalizeSessionUserId(value: unknown) {
@@ -379,11 +324,7 @@ function getLicenseStatus(
   license: LicenseTemplate,
   usage: LicenseUsageSummary | undefined,
 ): { label: string; tone?: "success" | "attention" } {
-  if (
-    !license.licenseId.trim() ||
-    !license.fileFormats.trim() ||
-    !license.legalTemplateFamily.trim()
-  ) {
+  if (!license.offerArchetype.trim() || !license.fileFormats.trim()) {
     return { label: "Needs setup", tone: "attention" };
   }
 
@@ -615,16 +556,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const licenseName = String(formData.get("licenseName") || "").trim();
   const normalizedHandle =
     String(formData.get("handle") || "").trim() || slugify(licenseName);
-  const normalizedLicenseId =
-    String(formData.get("licenseId") || "").trim() || slugify(licenseName);
+  const normalizedOfferArchetype = resolveOfferArchetype({
+    offerArchetype: String(formData.get("offerArchetype") || "").trim(),
+    licenseId: String(formData.get("licenseId") || "").trim(),
+    legalTemplateFamily: String(
+      formData.get("legalTemplateFamily") || "",
+    ).trim(),
+    handle: normalizedHandle,
+  });
+  const derivedFields = buildDerivedLicenseFields(normalizedOfferArchetype, {
+    stemsPolicy: String(formData.get("stemsPolicy") || "").trim(),
+  });
 
   const fields = [
-    { key: "license_id", value: normalizedLicenseId },
+    { key: "offer_archetype", value: derivedFields.offerArchetype },
+    { key: "license_id", value: derivedFields.licenseId },
     { key: "license_name", value: licenseName },
-    {
-      key: "legal_template_family",
-      value: String(formData.get("legalTemplateFamily") || "basic").trim(),
-    },
+    { key: "legal_template_family", value: derivedFields.legalTemplateFamily },
     {
       key: "stream_limit",
       value: coerceOptionalNumber(formData.get("streamLimit")),
@@ -643,11 +591,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
     {
       key: "file_formats",
-      value: String(formData.get("fileFormats") || "").trim(),
+      value: derivedFields.fileFormats,
     },
     {
       key: "stems_policy",
-      value: String(formData.get("stemsPolicy") || "not_available"),
+      value: derivedFields.stemsPolicy,
     },
     {
       key: "storefront_summary",
@@ -698,7 +646,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
-  if (!normalizedHandle || !normalizedLicenseId) {
+  if (!normalizedHandle || !normalizedOfferArchetype) {
     return json(
       {
         success: false,
@@ -878,7 +826,7 @@ export default function LicensesPage() {
       JSON.stringify({
         previewMode,
         handle: licenseForm.handle,
-        licenseId: licenseForm.licenseId,
+        offerArchetype: licenseForm.offerArchetype,
         licenseName: licenseForm.licenseName,
         legalTemplateFamily: licenseForm.legalTemplateFamily,
         streamLimit: licenseForm.streamLimit,
@@ -948,7 +896,7 @@ export default function LicensesPage() {
     const previewPayload = JSON.parse(previewRequestPayload) as {
       previewMode: "starter" | "resolved";
       handle: string;
-      licenseId: string;
+      offerArchetype: string;
       licenseName: string;
       legalTemplateFamily: string;
       streamLimit: string;
@@ -971,7 +919,7 @@ export default function LicensesPage() {
     previewFormData.append("previewMode", previewPayload.previewMode);
     appendLicenseFormFields(previewFormData, {
       handle: previewPayload.handle,
-      licenseId: previewPayload.licenseId,
+      offerArchetype: previewPayload.offerArchetype,
       licenseName: previewPayload.licenseName,
       legalTemplateFamily: previewPayload.legalTemplateFamily,
       streamLimit: previewPayload.streamLimit,
@@ -1200,9 +1148,12 @@ export default function LicensesPage() {
     const previewFeatures = parseFeatureLines(licenseForm.featuresShort);
     const fileBadges = parseFileFormatBadges(licenseForm.fileFormats);
     const customTermCount = countCustomTerms(licenseForm.terms);
-    const selectedPackageFormats = getSelectedPackageFormats(
-      licenseForm.fileFormats,
-      licenseForm.stemsPolicy,
+    const archetypeConfig = getOfferArchetypeConfig(licenseForm.offerArchetype);
+    const templateDerivedFields = buildDerivedLicenseFields(
+      licenseForm.offerArchetype,
+      {
+        stemsPolicy: licenseForm.stemsPolicy,
+      },
     );
     const isStarter = editorLicense?.isStarter || false;
     const previewStatus =
@@ -1299,18 +1250,27 @@ export default function LicensesPage() {
                       ) : null}
                     </InlineStack>
 
-                    <TextField
-                      label="Preset ID"
-                      value={licenseForm.licenseId}
-                      onChange={(value) =>
-                        setLicenseForm((current) => ({
-                          ...current,
-                          licenseId: value,
-                        }))
-                      }
-                      autoComplete="off"
-                      helpText="Matches the required beat_license metaobject field used by your storefront and delivery logic."
-                    />
+                    {editorMode === "create" ? (
+                      <Select
+                        label="Template type"
+                        options={OFFER_ARCHETYPE_OPTIONS}
+                        value={licenseForm.offerArchetype}
+                        onChange={(value) =>
+                          setLicenseForm((current) =>
+                            buildArchetypeBoundForm(value, current),
+                          )
+                        }
+                        helpText="Choose the locked offer archetype. This controls the agreement family and base delivery package for the template."
+                      />
+                    ) : (
+                      <TextField
+                        label="Template type"
+                        value={archetypeConfig.label}
+                        autoComplete="off"
+                        readOnly
+                        helpText="Locked after creation so live storefront offers and delivery packages stay stable across beats already using this template."
+                      />
+                    )}
 
                     <TextField
                       label="Template name"
@@ -1322,20 +1282,7 @@ export default function LicensesPage() {
                         }))
                       }
                       autoComplete="off"
-                      helpText="This name is customer-facing and can be used for storefront marketing. The legal rights still follow the selected template family."
-                    />
-
-                    <Select
-                      label="Legal template family"
-                      options={LEGAL_TEMPLATE_FAMILY_OPTIONS}
-                      value={licenseForm.legalTemplateFamily}
-                      onChange={(value) =>
-                        setLicenseForm((current) => ({
-                          ...current,
-                          legalTemplateFamily: value,
-                        }))
-                      }
-                      helpText="This controls the legal rights model behind the offer, regardless of the customer-facing name."
+                      helpText="This name is customer-facing and can be used for storefront marketing. The locked template type still controls the underlying legal rights model."
                     />
                   </BlockStack>
                 </Card>
@@ -1417,77 +1364,77 @@ export default function LicensesPage() {
                   <BlockStack gap="400">
                     <BlockStack gap="100">
                       <Text as="h2" variant="headingMd">
-                        Delivery package
+                        Base package
                       </Text>
                       <Text as="p" tone="subdued">
-                        Define the audio package and storefront summary paired
-                        with this Reusable Template.
+                        These fields stay fixed so beats already using this
+                        template do not drift after you publish them.
                       </Text>
                     </BlockStack>
 
                     <FormLayout>
-                      <ChoiceList
-                        title="Included files"
-                        allowMultiple
-                        choices={[
-                          { label: "MP3", value: "MP3" },
-                          { label: "WAV", value: "WAV" },
-                          { label: "STEMS ZIP", value: "STEMS" },
-                        ]}
-                        selected={selectedPackageFormats}
-                        onChange={(selected) =>
-                          setLicenseForm((current) => {
-                            const nextStemsPolicy = selected.includes("STEMS")
-                              ? "included_by_default"
-                              : current.stemsPolicy === "included_by_default"
-                                ? "available_as_addon"
-                                : current.stemsPolicy;
-
-                            return {
-                              ...current,
-                              stemsPolicy: nextStemsPolicy,
-                              fileFormats: syncFileFormatsWithStemsPolicy(
-                                formatPackageFormats(selected),
-                                nextStemsPolicy,
-                              ),
-                            };
-                          })
-                        }
-                      />
-
                       <TextField
                         label="File formats"
                         value={licenseForm.fileFormats}
                         autoComplete="off"
                         readOnly
-                        helpText="Locked to the delivery package above so storefront messaging matches what is actually delivered."
+                        helpText="Locked to the selected template type so storefront messaging matches what buyers will actually receive."
                       />
+
+                      <TextField
+                        label="Agreement family"
+                        value={formatTemplateFamilyLabel(
+                          licenseForm.legalTemplateFamily,
+                        )}
+                        autoComplete="off"
+                        readOnly
+                        helpText="Locked to the selected template type so the legal rights model stays stable across all products using this template."
+                      />
+
+                      {licenseForm.offerArchetype === "unlimited" ? (
+                        <Checkbox
+                          label="Include stems in base package"
+                          checked={
+                            licenseForm.stemsPolicy === "included_by_default"
+                          }
+                          helpText="Turn this off if this Unlimited template should sell stems as an optional add-on instead of bundling them into the base package."
+                          onChange={(checked) =>
+                            setLicenseForm((current) =>
+                              buildArchetypeBoundForm(current.offerArchetype, {
+                                ...current,
+                                stemsPolicy: checked
+                                  ? "included_by_default"
+                                  : "available_as_addon",
+                              }),
+                            )
+                          }
+                        />
+                      ) : null}
 
                       <Text as="p" tone="subdued">
-                        {stemsIncludedByDefault(licenseForm.stemsPolicy)
-                          ? "Stems are included in the base package for this offer."
-                          : stemsAddOnAvailable(licenseForm.stemsPolicy)
-                            ? "Stems are not included by default, but can be sold as an add-on."
-                            : "Stems are not offered on this template."}
+                        {templateDerivedFields.stemsBehaviorLabel}.
                       </Text>
 
-                      <Select
-                        label="Stems handling"
-                        options={STEMS_POLICY_OPTIONS}
-                        value={licenseForm.stemsPolicy}
-                        onChange={(value) =>
-                          setLicenseForm((current) => ({
-                            ...current,
-                            stemsPolicy: value,
-                            fileFormats: syncFileFormatsWithStemsPolicy(
-                              current.fileFormats,
-                              value,
-                            ),
-                          }))
-                        }
-                        helpText="Choose whether stems are unavailable, offered as an add-on, or included by default. The final agreement will also reflect whether stems were actually included in the order."
-                      />
+                      <Text as="p" tone="subdued">
+                        {templateDerivedFields.stemsBehaviorHelpText}
+                      </Text>
+                    </FormLayout>
+                  </BlockStack>
+                </Card>
 
+                <Card>
+                  <BlockStack gap="400">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingMd">
+                        Storefront copy
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        Adjust the customer-facing summary buyers read when they
+                        compare offers.
+                      </Text>
+                    </BlockStack>
+
+                    <FormLayout>
                       <TextField
                         label="Storefront summary"
                         value={licenseForm.storefrontSummary}
@@ -1523,12 +1470,12 @@ export default function LicensesPage() {
                   <BlockStack gap="400">
                     <BlockStack gap="100">
                       <Text as="h2" variant="headingMd">
-                        Rights configuration
+                        Agreement settings
                       </Text>
                       <Text as="p" tone="subdued">
-                        Choose the controlled legal options that will select the
-                        right clause language when Producer Launchpad renders
-                        the final agreement.
+                        Choose the controlled options that change the agreement
+                        language when Producer Launchpad renders the final
+                        document.
                       </Text>
                     </BlockStack>
 
@@ -1715,8 +1662,12 @@ export default function LicensesPage() {
                       <Text as="h2" variant="headingMd">
                         Offer summary
                       </Text>
-                      <Badge>
-                        {formatStemsPolicyLabel(licenseForm.stemsPolicy)}
+                      <Badge
+                        tone={getTemplateStemsBadgeTone(
+                          licenseForm.stemsPolicy,
+                        )}
+                      >
+                        {templateDerivedFields.stemsBehaviorLabel}
                       </Badge>
                     </InlineStack>
 
@@ -1750,21 +1701,7 @@ export default function LicensesPage() {
                           <FileFormatBadge key={format} format={format} />
                         ))}
                       </InlineStack>
-                    ) : (
-                      <Text as="p" tone="subdued">
-                        Add file formats to preview the delivery package.
-                      </Text>
-                    )}
-
-                    <InlineStack gap="200">
-                      {stemsIncludedByDefault(licenseForm.stemsPolicy) ? (
-                        <Badge tone="success">Stems included</Badge>
-                      ) : stemsAddOnAvailable(licenseForm.stemsPolicy) ? (
-                        <Badge tone="attention">Stems add-on available</Badge>
-                      ) : (
-                        <Badge>No stems</Badge>
-                      )}
-                    </InlineStack>
+                    ) : null}
 
                     {licenseForm.storefrontSummary ? (
                       <Text as="p" tone="subdued">
@@ -1790,13 +1727,11 @@ export default function LicensesPage() {
                 <Card>
                   <BlockStack gap="300">
                     <Text as="h2" variant="headingMd">
-                      Dynamic fields inserted at checkout
+                      Fields filled at checkout
                     </Text>
                     <Text as="p" tone="subdued">
-                      These highlighted variables are filled with store and
-                      order data. They show that Producer Launchpad is inserting
-                      your data into reusable text, not writing bespoke terms on
-                      the fly.
+                      These variables are filled with store and order data when
+                      the agreement is created.
                     </Text>
                     <InlineStack gap="200" wrap>
                       {DYNAMIC_TEMPLATE_FIELDS.map((field) => (
@@ -1991,6 +1926,12 @@ export default function LicensesPage() {
                       const fileBadges = parseFileFormatBadges(
                         license.fileFormats,
                       );
+                      const templateDerivedFields = buildDerivedLicenseFields(
+                        license.offerArchetype,
+                        {
+                          stemsPolicy: license.stemsPolicy,
+                        },
+                      );
 
                       return (
                         <IndexTable.Row
@@ -2131,22 +2072,20 @@ export default function LicensesPage() {
                                   )}
 
                                   <InlineStack gap="200">
-                                    {stemsIncludedByDefault(
-                                      license.stemsPolicy,
-                                    ) ? (
-                                      <Badge tone="success">
-                                        Stems included
-                                      </Badge>
-                                    ) : stemsAddOnAvailable(
+                                    <Badge
+                                      tone={getTemplateStemsBadgeTone(
                                         license.stemsPolicy,
-                                      ) ? (
-                                      <Badge tone="attention">
-                                        Stems add-on available
-                                      </Badge>
-                                    ) : (
-                                      <Badge>No stems</Badge>
-                                    )}
+                                      )}
+                                    >
+                                      {templateDerivedFields.stemsBehaviorLabel}
+                                    </Badge>
                                   </InlineStack>
+
+                                  <Text as="p" tone="subdued">
+                                    {
+                                      templateDerivedFields.stemsBehaviorHelpText
+                                    }
+                                  </Text>
 
                                   {storefrontSummary.length > 0 ? (
                                     <List type="bullet">

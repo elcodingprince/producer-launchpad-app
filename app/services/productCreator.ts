@@ -1,4 +1,8 @@
 import { createShopifyClient, ShopifyClient } from "./shopify";
+import {
+  buildDerivedLicenseFields,
+  resolveOfferArchetype,
+} from "./licenses/archetypes";
 
 export interface LicensePricing {
   licenseId: string;
@@ -6,6 +10,7 @@ export interface LicensePricing {
   licenseName: string;
   price: number;
   compareAtPrice?: number;
+  stemsAddonEnabled?: boolean;
 }
 
 export interface BeatProductData {
@@ -31,7 +36,12 @@ export class ProductCreatorService {
 
   constructor(
     session: any,
-    admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+    admin: {
+      graphql: (
+        query: string,
+        options?: Record<string, any>,
+      ) => Promise<Response>;
+    },
   ) {
     this.client = createShopifyClient(session, admin);
   }
@@ -115,7 +125,9 @@ export class ProductCreatorService {
     // Create the product
     const product = await this.client.createProduct({
       title: data.title,
-      descriptionHtml: data.descriptionHtml || `<p>${data.title} - ${data.bpm} BPM ${data.key}</p>`,
+      descriptionHtml:
+        data.descriptionHtml ||
+        `<p>${data.title} - ${data.bpm} BPM ${data.key}</p>`,
       status: data.status,
       vendor: data.producerNames[0] || "Unknown Producer",
       productType: "Beat",
@@ -150,6 +162,13 @@ export class ProductCreatorService {
         type: "metaobject_reference",
         value: license.licenseGid,
       });
+      variantMetafields.push({
+        ownerId: variant.node.id,
+        namespace: "custom",
+        key: "stems_addon_enabled",
+        type: "boolean",
+        value: license.stemsAddonEnabled ? "true" : "false",
+      });
     }
 
     if (variantMetafields.length > 0) {
@@ -170,6 +189,7 @@ export class ProductCreatorService {
     Array<{
       id: string;
       handle: string;
+      offerArchetype: string;
       licenseId: string;
       licenseName: string;
       displayName: string;
@@ -194,31 +214,30 @@ export class ProductCreatorService {
 
     return metaobjects.map((obj) => {
       const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
-      const licenseId = fields.get("license_id") || "";
-      const legalTemplateFamily =
-        fields.get("legal_template_family") ||
-        (licenseId === "premium" || licenseId === "unlimited" ? licenseId : "basic");
-      const stemsPolicy =
-        fields.get("stems_policy") ||
-        (fields.get("includes_stems") === "true"
-          ? "included_by_default"
-          : fields.get("supports_stems_addon") === "true"
-            ? "available_as_addon"
-            : "not_available");
+      const offerArchetype = resolveOfferArchetype({
+        offerArchetype: fields.get("offer_archetype") || "",
+        licenseId: fields.get("license_id") || "",
+        legalTemplateFamily: fields.get("legal_template_family") || "",
+        handle: obj.handle,
+      });
+      const derivedFields = buildDerivedLicenseFields(offerArchetype, {
+        stemsPolicy: fields.get("stems_policy") || "",
+      });
 
       return {
         id: obj.id,
         handle: obj.handle,
-        licenseId,
+        offerArchetype,
+        licenseId: derivedFields.licenseId,
         licenseName: fields.get("license_name") || "",
         displayName: fields.get("license_name") || "",
-        legalTemplateFamily,
+        legalTemplateFamily: derivedFields.legalTemplateFamily,
         streamLimit: fields.get("stream_limit") || "",
         copyLimit: fields.get("copy_limit") || "",
         videoViewLimit: fields.get("video_view_limit") || "",
         termYears: fields.get("term_years") || "",
-        fileFormats: fields.get("file_formats") || "",
-        stemsPolicy,
+        fileFormats: derivedFields.fileFormats,
+        stemsPolicy: derivedFields.stemsPolicy,
         storefrontSummary: fields.get("storefront_summary") || "",
         featuresShort: fields.get("features_short") || "",
         contentIdPolicy: fields.get("content_id_policy") || "",
@@ -251,14 +270,14 @@ export class ProductCreatorService {
 
     return metaobjects
       .map((obj) => {
-      const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
-      return {
-        id: obj.id,
-        handle: obj.handle,
-        title: fields.get("title") || "",
-        urlSlug: fields.get("url_slug") || "",
-        sortOrder: Number(fields.get("sort_order") || "999"),
-      };
+        const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
+        return {
+          id: obj.id,
+          handle: obj.handle,
+          title: fields.get("title") || "",
+          urlSlug: fields.get("url_slug") || "",
+          sortOrder: Number(fields.get("sort_order") || "999"),
+        };
       })
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }
@@ -283,12 +302,16 @@ export class ProductCreatorService {
       })
       .filter(
         (producer) =>
-          producer.handle !== ProductCreatorService.LEGACY_DEFAULT_PRODUCER_HANDLE &&
-          producer.name !== ProductCreatorService.LEGACY_DEFAULT_PRODUCER_NAME
+          producer.handle !==
+            ProductCreatorService.LEGACY_DEFAULT_PRODUCER_HANDLE &&
+          producer.name !== ProductCreatorService.LEGACY_DEFAULT_PRODUCER_NAME,
       );
   }
 
-  async createProducer(name: string, bio?: string): Promise<{
+  async createProducer(
+    name: string,
+    bio?: string,
+  ): Promise<{
     id: string;
     handle: string;
   }> {
@@ -316,7 +339,10 @@ export class ProductCreatorService {
     };
   }
 
-  async createGenre(title: string, urlSlug?: string): Promise<{
+  async createGenre(
+    title: string,
+    urlSlug?: string,
+  ): Promise<{
     id: string;
     handle: string;
   }> {
@@ -349,7 +375,12 @@ export class ProductCreatorService {
 
 export function createProductCreatorService(
   session: any,
-  admin: { graphql: (query: string, options?: Record<string, any>) => Promise<Response> }
+  admin: {
+    graphql: (
+      query: string,
+      options?: Record<string, any>,
+    ) => Promise<Response>;
+  },
 ) {
   return new ProductCreatorService(session, admin);
 }

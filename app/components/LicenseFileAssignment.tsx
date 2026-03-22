@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, memo } from "react";
 import {
   Card,
   Button,
+  Checkbox,
   DropZone,
   InlineStack,
   BlockStack,
@@ -38,6 +39,8 @@ export interface LicenseTier {
   color?: string;
   packageFormats?: Array<"mp3" | "wav" | "stems">;
   stemsPolicy?: string;
+  templateStemsPolicy?: string;
+  stemsAddonEnabled?: boolean;
 }
 
 export interface UploadedFile {
@@ -62,11 +65,16 @@ export interface LicenseFiles {
   [tierId: string]: string[];
 }
 
+export interface StemsAddonSelections {
+  [tierId: string]: boolean;
+}
+
 export interface LicenseFileAssignmentProps {
   licenses: LicenseTier[];
   uploadedFiles?: UploadedFile[];
   licenseFiles?: LicenseFiles;
   licensePrices?: Record<string, string>;
+  stemsAddonSelections?: StemsAddonSelections;
   previewFile?: UploadedFile | null;
   coverArtFile?: UploadedFile | null;
   onChange?: (data: {
@@ -75,6 +83,7 @@ export interface LicenseFileAssignmentProps {
     previewFile: UploadedFile | null;
     coverArtFile: UploadedFile | null;
     licensePrices: Record<string, string>;
+    stemsAddonSelections: StemsAddonSelections;
   }) => void;
   onUpload?: (
     files: File[],
@@ -126,6 +135,7 @@ export function LicenseFileAssignment({
   uploadedFiles: externalFiles,
   licenseFiles: externalLicenseFiles,
   licensePrices: externalLicensePrices,
+  stemsAddonSelections: externalStemsAddonSelections,
   previewFile: externalPreviewFile,
   coverArtFile: externalCoverArtFile,
   onChange,
@@ -142,6 +152,8 @@ export function LicenseFileAssignment({
   const [internalLicensePrices, setInternalLicensePrices] = useState<
     Record<string, string>
   >({ basic: "29.99", premium: "49.99", unlimited: "99.99" });
+  const [internalStemsAddonSelections, setInternalStemsAddonSelections] =
+    useState<StemsAddonSelections>({});
   const [internalPreviewFile, setInternalPreviewFile] =
     useState<UploadedFile | null>(null);
   const [internalCoverArtFile, setInternalCoverArtFile] =
@@ -156,6 +168,8 @@ export function LicenseFileAssignment({
   const uploadedFiles = externalFiles ?? internalFiles;
   const licenseFiles = externalLicenseFiles ?? internalLicenseFiles;
   const licensePrices = externalLicensePrices ?? internalLicensePrices;
+  const stemsAddonSelections =
+    externalStemsAddonSelections ?? internalStemsAddonSelections;
   const previewFile = externalPreviewFile ?? internalPreviewFile;
   const coverArtFile = externalCoverArtFile ?? internalCoverArtFile;
 
@@ -193,6 +207,7 @@ export function LicenseFileAssignment({
       newPreviewFile: UploadedFile | null,
       newCoverArtFile: UploadedFile | null,
       newLicensePrices: Record<string, string>,
+      newStemsAddonSelections: StemsAddonSelections,
     ) => {
       const newLicenseFiles = buildAutomaticLicenseFiles(newFiles);
       if (onChange) {
@@ -202,6 +217,7 @@ export function LicenseFileAssignment({
           previewFile: newPreviewFile,
           coverArtFile: newCoverArtFile,
           licensePrices: newLicensePrices,
+          stemsAddonSelections: newStemsAddonSelections,
         });
       } else {
         setInternalFiles(newFiles);
@@ -209,6 +225,7 @@ export function LicenseFileAssignment({
         setInternalPreviewFile(newPreviewFile);
         setInternalCoverArtFile(newCoverArtFile);
         setInternalLicensePrices(newLicensePrices);
+        setInternalStemsAddonSelections(newStemsAddonSelections);
       }
     },
     [buildAutomaticLicenseFiles, onChange],
@@ -252,20 +269,40 @@ export function LicenseFileAssignment({
       };
       const url = URL.createObjectURL(file);
       setCoverArtPreviewUrl(url);
-      updateState(uploadedFiles, previewFile, newFile, licensePrices);
+      updateState(
+        uploadedFiles,
+        previewFile,
+        newFile,
+        licensePrices,
+        stemsAddonSelections,
+      );
       setRejectedFiles([]);
     },
-    [uploadedFiles, previewFile, licensePrices, formatFileSize, updateState],
+    [
+      uploadedFiles,
+      previewFile,
+      licensePrices,
+      stemsAddonSelections,
+      formatFileSize,
+      updateState,
+    ],
   );
 
   const removeCoverArt = useCallback(() => {
     if (coverArtPreviewUrl) URL.revokeObjectURL(coverArtPreviewUrl);
     setCoverArtPreviewUrl(null);
-    updateState(uploadedFiles, previewFile, null, licensePrices);
+    updateState(
+      uploadedFiles,
+      previewFile,
+      null,
+      licensePrices,
+      stemsAddonSelections,
+    );
   }, [
     uploadedFiles,
     previewFile,
     licensePrices,
+    stemsAddonSelections,
     coverArtPreviewUrl,
     updateState,
   ]);
@@ -300,6 +337,7 @@ export function LicenseFileAssignment({
             uploaded[0] || null,
             coverArtFile,
             licensePrices,
+            stemsAddonSelections,
           );
         } catch (err) {
           setRejectedFiles([
@@ -310,7 +348,13 @@ export function LicenseFileAssignment({
           ]);
         }
       } else {
-        updateState(uploadedFiles, fileData, coverArtFile, licensePrices);
+        updateState(
+          uploadedFiles,
+          fileData,
+          coverArtFile,
+          licensePrices,
+          stemsAddonSelections,
+        );
       }
       setRejectedFiles([]);
     },
@@ -318,6 +362,7 @@ export function LicenseFileAssignment({
       uploadedFiles,
       coverArtFile,
       licensePrices,
+      stemsAddonSelections,
       onUpload,
       formatFileSize,
       updateState,
@@ -379,6 +424,7 @@ export function LicenseFileAssignment({
             previewFile,
             coverArtFile,
             licensePrices,
+            stemsAddonSelections,
           );
         } catch (err) {
           setRejectedFiles(
@@ -406,6 +452,7 @@ export function LicenseFileAssignment({
           previewFile,
           coverArtFile,
           licensePrices,
+          stemsAddonSelections,
         );
       }
       setRejectedFiles([]);
@@ -415,6 +462,7 @@ export function LicenseFileAssignment({
       previewFile,
       coverArtFile,
       licensePrices,
+      stemsAddonSelections,
       onUpload,
       detectFileType,
       formatFileSize,
@@ -423,16 +471,42 @@ export function LicenseFileAssignment({
   );
 
   const removePreviewFile = useCallback(
-    () => updateState(uploadedFiles, null, coverArtFile, licensePrices),
-    [uploadedFiles, coverArtFile, licensePrices, updateState],
+    () =>
+      updateState(
+        uploadedFiles,
+        null,
+        coverArtFile,
+        licensePrices,
+        stemsAddonSelections,
+      ),
+    [
+      uploadedFiles,
+      coverArtFile,
+      licensePrices,
+      stemsAddonSelections,
+      updateState,
+    ],
   );
 
   const removeLicenseFile = useCallback(
     (fileId: string) => {
       const updated = uploadedFiles.filter((f) => f.id !== fileId);
-      updateState(updated, previewFile, coverArtFile, licensePrices);
+      updateState(
+        updated,
+        previewFile,
+        coverArtFile,
+        licensePrices,
+        stemsAddonSelections,
+      );
     },
-    [uploadedFiles, previewFile, coverArtFile, licensePrices, updateState],
+    [
+      uploadedFiles,
+      previewFile,
+      coverArtFile,
+      licensePrices,
+      stemsAddonSelections,
+      updateState,
+    ],
   );
 
   // Handle "Add files" button click → hidden input
@@ -947,6 +1021,7 @@ export function LicenseFileAssignment({
                                 previewFile,
                                 coverArtFile,
                                 updated,
+                                stemsAddonSelections,
                               );
                             }}
                           />
@@ -994,6 +1069,27 @@ export function LicenseFileAssignment({
                               )}
                             </Text>
 
+                            {tier.templateStemsPolicy ===
+                              "available_as_addon" && (
+                              <Checkbox
+                                label="Offer stems add-on for this beat"
+                                checked={Boolean(stemsAddonSelections[tier.id])}
+                                onChange={(checked) => {
+                                  const nextSelections = {
+                                    ...stemsAddonSelections,
+                                    [tier.id]: checked,
+                                  };
+                                  updateState(
+                                    uploadedFiles,
+                                    previewFile,
+                                    coverArtFile,
+                                    licensePrices,
+                                    nextSelections,
+                                  );
+                                }}
+                              />
+                            )}
+
                             {stemsIncludedByDefault(tier.stemsPolicy) && (
                               <Text as="span" variant="bodyXs" tone="subdued">
                                 Stems are included in this license, so this
@@ -1007,6 +1103,15 @@ export function LicenseFileAssignment({
                                 stems ZIP is delivered only when purchased.
                               </Text>
                             )}
+
+                            {tier.templateStemsPolicy ===
+                              "available_as_addon" &&
+                              !stemsAddonSelections[tier.id] && (
+                                <Text as="span" variant="bodyXs" tone="subdued">
+                                  Buyers will only see the base package until
+                                  you turn on the stems add-on for this beat.
+                                </Text>
+                              )}
                           </BlockStack>
                         </Box>
                       </td>

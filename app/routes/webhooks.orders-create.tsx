@@ -57,6 +57,13 @@ function getCheckoutAuditFields(payload: any) {
   };
 }
 
+function normalizeStemsAddonLabel(value: unknown) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function looksLikeStemsAddonLineItem(lineItem: {
   name?: string | null;
   variant?: {
@@ -83,13 +90,15 @@ function looksLikeStemsAddonLineItem(lineItem: {
     lineItem.lineItemGroup?.title,
     lineItem.variant?.product?.title,
   ]
-    .map((value) => String(value || "").toLowerCase())
+    .map((value) => normalizeStemsAddonLabel(value))
     .filter(Boolean);
 
   return (
     productHandle === "stems-add-on" ||
     tags.includes("addon-only") ||
-    titleCandidates.some((value) => value.includes("stems"))
+    titleCandidates.some(
+      (value) => value === "stems add on" || value === "stems addon",
+    )
   );
 }
 

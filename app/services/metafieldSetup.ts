@@ -1,4 +1,5 @@
 import prisma from "~/db.server";
+import { buildDerivedLicenseFields } from "./licenses/archetypes";
 import { createShopifyClient, ShopifyClient } from "./shopify";
 
 export const REQUIRED_PRODUCT_METAFIELDS = [
@@ -75,6 +76,14 @@ export const REQUIRED_VARIANT_METAFIELDS = [
     type: "metaobject_reference",
     description: "Reference to the beat_license metaobject",
   },
+  {
+    name: "Stems Add-On Enabled",
+    namespace: "custom",
+    key: "stems_addon_enabled",
+    type: "boolean",
+    description:
+      "App-managed flag for whether this specific license offer sells stems as an add-on",
+  },
 ];
 
 export const BEAT_LICENSE_DEFINITION = {
@@ -82,6 +91,12 @@ export const BEAT_LICENSE_DEFINITION = {
   type: "beat_license",
   displayNameKey: "license_name",
   fieldDefinitions: [
+    {
+      key: "offer_archetype",
+      name: "Offer Archetype",
+      type: "single_line_text_field",
+      required: false,
+    },
     {
       key: "license_id",
       name: "License ID",
@@ -419,15 +434,28 @@ export const DEFAULT_LICENSES = [
   {
     handle: "basic-license",
     fields: [
-      { key: "license_id", value: "basic" },
+      { key: "offer_archetype", value: "basic" },
+      {
+        key: "license_id",
+        value: buildDerivedLicenseFields("basic").licenseId,
+      },
       { key: "license_name", value: "Basic License" },
-      { key: "legal_template_family", value: "basic" },
+      {
+        key: "legal_template_family",
+        value: buildDerivedLicenseFields("basic").legalTemplateFamily,
+      },
       { key: "stream_limit", value: "10000" },
       { key: "copy_limit", value: "2500" },
       { key: "video_view_limit", value: "100000" },
       { key: "term_years", value: "1" },
-      { key: "file_formats", value: "MP3" },
-      { key: "stems_policy", value: "available_as_addon" },
+      {
+        key: "file_formats",
+        value: buildDerivedLicenseFields("basic").fileFormats,
+      },
+      {
+        key: "stems_policy",
+        value: buildDerivedLicenseFields("basic").stemsPolicy,
+      },
       {
         key: "storefront_summary",
         value: "Entry-level commercial rights for one song.",
@@ -446,15 +474,28 @@ export const DEFAULT_LICENSES = [
   {
     handle: "premium-license",
     fields: [
-      { key: "license_id", value: "premium" },
+      { key: "offer_archetype", value: "premium" },
+      {
+        key: "license_id",
+        value: buildDerivedLicenseFields("premium").licenseId,
+      },
       { key: "license_name", value: "Premium License" },
-      { key: "legal_template_family", value: "premium" },
+      {
+        key: "legal_template_family",
+        value: buildDerivedLicenseFields("premium").legalTemplateFamily,
+      },
       { key: "stream_limit", value: "100000" },
       { key: "copy_limit", value: "10000" },
       { key: "video_view_limit", value: "1000000" },
       { key: "term_years", value: "2" },
-      { key: "file_formats", value: "MP3, WAV" },
-      { key: "stems_policy", value: "available_as_addon" },
+      {
+        key: "file_formats",
+        value: buildDerivedLicenseFields("premium").fileFormats,
+      },
+      {
+        key: "stems_policy",
+        value: buildDerivedLicenseFields("premium").stemsPolicy,
+      },
       {
         key: "storefront_summary",
         value: "Expanded commercial rights for one song.",
@@ -473,22 +514,37 @@ export const DEFAULT_LICENSES = [
   {
     handle: "unlimited-license",
     fields: [
-      { key: "license_id", value: "unlimited" },
+      { key: "offer_archetype", value: "unlimited" },
+      {
+        key: "license_id",
+        value: buildDerivedLicenseFields("unlimited").licenseId,
+      },
       { key: "license_name", value: "Unlimited License" },
-      { key: "legal_template_family", value: "unlimited" },
+      {
+        key: "legal_template_family",
+        value: buildDerivedLicenseFields("unlimited").legalTemplateFamily,
+      },
       { key: "stream_limit", value: "0" },
       { key: "copy_limit", value: "0" },
       { key: "video_view_limit", value: "0" },
       { key: "term_years", value: "0" },
-      { key: "file_formats", value: "MP3, WAV" },
-      { key: "stems_policy", value: "available_as_addon" },
+      {
+        key: "file_formats",
+        value: buildDerivedLicenseFields("unlimited").fileFormats,
+      },
+      {
+        key: "stems_policy",
+        value: buildDerivedLicenseFields("unlimited").stemsPolicy,
+      },
       {
         key: "storefront_summary",
-        value: "Broad non-exclusive rights with no preset caps.",
+        value:
+          "Broad non-exclusive rights with no preset caps and stems included.",
       },
       {
         key: "features_short",
-        value: "MP3 + WAV\nUnlimited streams\nUnlimited sales\nUnlimited term",
+        value:
+          "MP3 + WAV + STEMS\nUnlimited streams\nUnlimited sales\nUnlimited term",
       },
       { key: "content_id_policy", value: "allowed_for_new_song_only" },
       { key: "sync_policy", value: "limited_sync_with_approval" },
@@ -700,6 +756,7 @@ export class MetafieldSetupService {
       "custom",
     );
     const existingByKey = new Map(existing.map((e) => [e.key, e]));
+    const legacyProductMetafieldKeys = ["stems_addon_licenses"];
     const metaobjectDefs = await this.client.getMetaobjectDefinitions();
     const metaobjectDefinitionIdsByType = new Map(
       metaobjectDefs.map((definition) => [definition.type, definition.id]),
@@ -710,6 +767,20 @@ export class MetafieldSetupService {
       produced_by: "producer",
       beat_licenses: "beat_license",
     };
+
+    for (const legacyKey of legacyProductMetafieldKeys) {
+      const legacyDef = existingByKey.get(legacyKey);
+      if (!legacyDef) continue;
+
+      try {
+        await this.client.deleteMetafieldDefinition(legacyDef.id);
+      } catch (error) {
+        console.warn(
+          `Unable to remove legacy product metafield ${legacyKey}:`,
+          (error as Error).message,
+        );
+      }
+    }
 
     for (const metafield of REQUIRED_PRODUCT_METAFIELDS) {
       const existingDef = existingByKey.get(metafield.key);
@@ -834,6 +905,7 @@ export class MetafieldSetupService {
     }
 
     for (const mf of REQUIRED_VARIANT_METAFIELDS) {
+      if (mf.key === "stems_addon_enabled") continue;
       const def = variantByKey.get(mf.key);
       if (!def) continue;
       try {

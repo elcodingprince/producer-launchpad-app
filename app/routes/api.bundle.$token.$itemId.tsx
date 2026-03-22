@@ -28,6 +28,10 @@ function isAudioDeliverable(file: BeatFile) {
   return !["preview", "license_pdf", "cover"].includes(file.filePurpose);
 }
 
+function isBaseAudioDeliverable(file: BeatFile) {
+  return isAudioDeliverable(file) && file.filePurpose !== "stems";
+}
+
 function slugifySegment(value: string) {
   return value
     .toLowerCase()
@@ -131,7 +135,9 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
         mapping.beatFile,
     ),
     ...(stemsFile ? [stemsFile] : []),
-  ]).filter((file: BeatFile) => isAudioDeliverable(file));
+  ]).filter((file: BeatFile) =>
+    stemsFile ? isAudioDeliverable(file) : isBaseAudioDeliverable(file),
+  );
 
   if (audioFiles.length === 0) {
     return new Response(

@@ -37,10 +37,15 @@ import {
   DELIVERY_FORMAT_ORDER,
   formatDeliveryFormatLabel,
   getRequiredDeliveryFormats,
+  resolveOfferStemsPolicy,
   stemsAvailableAsAddon,
   normalizeDeliveryFormat,
   type DeliveryFormat,
 } from "~/services/deliveryPackages";
+import {
+  buildDerivedLicenseFields,
+  resolveOfferArchetype,
+} from "~/services/licenses/archetypes";
 
 type BeatStatusFilter = "all" | "active" | "draft";
 type BeatPopoverType = "licenses" | "delivery";
@@ -200,6 +205,7 @@ async function getActiveBeats(
       price: string;
       licenseReference: {
         id: string;
+        offerArchetype: string;
         licenseName: string;
         fileFormats: string;
         stemsPolicy: string;
@@ -224,7 +230,7 @@ async function getActiveBeats(
           featuredImage {
             url
           }
-          metafield(namespace: "custom", key: "beat_licenses") {
+          beatLicensesMetafield: metafield(namespace: "custom", key: "beat_licenses") {
             references(first: 25) {
               nodes {
                 ... on Metaobject {
@@ -249,6 +255,9 @@ async function getActiveBeats(
                   }
                 }
               }
+              stemsAddonEnabledMetafield: metafield(namespace: "custom", key: "stems_addon_enabled") {
+                value
+              }
             }
           }
         }
@@ -268,7 +277,7 @@ async function getActiveBeats(
             status: "ACTIVE" | "DRAFT";
             updatedAt: string;
             featuredImage?: { url?: string | null } | null;
-            metafield?: {
+            beatLicensesMetafield?: {
               references?: {
                 nodes: Array<{ id: string }>;
               };
@@ -283,6 +292,9 @@ async function getActiveBeats(
                     id: string;
                     fields?: Array<{ key: string; value: string | null }>;
                   } | null;
+                } | null;
+                stemsAddonEnabledMetafield?: {
+                  value?: string | null;
                 } | null;
               }>;
             } | null;
@@ -314,33 +326,61 @@ async function getActiveBeats(
           actionUrl: `https://${shop}/admin/products/${normalizeShopifyResourceId(product.id)}`,
           actionExternal: true,
           licenseTemplateIds:
-            product.metafield?.references?.nodes.map((license) => license.id) ||
-            [],
-          variants:
-            product.variants?.nodes.map((variant) => ({
-              id: variant.id,
-              title: variant.title,
-              price: variant.price,
-              licenseReference: variant.metafield?.reference
-                ? {
-                    id: variant.metafield.reference.id,
-                    licenseName:
-                      readMetaobjectField(
-                        variant.metafield.reference.fields,
-                        "license_name",
-                      ) || variant.title,
-                    fileFormats: readMetaobjectField(
-                      variant.metafield.reference.fields,
-                      "file_formats",
-                    ),
-                    stemsPolicy:
-                      readMetaobjectField(
-                        variant.metafield.reference.fields,
-                        "stems_policy",
-                      ) || "not_available",
-                  }
-                : null,
-            })) || [],
+            product.beatLicensesMetafield?.references?.nodes.map(
+              (license) => license.id,
+            ) || [],
+          variants: (() => {
+            return (
+              product.variants?.nodes.map((variant) => ({
+                id: variant.id,
+                title: variant.title,
+                price: variant.price,
+                licenseReference: variant.metafield?.reference
+                  ? (() => {
+                      const offerArchetype = resolveOfferArchetype({
+                        offerArchetype: readMetaobjectField(
+                          variant.metafield.reference.fields,
+                          "offer_archetype",
+                        ),
+                        licenseId: readMetaobjectField(
+                          variant.metafield.reference.fields,
+                          "license_id",
+                        ),
+                        legalTemplateFamily: readMetaobjectField(
+                          variant.metafield.reference.fields,
+                          "legal_template_family",
+                        ),
+                      });
+                      const derivedFields = buildDerivedLicenseFields(
+                        offerArchetype,
+                        {
+                          stemsPolicy: readMetaobjectField(
+                            variant.metafield.reference.fields,
+                            "stems_policy",
+                          ),
+                        },
+                      );
+
+                      return {
+                        id: variant.metafield.reference.id,
+                        offerArchetype,
+                        licenseName:
+                          readMetaobjectField(
+                            variant.metafield.reference.fields,
+                            "license_name",
+                          ) || variant.title,
+                        fileFormats: derivedFields.fileFormats,
+                        stemsPolicy: resolveOfferStemsPolicy(
+                          derivedFields.stemsPolicy,
+                          variant.stemsAddonEnabledMetafield?.value === "true",
+                          offerArchetype,
+                        ),
+                      };
+                    })()
+                  : null,
+              })) || []
+            );
+          })(),
         })),
     );
 

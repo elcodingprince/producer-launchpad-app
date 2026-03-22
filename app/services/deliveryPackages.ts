@@ -30,6 +30,29 @@ export function stemsAvailableAsAddon(stemsPolicy?: string | null) {
   return stemsPolicy === "available_as_addon";
 }
 
+function isUnlimitedOfferArchetype(value?: string | null) {
+  return value === "unlimited";
+}
+
+export function resolveOfferStemsPolicy(
+  templateStemsPolicy?: string | null,
+  stemsAddonEnabled?: boolean | null,
+  offerArchetype?: string | null,
+): StemsPolicy {
+  if (stemsIncludedByDefault(templateStemsPolicy)) {
+    return "included_by_default";
+  }
+
+  if (stemsAvailableAsAddon(templateStemsPolicy)) {
+    if (isUnlimitedOfferArchetype(offerArchetype)) {
+      return "available_as_addon";
+    }
+    return stemsAddonEnabled ? "available_as_addon" : "not_available";
+  }
+
+  return "not_available";
+}
+
 export function licenseOffersStems(stemsPolicy?: string | null) {
   return (
     stemsIncludedByDefault(stemsPolicy) || stemsAvailableAsAddon(stemsPolicy)
