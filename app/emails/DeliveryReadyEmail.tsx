@@ -21,8 +21,15 @@ export interface DeliveryReadyEmailProps {
   portalUrl: string;
   orderNumber?: string | null;
   itemSummary?: string | null;
+  items?: DeliveryReadyEmailItem[] | null;
   supportEmail?: string | null;
   logoUrl?: string | null;
+}
+
+export interface DeliveryReadyEmailItem {
+  beatTitle: string;
+  licenseName: string;
+  deliveryFormats?: string[] | null;
 }
 
 export function DeliveryReadyEmail({
@@ -32,11 +39,13 @@ export function DeliveryReadyEmail({
   portalUrl,
   orderNumber,
   itemSummary,
+  items,
   supportEmail,
   logoUrl,
 }: DeliveryReadyEmailProps) {
   const previewText = `Your files from ${storeName} are ready`;
   const greetingName = customerFirstName?.trim() || "there";
+  const hasItems = Boolean(items?.length);
 
   return (
     <Html>
@@ -58,8 +67,8 @@ export function DeliveryReadyEmail({
             <Heading style={heading}>Your files are ready</Heading>
             <Text style={paragraph}>Hi {greetingName},</Text>
             <Text style={paragraph}>
-              Your purchase from {storeName} is ready. Use the secure portal below to
-              access your beat files and license agreement.
+              Your purchase from {storeName} is ready. Use the secure portal
+              below to access your beat files and license agreement.
             </Text>
 
             <Section style={ctaSection}>
@@ -68,7 +77,7 @@ export function DeliveryReadyEmail({
               </Button>
             </Section>
 
-            {orderNumber || itemSummary ? (
+            {orderNumber || itemSummary || hasItems ? (
               <>
                 <Hr style={divider} />
                 <Section>
@@ -77,19 +86,52 @@ export function DeliveryReadyEmail({
                       <strong>Order:</strong> #{orderNumber}
                     </Text>
                   ) : null}
-                  {itemSummary ? (
+                  {itemSummary && !hasItems ? (
                     <Text style={metaLine}>
                       <strong>Items:</strong> {itemSummary}
                     </Text>
                   ) : null}
                 </Section>
+                {hasItems ? (
+                  <Section style={itemsSection}>
+                    <Text style={sectionLabel}>Order items</Text>
+                    <Section style={itemsPanel}>
+                      {items?.map((item, index) => (
+                        <Section
+                          key={`${item.beatTitle}-${item.licenseName}-${index}`}
+                          style={{
+                            ...itemRow,
+                            ...(index === (items?.length || 0) - 1
+                              ? lastItemRow
+                              : null),
+                          }}
+                        >
+                          <Text style={itemTitle}>{item.beatTitle}</Text>
+                          <Text style={itemSubtitle}>{item.licenseName}</Text>
+                          <Section style={nestedAddonRow}>
+                            <div style={connectorColumn}>
+                              <div style={connectorVertical} />
+                              <div style={connectorCurve} />
+                            </div>
+                            <div style={nestedAddonContent}>
+                              <Text style={nestedAddonTitle}>
+                                {(item.deliveryFormats || []).join(" + ") ||
+                                  "MP3"}
+                              </Text>
+                            </div>
+                          </Section>
+                        </Section>
+                      ))}
+                    </Section>
+                  </Section>
+                ) : null}
               </>
             ) : null}
 
             <Hr style={divider} />
             <Text style={paragraph}>
-              If the button above doesn&apos;t work, copy and paste this link into your
-              browser:
+              If the button above doesn&apos;t work, copy and paste this link
+              into your browser:
             </Text>
             <Link href={portalUrl} style={link}>
               {portalUrl}
@@ -97,7 +139,9 @@ export function DeliveryReadyEmail({
 
             <Text style={footer}>
               Keep this link private. If you need help accessing your files
-              {supportEmail ? `, contact ${supportEmail}.` : ", reply to this email."}
+              {supportEmail
+                ? `, contact ${supportEmail}.`
+                : ", reply to this email."}
             </Text>
           </Section>
         </Container>
@@ -108,8 +152,7 @@ export function DeliveryReadyEmail({
 
 const main = {
   backgroundColor: "#f6f7f8",
-  fontFamily:
-    '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   margin: 0,
   padding: "32px 0",
 };
@@ -181,6 +224,95 @@ const metaLine = {
   fontSize: "14px",
   lineHeight: "22px",
   margin: "0 0 8px",
+};
+
+const itemsSection = {
+  marginTop: "12px",
+};
+
+const sectionLabel = {
+  color: "#6b7280",
+  fontSize: "12px",
+  fontWeight: "600",
+  letterSpacing: "0.08em",
+  margin: "0 0 12px",
+  textTransform: "uppercase" as const,
+};
+
+const itemsPanel = {
+  backgroundColor: "#f8fafc",
+  border: "1px solid #e5e7eb",
+  borderRadius: "14px",
+};
+
+const itemRow = {
+  borderBottom: "1px solid #e5e7eb",
+  padding: "16px 18px",
+};
+
+const lastItemRow = {
+  borderBottom: "none",
+};
+
+const itemTitle = {
+  color: "#374151",
+  fontSize: "18px",
+  fontWeight: "500",
+  lineHeight: "24px",
+  margin: "0 0 4px",
+};
+
+const itemSubtitle = {
+  color: "#8b8b8b",
+  fontSize: "15px",
+  fontWeight: "400",
+  lineHeight: "22px",
+  margin: "0 0 6px",
+};
+
+const nestedAddonRow = {
+  marginTop: "10px",
+};
+
+const connectorColumn = {
+  display: "inline-block",
+  height: "34px",
+  position: "relative" as const,
+  verticalAlign: "top" as const,
+  width: "26px",
+};
+
+const connectorVertical = {
+  borderLeft: "2px solid #d1d5db",
+  height: "18px",
+  left: "10px",
+  position: "absolute" as const,
+  top: "-6px",
+};
+
+const connectorCurve = {
+  borderBottom: "2px solid #d1d5db",
+  borderBottomLeftRadius: "10px",
+  borderLeft: "2px solid #d1d5db",
+  height: "16px",
+  left: "10px",
+  position: "absolute" as const,
+  top: "10px",
+  width: "14px",
+};
+
+const nestedAddonContent = {
+  display: "inline-block",
+  paddingTop: "6px",
+  verticalAlign: "top" as const,
+};
+
+const nestedAddonTitle = {
+  color: "#6b7280",
+  fontSize: "14px",
+  fontWeight: "400",
+  lineHeight: "20px",
+  margin: 0,
 };
 
 const link = {

@@ -1,4 +1,5 @@
 import { ResendEmailProvider } from "~/services/emailProviders/resend.server";
+import type { DeliveryReadyEmailItem } from "~/emails/DeliveryReadyEmail";
 
 export interface SendDeliveryEmailInput {
   to: string;
@@ -8,6 +9,7 @@ export interface SendDeliveryEmailInput {
   customerFirstName?: string | null;
   orderNumber?: string | null;
   itemSummary?: string | null;
+  items?: DeliveryReadyEmailItem[] | null;
   supportEmail?: string | null;
   logoUrl?: string | null;
 }
@@ -36,7 +38,9 @@ function getEnv(name: "RESEND_API_KEY" | "DELIVERY_EMAIL_FROM") {
   return value;
 }
 
-function getOptionalEnv(name: "DELIVERY_EMAIL_REPLY_TO" | "DELIVERY_EMAIL_BRAND_NAME") {
+function getOptionalEnv(
+  name: "DELIVERY_EMAIL_REPLY_TO" | "DELIVERY_EMAIL_BRAND_NAME",
+) {
   return process.env[name] || null;
 }
 
@@ -79,7 +83,10 @@ export async function sendDeliveryEmail(
   input: SendDeliveryEmailInput,
 ): Promise<SendDeliveryEmailResult> {
   const provider = getEmailProvider();
-  const brandName = input.brandName || getOptionalEnv("DELIVERY_EMAIL_BRAND_NAME") || "Producer Launchpad";
+  const brandName =
+    input.brandName ||
+    getOptionalEnv("DELIVERY_EMAIL_BRAND_NAME") ||
+    "Producer Launchpad";
 
   return provider.sendDeliveryEmail({
     to: input.to,
@@ -92,6 +99,7 @@ export async function sendDeliveryEmail(
     portalUrl: input.portalUrl,
     orderNumber: input.orderNumber,
     itemSummary: input.itemSummary,
+    items: input.items,
     supportEmail: input.supportEmail,
     logoUrl: input.logoUrl,
   });

@@ -11,6 +11,7 @@ import {
   buildDownloadPortalUrl,
   formatStoreName,
 } from "~/services/appUrl.server";
+import type { BeatFile, LicenseFileMapping } from "@prisma/client";
 
 function normalizeShopifyResourceId(id: string) {
   const match = id.match(/\/(\d+)$/);
@@ -43,6 +44,35 @@ function buildCustomerName(payload: any) {
 function normalizeOptionalString(value: unknown) {
   const normalized = String(value || "").trim();
   return normalized || null;
+}
+
+function isAudioDeliverable(file: BeatFile) {
+  return !["preview", "license_pdf", "cover"].includes(file.filePurpose);
+}
+
+function isBaseAudioDeliverable(file: BeatFile) {
+  return isAudioDeliverable(file) && file.filePurpose !== "stems";
+}
+
+function getFileLabel(file: BeatFile) {
+  if (file.filePurpose === "stems") return "STEMS";
+  if (file.filePurpose === "wav") return "WAV";
+  if (file.filePurpose === "mp3") return "MP3";
+
+  return file.fileType.toUpperCase().replace("AUDIO/", "");
+}
+
+function mergeUniqueFiles(files: BeatFile[]) {
+  const seen = new Set<string>();
+  const ordered: BeatFile[] = [];
+
+  for (const file of files) {
+    if (seen.has(file.id)) continue;
+    seen.add(file.id);
+    ordered.push(file);
+  }
+
+  return ordered;
 }
 
 function getCheckoutAuditFields(payload: any) {
@@ -309,6 +339,56 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     try {
+      const emailItems = await Promise.all(
+        createdOrder.items.map(async (item: OrderItem) => {
+          const normalizedVariantId = normalizeShopifyResourceId(
+            item.variantId,
+          );
+          const fileMappings = await prisma.licenseFileMapping.findMany({
+            where: {
+              variantId: {
+                in: [
+                  item.variantId,
+                  normalizedVariantId,
+                  `gid://shopify/ProductVariant/${normalizedVariantId}`,
+                ],
+              },
+            },
+            include: {
+              beatFile: true,
+            },
+            orderBy: {
+              sortOrder: "asc",
+            },
+          });
+          const stemsFile = item.stemsIncludedInOrder
+            ? await prisma.beatFile.findFirst({
+                where: {
+                  beatId: `gid://shopify/Product/${item.productId}`,
+                  filePurpose: "stems",
+                },
+              })
+            : null;
+
+          const files = mergeUniqueFiles([
+            ...fileMappings
+              .map(
+                (
+                  mapping: LicenseFileMapping & { beatFile: BeatFile },
+                ): BeatFile => mapping.beatFile,
+              )
+              .filter((file: BeatFile) => isBaseAudioDeliverable(file)),
+            ...(stemsFile ? [stemsFile] : []),
+          ]);
+
+          return {
+            beatTitle: item.beatTitle,
+            licenseName: item.licenseName,
+            deliveryFormats: files.map((file) => getFileLabel(file)),
+          };
+        }),
+      );
+
       const emailResult = await sendDeliveryEmail({
         to: customerEmail,
         portalUrl: buildDownloadPortalUrl(token, request),
@@ -324,6 +404,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         itemSummary: createdOrder.items
           .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
           .join(", "),
+        items: emailItems,
       });
 
       await prisma.deliveryAccess.update({
