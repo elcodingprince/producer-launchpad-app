@@ -42,23 +42,7 @@ function mergeUniqueFiles(files: BeatFile[]) {
 }
 
 function getDeliveryPackageSummary(files: BeatFile[]) {
-  return files.map((file) => getFileLabel(file)).join(", ");
-}
-
-function renderFormatChipStyles(tone: "base" | "accent") {
-  if (tone === "accent") {
-    return {
-      backgroundColor: "#dcfce7",
-      color: "#166534",
-      border: "1px solid #86efac",
-    };
-  }
-
-  return {
-    backgroundColor: "#eef2ff",
-    color: "#3730a3",
-    border: "1px solid #c7d2fe",
-  };
+  return files.map((file) => getFileLabel(file)).join(" + ");
 }
 
 export const loader = async ({ params }: LoaderFunctionArgs) => {
@@ -288,9 +272,9 @@ export default function DownloadPortalPage() {
               key={item.id}
               style={{
                 marginBottom: "24px",
-                padding: "22px",
+                padding: "28px",
                 border: "1px solid #dbe4ee",
-                borderRadius: "18px",
+                borderRadius: "24px",
                 background:
                   "linear-gradient(180deg, rgba(248,250,252,1) 0%, rgba(255,255,255,1) 100%)",
                 boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
@@ -312,162 +296,91 @@ export default function DownloadPortalPage() {
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "flex-start",
-                        gap: "16px",
-                        marginBottom: "18px",
+                        gap: "24px",
+                        marginBottom: "24px",
                         flexWrap: "wrap",
                       }}
                     >
-                      <div>
+                      <div style={{ minWidth: "240px", flex: "1 1 240px" }}>
                         <h3
                           style={{
-                            fontSize: "30px",
-                            lineHeight: "34px",
-                            fontWeight: "700",
-                            color: "#1f2937",
-                            margin: 0,
+                            fontSize: "22px",
+                            lineHeight: "30px",
+                            fontWeight: 600,
+                            color: "#374151",
+                            margin: "0 0 8px",
                           }}
                         >
                           {item.beatTitle}
                         </h3>
+                        <p
+                          style={{
+                            margin: "0 0 12px",
+                            color: "#8b8b8b",
+                            fontSize: "15px",
+                            lineHeight: "22px",
+                          }}
+                        >
+                          {item.licenseName}
+                        </p>
                         <div
                           style={{
                             display: "flex",
-                            flexWrap: "wrap",
-                            gap: "8px",
-                            marginTop: "12px",
+                            alignItems: "flex-start",
+                            gap: "12px",
                           }}
                         >
-                          <span
+                          <div
                             style={{
-                              display: "inline-block",
-                              borderRadius: "999px",
-                              padding: "6px 10px",
-                              fontSize: "12px",
-                              fontWeight: 700,
-                              letterSpacing: "0.04em",
-                              textTransform: "uppercase",
-                              backgroundColor: "#e5e7eb",
-                              color: "#111827",
+                              position: "relative",
+                              width: "22px",
+                              height: "28px",
+                              flex: "0 0 22px",
                             }}
                           >
-                            {item.licenseName}
-                          </span>
-                          {item.stemsIncludedInOrder ? (
-                            <span
+                            <div
                               style={{
-                                display: "inline-block",
-                                borderRadius: "999px",
-                                padding: "6px 10px",
-                                fontSize: "12px",
-                                fontWeight: 700,
-                                letterSpacing: "0.04em",
-                                textTransform: "uppercase",
-                                backgroundColor: "#dcfce7",
-                                color: "#166534",
+                                position: "absolute",
+                                left: "8px",
+                                top: "0",
+                                height: "14px",
+                                borderLeft: "2px solid #d1d5db",
                               }}
-                            >
-                              STEMS included
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      {item.previewFileId && (
-                        <div
-                          style={{
-                            minWidth: "320px",
-                            flex: "1 1 320px",
-                            maxWidth: "440px",
-                          }}
-                        >
+                            />
+                            <div
+                              style={{
+                                position: "absolute",
+                                left: "8px",
+                                top: "12px",
+                                width: "12px",
+                                height: "12px",
+                                borderLeft: "2px solid #d1d5db",
+                                borderBottom: "2px solid #d1d5db",
+                                borderBottomLeftRadius: "10px",
+                              }}
+                            />
+                          </div>
                           <p
                             style={{
-                              margin: "0 0 8px",
-                              fontSize: "12px",
-                              fontWeight: 700,
-                              letterSpacing: "0.08em",
-                              textTransform: "uppercase",
-                              color: "#64748b",
+                              margin: "2px 0 0",
+                              color: "#6b7280",
+                              fontSize: "15px",
+                              lineHeight: "22px",
                             }}
                           >
-                            Preview
+                            {packageSummary}
                           </p>
-                          <audio
-                            controls
-                            src={`/api/files/${deliveryAccess.downloadToken}/${item.previewFileId}`}
-                            style={{ height: "40px", width: "100%" }}
-                          />
                         </div>
-                      )}
+                      </div>
                     </div>
 
                     <div
                       style={{
-                        border: "1px solid #e5e7eb",
-                        borderRadius: "14px",
-                        padding: "14px 16px",
-                        backgroundColor: "#ffffff",
-                        marginBottom: "16px",
+                        display: "flex",
+                        gap: "12px",
+                        flexWrap: "wrap",
+                        alignItems: "center",
                       }}
-                    >
-                      <p
-                        style={{
-                          margin: "0 0 10px",
-                          fontSize: "12px",
-                          fontWeight: 700,
-                          letterSpacing: "0.08em",
-                          textTransform: "uppercase",
-                          color: "#64748b",
-                        }}
-                      >
-                        Delivery package
-                      </p>
-                      <div
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: "8px",
-                          marginBottom: "10px",
-                        }}
-                      >
-                        {audioFiles.map((file: BeatFile) => {
-                          const label = getFileLabel(file);
-                          const tone = label === "STEMS" ? "accent" : "base";
-
-                          return (
-                            <span
-                              key={`${item.id}-${file.id}`}
-                              style={{
-                                display: "inline-block",
-                                borderRadius: "999px",
-                                padding: "6px 10px",
-                                fontSize: "12px",
-                                fontWeight: 700,
-                                letterSpacing: "0.04em",
-                                textTransform: "uppercase",
-                                ...renderFormatChipStyles(tone),
-                              }}
-                            >
-                              {label}
-                            </span>
-                          );
-                        })}
-                      </div>
-                      <p
-                        style={{
-                          margin: 0,
-                          color: "#475569",
-                          fontSize: "14px",
-                          lineHeight: 1.6,
-                        }}
-                      >
-                        {item.stemsIncludedInOrder
-                          ? "This order includes stems access for this license, so your ZIP contains the full package shown above."
-                          : "Your ZIP contains the package shown above for this license."}
-                      </p>
-                    </div>
-
-                    <div
-                      style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}
                     >
                       <a
                         href={`/api/pdf/${deliveryAccess.downloadToken}/${item.id}`}
@@ -476,30 +389,33 @@ export default function DownloadPortalPage() {
                         style={{
                           backgroundColor: "#111827",
                           color: "white",
-                          padding: "10px 16px",
-                          borderRadius: "10px",
+                          padding: "13px 18px",
+                          borderRadius: "14px",
                           textDecoration: "none",
                           fontSize: "14px",
                           fontWeight: "600",
+                          letterSpacing: "-0.01em",
                         }}
                       >
-                        View license agreement
+                        View agreement
                       </a>
 
                       {hasBundle && (
                         <a
                           href={`/api/bundle/${deliveryAccess.downloadToken}/${item.id}`}
                           style={{
-                            backgroundColor: "#e0f2fe",
+                            backgroundColor: "#dbeafe",
                             color: "#0f172a",
-                            padding: "10px 16px",
-                            borderRadius: "10px",
+                            padding: "13px 18px",
+                            borderRadius: "14px",
                             textDecoration: "none",
                             fontSize: "14px",
                             fontWeight: "600",
+                            letterSpacing: "-0.01em",
+                            border: "1px solid #bfdbfe",
                           }}
                         >
-                          Download audio package
+                          Download package
                         </a>
                       )}
 
@@ -507,13 +423,15 @@ export default function DownloadPortalPage() {
                         <a
                           href={`/api/files/${deliveryAccess.downloadToken}/${singleAudioFile.id}`}
                           style={{
-                            backgroundColor: "#e0f2fe",
+                            backgroundColor: "#dbeafe",
                             color: "#0f172a",
-                            padding: "10px 16px",
-                            borderRadius: "10px",
+                            padding: "13px 18px",
+                            borderRadius: "14px",
                             textDecoration: "none",
                             fontSize: "14px",
                             fontWeight: "600",
+                            letterSpacing: "-0.01em",
+                            border: "1px solid #bfdbfe",
                           }}
                         >
                           Download {getFileLabel(singleAudioFile)}
@@ -533,18 +451,6 @@ export default function DownloadPortalPage() {
                         </p>
                       )}
                     </div>
-
-                    {hasBundle ? (
-                      <p
-                        style={{
-                          margin: "14px 0 0",
-                          color: "#64748b",
-                          fontSize: "13px",
-                        }}
-                      >
-                        One-click ZIP package: {packageSummary}
-                      </p>
-                    ) : null}
                   </>
                 );
               })()}
