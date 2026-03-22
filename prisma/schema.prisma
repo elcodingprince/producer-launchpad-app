@@ -124,6 +124,7 @@ model Order {
 
   items          OrderItem[]
   deliveryAccess DeliveryAccess?
+  executedAgreements ExecutedAgreement[]
 
   @@index([shop, shopifyOrderId])
 }
@@ -141,10 +142,46 @@ model OrderItem {
   createdAt            DateTime @default(now())
 
   // Relations
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order              Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  executedAgreement  ExecutedAgreement?
 
   @@index([orderId])
   @@index([variantId])
+}
+
+model ExecutedAgreement {
+  id                    String   @id @default(cuid())
+  shop                  String
+  orderId               String
+  orderItemId           String   @unique
+  templateMetaobjectId  String?
+  templateHandle        String
+  offerArchetype        String
+  templateVersion       String?
+  resolvedLicenseJson   String
+  beatOfferSnapshotJson String
+  stemsIncludedInOrder  Boolean  @default(false)
+  licensorSnapshotJson  String
+  renderedHtml          String
+  htmlHash              String
+  pdfData               Bytes?
+  pdfHash               String?
+  pdfStatus             String   @default("pending")
+  pdfError              String?
+  buyerEmail            String?
+  buyerIp               String?
+  userAgent             String?
+  purchasedAt           DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([shop])
+  @@index([orderId])
+  @@index([templateHandle])
+  @@index([purchasedAt])
 }
 
 model DeliveryAccess {

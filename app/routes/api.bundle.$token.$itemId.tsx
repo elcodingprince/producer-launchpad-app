@@ -1,9 +1,15 @@
 import archiver from "archiver";
-import type { BeatFile, LicenseFileMapping, OrderItem } from "@prisma/client";
+import type {
+  BeatFile,
+  ExecutedAgreement,
+  LicenseFileMapping,
+  OrderItem,
+} from "@prisma/client";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { PassThrough, Readable } from "node:stream";
 import type { ReadableStream } from "node:stream/web";
 import prisma from "~/db.server";
+import { parseExecutedAgreementLicense } from "~/services/executedAgreements.server";
 import { downloadR2Object } from "~/services/r2.server";
 import {
   getManagedR2Credentials,
@@ -73,7 +79,17 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
 
   const deliveryAccess = await prisma.deliveryAccess.findUnique({
     where: { downloadToken: token },
-    include: { order: { include: { items: true } } },
+    include: {
+      order: {
+        include: {
+          items: {
+            include: {
+              executedAgreement: true,
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!deliveryAccess) {
@@ -85,7 +101,8 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   const { order } = deliveryAccess;
 
   const item = order.items.find(
-    (orderItem: OrderItem) => orderItem.id === itemId,
+    (orderItem: OrderItem & { executedAgreement: ExecutedAgreement | null }) =>
+      orderItem.id === itemId,
   );
 
   if (!item) {
@@ -96,6 +113,13 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   }
 
   const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
+  const resolvedLicense = parseExecutedAgreementLicense(
+    item.executedAgreement?.resolvedLicenseJson,
+  );
+  const stemsIncludedInOrder =
+    resolvedLicense?.stemsPolicy === "included_by_default" ||
+    item.executedAgreement?.stemsIncludedInOrder === true ||
+    item.stemsIncludedInOrder;
   const fileMappings = await prisma.licenseFileMapping.findMany({
     where: {
       variantId: {
@@ -113,7 +137,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       sortOrder: "asc",
     },
   });
-  const stemsFile = item.stemsIncludedInOrder
+  const stemsFile = stemsIncludedInOrder
     ? await prisma.beatFile.findFirst({
         where: {
           beatId: `gid://shopify/Product/${item.productId}`,
@@ -122,7 +146,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       })
     : null;
 
-  if (item.stemsIncludedInOrder && !stemsFile) {
+  if (stemsIncludedInOrder && !stemsFile) {
     return new Response(
       "The stems add-on was purchased for this order, but the stems ZIP is not ready for download yet.",
       { status: 409 },

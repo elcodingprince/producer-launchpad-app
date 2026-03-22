@@ -81,3 +81,38 @@ export function getRequiredDeliveryFormats(license: {
 export function formatDeliveryFormatLabel(format: DeliveryFormat) {
   return format === "stems" ? "STEMS ZIP" : format.toUpperCase();
 }
+
+export function getDeliveredFormatsForOrder(input: {
+  fileFormats?: string | null;
+  stemsPolicy?: string | null;
+  stemsIncludedInOrder?: boolean | null;
+}): DeliveryFormat[] {
+  const selected = new Set<DeliveryFormat>();
+
+  String(input.fileFormats || "")
+    .split(",")
+    .map((format) => normalizeDeliveryFormat(format))
+    .filter((format): format is DeliveryFormat => Boolean(format))
+    .forEach((format) => selected.add(format));
+
+  if (
+    stemsIncludedByDefault(input.stemsPolicy) ||
+    input.stemsIncludedInOrder === true
+  ) {
+    selected.add("stems");
+  } else {
+    selected.delete("stems");
+  }
+
+  return DELIVERY_FORMAT_ORDER.filter((format) => selected.has(format));
+}
+
+export function getDeliveredFormatLabelsForOrder(input: {
+  fileFormats?: string | null;
+  stemsPolicy?: string | null;
+  stemsIncludedInOrder?: boolean | null;
+}): string[] {
+  return getDeliveredFormatsForOrder(input).map((format) =>
+    format === "stems" ? "STEMS" : format.toUpperCase(),
+  );
+}

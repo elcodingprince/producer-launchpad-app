@@ -4,8 +4,15 @@ import {
   useLoaderData,
   useRouteError,
 } from "@remix-run/react";
-import type { BeatFile, LicenseFileMapping, OrderItem } from "@prisma/client";
+import type {
+  BeatFile,
+  ExecutedAgreement,
+  LicenseFileMapping,
+  OrderItem,
+} from "@prisma/client";
 import prisma from "~/db.server";
+import { getDeliveredFormatLabelsForOrder } from "~/services/deliveryPackages";
+import { parseExecutedAgreementLicense } from "~/services/executedAgreements.server";
 
 function normalizeShopifyResourceId(id: string) {
   const match = id.match(/\/(\d+)$/);
@@ -58,7 +65,11 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     include: {
       order: {
         include: {
-          items: true,
+          items: {
+            include: {
+              executedAgreement: true,
+            },
+          },
         },
       },
     },
@@ -84,66 +95,88 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   // Then we can find exactly which files map to the purchased license tier.
 
   const enrichedItems = await Promise.all(
-    order.items.map(async (item: OrderItem) => {
-      const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
+    order.items.map(
+      async (
+        item: OrderItem & { executedAgreement: ExecutedAgreement | null },
+      ) => {
+        const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
+        const resolvedLicense = parseExecutedAgreementLicense(
+          item.executedAgreement?.resolvedLicenseJson,
+        );
+        const stemsIncludedInOrder =
+          resolvedLicense?.stemsPolicy === "included_by_default" ||
+          item.executedAgreement?.stemsIncludedInOrder === true ||
+          item.stemsIncludedInOrder;
 
-      // Resolve files directly from the purchased Shopify variant ID.
-      const fileMappings = await prisma.licenseFileMapping.findMany({
-        where: {
-          variantId: {
-            in: [
-              item.variantId,
-              normalizedVariantId,
-              `gid://shopify/ProductVariant/${normalizedVariantId}`,
-            ],
-          },
-        },
-        include: {
-          beatFile: true,
-        },
-        orderBy: {
-          sortOrder: "asc",
-        },
-      });
-      const stemsFile = item.stemsIncludedInOrder
-        ? await prisma.beatFile.findFirst({
-            where: {
-              beatId: `gid://shopify/Product/${item.productId}`,
-              filePurpose: "stems",
+        // Resolve files directly from the purchased Shopify variant ID.
+        const fileMappings = await prisma.licenseFileMapping.findMany({
+          where: {
+            variantId: {
+              in: [
+                item.variantId,
+                normalizedVariantId,
+                `gid://shopify/ProductVariant/${normalizedVariantId}`,
+              ],
             },
-          })
-        : null;
+          },
+          include: {
+            beatFile: true,
+          },
+          orderBy: {
+            sortOrder: "asc",
+          },
+        });
+        const stemsFile = stemsIncludedInOrder
+          ? await prisma.beatFile.findFirst({
+              where: {
+                beatId: `gid://shopify/Product/${item.productId}`,
+                filePurpose: "stems",
+              },
+            })
+          : null;
 
-      // Also get the preview file if available to play right on the portal
-      const previewFile = await prisma.beatFile.findFirst({
-        where: {
-          beatId: `gid://shopify/Product/${item.productId}`,
-          filePurpose: "preview",
-        },
-      });
-      const baseAudioFiles = fileMappings
-        .map(
-          (mapping: LicenseFileMapping & { beatFile: BeatFile }): BeatFile =>
-            mapping.beatFile,
-        )
-        .filter((file: BeatFile) => isBaseAudioDeliverable(file));
-      const stemsRequirementMissing =
-        item.stemsIncludedInOrder && !Boolean(stemsFile);
+        // Also get the preview file if available to play right on the portal
+        const previewFile = await prisma.beatFile.findFirst({
+          where: {
+            beatId: `gid://shopify/Product/${item.productId}`,
+            filePurpose: "preview",
+          },
+        });
+        const baseAudioFiles = fileMappings
+          .map(
+            (mapping: LicenseFileMapping & { beatFile: BeatFile }): BeatFile =>
+              mapping.beatFile,
+          )
+          .filter((file: BeatFile) => isBaseAudioDeliverable(file));
+        const stemsRequirementMissing =
+          stemsIncludedInOrder && !Boolean(stemsFile);
+        const deliveryFormats = resolvedLicense
+          ? getDeliveredFormatLabelsForOrder({
+              fileFormats: resolvedLicense.fileFormats,
+              stemsPolicy: resolvedLicense.stemsPolicy,
+              stemsIncludedInOrder,
+            })
+          : mergeUniqueFiles([
+              ...baseAudioFiles,
+              ...(stemsFile ? [stemsFile] : []),
+            ]).map((file: BeatFile) => getFileLabel(file));
 
-      return {
-        ...item,
-        previewFileId: previewFile?.id || null,
-        previewUrl: previewFile?.storageUrl || null,
-        files: mergeUniqueFiles([
-          ...baseAudioFiles,
-          ...(stemsFile ? [stemsFile] : []),
-        ]),
-        deliveryStatus:
-          baseAudioFiles.length > 0 && !stemsRequirementMissing
-            ? "ready"
-            : "missing_files",
-      };
-    }),
+        return {
+          ...item,
+          previewFileId: previewFile?.id || null,
+          previewUrl: previewFile?.storageUrl || null,
+          files: mergeUniqueFiles([
+            ...baseAudioFiles,
+            ...(stemsFile ? [stemsFile] : []),
+          ]),
+          deliveryFormats,
+          deliveryStatus:
+            baseAudioFiles.length > 0 && !stemsRequirementMissing
+              ? "ready"
+              : "missing_files",
+        };
+      },
+    ),
   );
 
   const readyItemCount = enrichedItems.filter(
@@ -287,7 +320,9 @@ export default function DownloadPortalPage() {
                 const hasBundle = audioFiles.length > 1;
                 const singleAudioFile =
                   audioFiles.length === 1 ? audioFiles[0] : null;
-                const packageSummary = getDeliveryPackageSummary(audioFiles);
+                const packageSummary =
+                  item.deliveryFormats.join(" + ") ||
+                  getDeliveryPackageSummary(audioFiles);
 
                 return (
                   <>
