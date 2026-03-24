@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import prisma from "~/db.server";
 import { buildDerivedLicenseFields } from "./licenses/archetypes";
 import { createShopifyClient, ShopifyClient } from "./shopify";
@@ -422,6 +423,8 @@ const DEFAULT_LICENSOR_HANDLE = "default-licensor";
 const DEFAULT_STEMS_ADDON_HANDLE = "stems-add-on";
 const DEFAULT_STEMS_ADDON_TITLE = "Stems Add-On";
 const DEFAULT_STEMS_ADDON_PRICE = "15.00";
+const DEFAULT_STEMS_ADDON_OPTION_NAME = "Format";
+const DEFAULT_STEMS_ADDON_OPTION_VALUE = "Stems";
 const DEFAULT_STEMS_ADDON_DESCRIPTION_HTML =
   "<p>Separated multitrack stems delivered as an add-on to a licensed beat order.</p>";
 const DEFAULT_STEMS_ADDON_TAGS = [
@@ -429,6 +432,10 @@ const DEFAULT_STEMS_ADDON_TAGS = [
   "stems-add-on",
   "producer-launchpad",
 ];
+const DEFAULT_STEMS_ADDON_IMAGE_PATH = new URL(
+  "../../public/images/stems-addon-waveform.png",
+  import.meta.url,
+);
 
 export const DEFAULT_LICENSES = [
   {
@@ -1384,7 +1391,9 @@ export class MetafieldSetupService {
 
     for (const handle of handlesToTry) {
       const product = await this.client.getProductByHandle(handle);
-      const variant = product?.variants.nodes[0];
+      const variant = product
+        ? this.getCanonicalStemsAddonVariant(product)
+        : null;
 
       if (product && variant) {
         return prisma.shopCatalogConfig.upsert({
@@ -1424,6 +1433,111 @@ export class MetafieldSetupService {
     });
   }
 
+  private getCanonicalStemsAddonVariant(product: {
+    variants?: {
+      nodes?: Array<{
+        id: string;
+        title: string;
+        price: string;
+        selectedOptions?: Array<{ name: string; value: string }>;
+      }>;
+      edges?: Array<{
+        node: {
+          id: string;
+          title: string;
+          price: string;
+          selectedOptions?: Array<{ name: string; value: string }>;
+        };
+      }>;
+    };
+  }) {
+    const variants =
+      product.variants?.nodes ||
+      product.variants?.edges?.map((edge) => edge.node) ||
+      [];
+    return (
+      variants.find((variant) =>
+        (variant.selectedOptions || []).some(
+          (option) =>
+            option.name === DEFAULT_STEMS_ADDON_OPTION_NAME &&
+            option.value === DEFAULT_STEMS_ADDON_OPTION_VALUE,
+        ),
+      ) ||
+      variants.find(
+        (variant) =>
+          variant.title.trim().toLowerCase() ===
+          DEFAULT_STEMS_ADDON_OPTION_VALUE.toLowerCase(),
+      ) ||
+      variants[0] ||
+      null
+    );
+  }
+
+  private stemsAddonProductMatchesSpec(product: {
+    handle: string;
+    status?: string | null;
+    tags: string[];
+    featuredImage?: { url: string } | null;
+    variants?: {
+      nodes?: Array<{
+        id: string;
+        title: string;
+        selectedOptions?: Array<{ name: string; value: string }>;
+      }>;
+    };
+  }) {
+    const normalizedTags = new Set(
+      (product.tags || []).map((tag) => tag.trim().toLowerCase()),
+    );
+    const variant = this.getCanonicalStemsAddonVariant(product);
+    const selectedOptions = variant?.selectedOptions || [];
+    const hasFormatOption = selectedOptions.some(
+      (option) =>
+        option.name === DEFAULT_STEMS_ADDON_OPTION_NAME &&
+        option.value === DEFAULT_STEMS_ADDON_OPTION_VALUE,
+    );
+    const hasRequiredTags = DEFAULT_STEMS_ADDON_TAGS.every((tag) =>
+      normalizedTags.has(tag.toLowerCase()),
+    );
+
+    return (
+      product.handle === DEFAULT_STEMS_ADDON_HANDLE &&
+      String(product.status || "").toUpperCase() === "UNLISTED" &&
+      hasRequiredTags &&
+      Boolean(product.featuredImage?.url) &&
+      Boolean(variant?.id) &&
+      (hasFormatOption ||
+        variant?.title?.trim().toLowerCase() ===
+          DEFAULT_STEMS_ADDON_OPTION_VALUE.toLowerCase())
+    );
+  }
+
+  private async uploadDefaultStemsAddonImage() {
+    const imageBuffer = await readFile(DEFAULT_STEMS_ADDON_IMAGE_PATH);
+    const imageFile = new File([imageBuffer], "stems-addon-waveform.png", {
+      type: "image/png",
+    });
+    return this.client.uploadImage(imageFile);
+  }
+
+  private async replaceStemsAddonProduct(product: {
+    id: string;
+    handle: string;
+    title: string;
+    tags: string[];
+  }) {
+    const legacyHandle = `${DEFAULT_STEMS_ADDON_HANDLE}-legacy-${Date.now()}`;
+    const legacyTags = Array.from(new Set([...product.tags, "addon-legacy"]));
+
+    await this.client.updateProduct({
+      id: product.id,
+      handle: legacyHandle,
+      title: `${product.title} (Legacy)`,
+      status: "DRAFT",
+      tags: legacyTags,
+    });
+  }
+
   private async getDefaultCatalogVendorName() {
     const licensor = await this.getDefaultLicensor();
     const legalName =
@@ -1446,32 +1560,67 @@ export class MetafieldSetupService {
   }
 
   async ensureDefaultStemsAddonProduct(): Promise<string[]> {
-    const existingConfig = await this.getStemsAddonProductConfig();
-    if (
-      existingConfig?.stemsAddonProductId &&
-      existingConfig?.stemsAddonVariantId
-    ) {
-      return [];
+    const existingProduct = await this.client.getProductByHandle(
+      DEFAULT_STEMS_ADDON_HANDLE,
+    );
+    const existingProductMatches =
+      existingProduct && this.stemsAddonProductMatchesSpec(existingProduct);
+    const existingProductVariant = existingProduct
+      ? this.getCanonicalStemsAddonVariant(existingProduct)
+      : null;
+
+    if (existingProduct && !existingProductMatches && !existingProductVariant) {
+      await this.replaceStemsAddonProduct(existingProduct);
     }
 
     const vendor = await this.getDefaultCatalogVendorName();
-    const product = await this.client.createProduct({
-      title: DEFAULT_STEMS_ADDON_TITLE,
-      handle: DEFAULT_STEMS_ADDON_HANDLE,
-      descriptionHtml: DEFAULT_STEMS_ADDON_DESCRIPTION_HTML,
-      status: "ACTIVE",
-      vendor,
-      productType: "Add-On",
-      tags: DEFAULT_STEMS_ADDON_TAGS,
-      variants: [
-        {
-          price: DEFAULT_STEMS_ADDON_PRICE,
-          inventoryPolicy: "CONTINUE",
-        },
-      ],
-    });
+    let product = existingProductMatches ? existingProduct : null;
 
-    const variant = product?.variants.edges[0]?.node;
+    if (!product && existingProduct && existingProductVariant) {
+      await this.client.updateProduct({
+        id: existingProduct.id,
+        title: DEFAULT_STEMS_ADDON_TITLE,
+        handle: DEFAULT_STEMS_ADDON_HANDLE,
+        descriptionHtml: DEFAULT_STEMS_ADDON_DESCRIPTION_HTML,
+        status: "UNLISTED",
+        vendor,
+        productType: "Add-On",
+        tags: DEFAULT_STEMS_ADDON_TAGS,
+        images: existingProduct.featuredImage?.url
+          ? undefined
+          : [{ src: await this.uploadDefaultStemsAddonImage() }],
+      });
+
+      product = await this.client.getProductByHandle(
+        DEFAULT_STEMS_ADDON_HANDLE,
+      );
+    }
+
+    if (!product) {
+      product = await this.client.createProduct({
+        title: DEFAULT_STEMS_ADDON_TITLE,
+        handle: DEFAULT_STEMS_ADDON_HANDLE,
+        descriptionHtml: DEFAULT_STEMS_ADDON_DESCRIPTION_HTML,
+        status: "UNLISTED",
+        optionName: DEFAULT_STEMS_ADDON_OPTION_NAME,
+        vendor,
+        productType: "Add-On",
+        tags: DEFAULT_STEMS_ADDON_TAGS,
+        images: [{ src: await this.uploadDefaultStemsAddonImage() }],
+        variants: [
+          {
+            title: DEFAULT_STEMS_ADDON_OPTION_VALUE,
+            price: DEFAULT_STEMS_ADDON_PRICE,
+            inventoryPolicy: "CONTINUE",
+          },
+        ],
+      });
+    }
+
+    const variant = product
+      ? this.getCanonicalStemsAddonVariant(product)
+      : null;
+
     if (!product?.id || !variant?.id) {
       throw new Error(
         "Shopify did not return the stems add-on product and variant IDs.",
@@ -1497,7 +1646,7 @@ export class MetafieldSetupService {
       },
     });
 
-    return [DEFAULT_STEMS_ADDON_HANDLE];
+    return existingProductMatches ? [] : [DEFAULT_STEMS_ADDON_HANDLE];
   }
 
   async runFullSetup(options?: {

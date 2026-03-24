@@ -163,6 +163,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
 
         return {
           ...item,
+          licenseName: resolvedLicense?.licenseName || item.licenseName,
           previewFileId: previewFile?.id || null,
           previewUrl: previewFile?.storageUrl || null,
           files: mergeUniqueFiles([

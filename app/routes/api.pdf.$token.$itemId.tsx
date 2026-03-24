@@ -1,6 +1,8 @@
+import crypto from "node:crypto";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import prisma from "~/db.server";
 import { resolveOfferStemsPolicy } from "~/services/deliveryPackages";
+import { parseExecutedAgreementLicense } from "~/services/executedAgreements.server";
 import { normalizeTemplateFields } from "~/services/licenses/archetypes";
 import { renderAgreementPreview } from "~/services/licenses/agreementRenderer.server";
 import {
@@ -61,6 +63,10 @@ function sanitizeFilenameSegment(value: string) {
   return (
     value.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "") || "agreement"
   );
+}
+
+function hashValue(value: string | Buffer) {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 async function fetchAgreementDocumentData(
@@ -256,7 +262,11 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     include: {
       order: {
         include: {
-          items: true,
+          items: {
+            include: {
+              executedAgreement: true,
+            },
+          },
         },
       },
     },
@@ -271,6 +281,59 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   );
   if (!item) {
     return new Response("Unauthorized", { status: 403 });
+  }
+
+  const snapshotLicense = parseExecutedAgreementLicense(
+    item.executedAgreement?.resolvedLicenseJson,
+  );
+  const safeFileName = `${sanitizeFilenameSegment(snapshotLicense?.licenseName || item.licenseName)}_${sanitizeFilenameSegment(item.beatTitle)}.pdf`;
+
+  if (item.executedAgreement) {
+    try {
+      let pdfBuffer = item.executedAgreement.pdfData
+        ? Buffer.from(item.executedAgreement.pdfData)
+        : null;
+
+      if (!pdfBuffer && item.executedAgreement.renderedHtml) {
+        pdfBuffer = await generatePdfFromHtml(
+          item.executedAgreement.renderedHtml,
+        );
+
+        await prisma.executedAgreement.update({
+          where: { id: item.executedAgreement.id },
+          data: {
+            pdfData: pdfBuffer,
+            pdfHash: hashValue(pdfBuffer),
+            pdfStatus: "generated",
+            pdfError: null,
+          },
+        });
+      }
+
+      if (!pdfBuffer) {
+        throw new Error("No stored PDF or HTML snapshot is available.");
+      }
+
+      await prisma.orderItem.update({
+        where: { id: item.id },
+        data: {
+          downloadCount: { increment: 1 },
+        },
+      });
+
+      return new Response(pdfBuffer, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Length": String(pdfBuffer.byteLength),
+          "Content-Disposition": `attachment; filename="${safeFileName}"`,
+          "Cache-Control": "private, max-age=300",
+        },
+      });
+    } catch (error) {
+      console.error("Failed to serve executed agreement PDF:", error);
+      return new Response("Failed to generate PDF document", { status: 500 });
+    }
   }
 
   try {

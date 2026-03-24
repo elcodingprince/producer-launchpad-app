@@ -62,6 +62,7 @@ function hashValue(value: string | Buffer) {
 }
 
 export type ExecutedAgreementResolvedLicense = {
+  licenseName?: string;
   fileFormats?: string;
   stemsPolicy?: string;
 };

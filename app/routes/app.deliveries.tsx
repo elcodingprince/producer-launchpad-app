@@ -9,6 +9,7 @@ import prisma from "~/db.server";
 import type {
   BeatFile,
   DeliveryAccess,
+  ExecutedAgreement,
   LicenseFileMapping,
   Order,
   OrderItem,
@@ -35,6 +36,7 @@ import {
   buildDownloadPortalUrl,
   formatStoreName,
 } from "~/services/appUrl.server";
+import { parseExecutedAgreementLicense } from "~/services/executedAgreements.server";
 import {
   isResendWebhookTrackingEnabled,
   sendDeliveryEmail,
@@ -45,7 +47,6 @@ interface DeliverySummary {
   orderNumber: string;
   customerEmail: string;
   customerName: string | null;
-  customerLastName: string | null;
   createdAt: string;
   status: string;
   downloadToken: string;
@@ -72,7 +73,7 @@ interface DeliverySummary {
 }
 
 type DeliveryOrder = Order & {
-  items: OrderItem[];
+  items: Array<OrderItem & { executedAgreement: ExecutedAgreement | null }>;
   deliveryAccess: DeliveryAccess | null;
 };
 
@@ -113,14 +114,6 @@ function formatDate(value: Date | string) {
 
 function formatOptionalDate(value: string | null) {
   return value ? formatDate(value) : "Not available";
-}
-
-function getCustomerLastName(customerName: string | null) {
-  if (!customerName) return null;
-
-  const segments = customerName.trim().split(/\s+/).filter(Boolean);
-
-  return segments.length > 0 ? segments[segments.length - 1] : null;
 }
 
 function getDeliveryEmailBadgeTone(
@@ -221,6 +214,16 @@ function getIncludedFileLabel(file: BeatFile) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function getHistoricalLicenseName(
+  item: OrderItem & { executedAgreement?: ExecutedAgreement | null },
+) {
+  const resolvedLicense = parseExecutedAgreementLicense(
+    item.executedAgreement?.resolvedLicenseJson,
+  );
+
+  return resolvedLicense?.licenseName || item.licenseName;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const emailConfirmationEnabled = isResendWebhookTrackingEnabled();
@@ -230,7 +233,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     orderBy: { createdAt: "desc" },
     take: 50,
     include: {
-      items: true,
+      items: {
+        include: {
+          executedAgreement: true,
+        },
+      },
       deliveryAccess: true,
     },
   });
@@ -283,9 +290,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         orderNumber: order.orderNumber,
         customerEmail: order.deliveryAccess?.customerEmail || "",
         customerName: order.deliveryAccess?.customerName || null,
-        customerLastName: getCustomerLastName(
-          order.deliveryAccess?.customerName || null,
-        ),
         createdAt: order.createdAt.toISOString(),
         status: order.status,
         downloadToken: order.deliveryAccess?.downloadToken || "",
@@ -294,9 +298,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           : "",
         itemCount: order.items.length,
         itemSummary: order.items
-          .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
+          .map(
+            (item) => `${item.beatTitle} - ${getHistoricalLicenseName(item)}`,
+          )
           .join(", "),
-        itemDetails: order.items.map((item: OrderItem) => {
+        itemDetails: order.items.map((item) => {
           const normalizedVariantId = normalizeShopifyResourceId(
             item.variantId,
           );
@@ -321,7 +327,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           return {
             id: item.id,
             beatTitle: item.beatTitle,
-            licenseName: item.licenseName,
+            licenseName: getHistoricalLicenseName(item),
             includedFiles: uniqueIncludedFiles,
             downloadCount: item.downloadCount,
           };
@@ -424,7 +430,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     include: {
       order: {
         include: {
-          items: true,
+          items: {
+            include: {
+              executedAgreement: true,
+            },
+          },
         },
       },
     },
@@ -460,7 +470,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       customerName: deliveryAccess.customerName,
       orderNumber: deliveryAccess.order.orderNumber,
       itemSummary: deliveryAccess.order.items
-        .map((item: OrderItem) => `${item.beatTitle} - ${item.licenseName}`)
+        .map((item) => `${item.beatTitle} - ${getHistoricalLicenseName(item)}`)
         .join(", "),
     });
 
@@ -1025,9 +1035,7 @@ export default function DeliveriesPage() {
                                   size="slim"
                                   textAlign="left"
                                 >
-                                  {delivery.customerLastName ||
-                                    delivery.customerName ||
-                                    "Customer"}
+                                  {delivery.customerName || "Customer"}
                                 </Button>
                               </div>
                             }

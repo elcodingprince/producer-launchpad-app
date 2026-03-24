@@ -599,11 +599,18 @@ export class ShopifyClient {
             status
             productType
             tags
+            featuredImage {
+              url
+            }
             variants(first: 20) {
               nodes {
                 id
                 title
                 price
+                selectedOptions {
+                  name
+                  value
+                }
               }
             }
           }
@@ -620,11 +627,18 @@ export class ShopifyClient {
           status: string;
           productType: string | null;
           tags: string[];
+          featuredImage: {
+            url: string;
+          } | null;
           variants: {
             nodes: Array<{
               id: string;
               title: string;
               price: string;
+              selectedOptions: Array<{
+                name: string;
+                value: string;
+              }>;
             }>;
           };
         }>;
@@ -644,7 +658,8 @@ export class ShopifyClient {
     title: string;
     handle?: string;
     descriptionHtml?: string;
-    status?: "ACTIVE" | "DRAFT";
+    status?: "ACTIVE" | "DRAFT" | "UNLISTED";
+    optionName?: string;
     vendor?: string;
     productType?: string;
     tags?: string[];
@@ -669,7 +684,13 @@ export class ShopifyClient {
       type: string;
     }>;
   }) {
-    const { variants, images, metafields, ...baseInput } = input;
+    const {
+      variants,
+      images,
+      metafields,
+      optionName = "License",
+      ...baseInput
+    } = input;
     const optionValues = Array.from(
       new Set(
         variants
@@ -682,7 +703,7 @@ export class ShopifyClient {
     if (optionValues.length > 0) {
       createInput.productOptions = [
         {
-          name: "License",
+          name: optionName,
           values: optionValues.map((name) => ({ name })),
         },
       ];
@@ -783,7 +804,7 @@ export class ShopifyClient {
       const byLicenseValue = new Map<string, string>();
       for (const edge of product.variants.edges) {
         const selected = edge.node.selectedOptions.find(
-          (opt) => opt.name === "License",
+          (opt) => opt.name === optionName,
         );
         if (selected?.value) {
           byLicenseValue.set(selected.value, edge.node.id);
@@ -811,7 +832,7 @@ export class ShopifyClient {
             price: variant.price,
             compareAtPrice: variant.compareAtPrice,
             inventoryPolicy: variant.inventoryPolicy || "CONTINUE",
-            optionValues: [{ optionName: "License", name: variant.title }],
+            optionValues: [{ optionName, name: variant.title }],
             // Metafields can be specified but we actually set them manually later in productCreator
           });
         }
@@ -873,7 +894,7 @@ export class ShopifyClient {
         for (const variant of updateResponse.data?.productVariantsBulkUpdate
           .productVariants || []) {
           const selected = variant.selectedOptions.find(
-            (opt) => opt.name === "License",
+            (opt) => opt.name === optionName,
           );
           if (selected?.value) {
             updatedByLicenseValue.set(selected.value, {
@@ -935,7 +956,7 @@ export class ShopifyClient {
           for (const variant of createResponse.data?.productVariantsBulkCreate
             .productVariants || []) {
             const selected = variant.selectedOptions.find(
-              (opt) => opt.name === "License",
+              (opt) => opt.name === optionName,
             );
             if (selected?.value) {
               updatedByLicenseValue.set(selected.value, {
@@ -987,7 +1008,7 @@ export class ShopifyClient {
       .map((variant, index) => {
         const matched = product.variants.edges.find((edge) =>
           edge.node.selectedOptions.some(
-            (opt) => opt.name === "License" && opt.value === variant.title,
+            (opt) => opt.name === optionName && opt.value === variant.title,
           ),
         );
         return matched || product.variants.edges[index];
@@ -1022,11 +1043,78 @@ export class ShopifyClient {
     return orderedProduct;
   }
 
+  async updateProduct(input: {
+    id: string;
+    title?: string;
+    handle?: string;
+    descriptionHtml?: string;
+    status?: "ACTIVE" | "DRAFT" | "UNLISTED";
+    vendor?: string;
+    productType?: string;
+    tags?: string[];
+    images?: Array<{ src: string }>;
+  }) {
+    const { images, ...productInput } = input;
+
+    let mediaInput: any = undefined;
+    if (images && images.length > 0) {
+      mediaInput = images.map((img) => ({
+        originalSource: img.src,
+        mediaContentType: "IMAGE",
+      }));
+    }
+
+    const mutation = `
+      mutation UpdateProduct($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
+        productUpdate(product: $product, media: $media) {
+          product {
+            id
+            title
+            handle
+            status
+            featuredImage {
+              url
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const response = await this.query<{
+      productUpdate: {
+        product?: {
+          id: string;
+          title: string;
+          handle: string;
+          status: string;
+          featuredImage: {
+            url: string;
+          } | null;
+        };
+        userErrors: Array<{ field: string[]; message: string }>;
+      };
+    }>(mutation, { product: productInput, media: mediaInput });
+
+    if (response.data?.productUpdate.userErrors.length) {
+      throw new Error(
+        `Failed to update product: ${response.data.productUpdate.userErrors
+          .map((error) => error.message)
+          .join(", ")}`,
+      );
+    }
+
+    return response.data?.productUpdate.product || null;
+  }
+
   private async publishProductIfNeeded(
     productId: string,
-    status?: "ACTIVE" | "DRAFT",
+    status?: "ACTIVE" | "DRAFT" | "UNLISTED",
   ) {
-    if (status !== "ACTIVE") return;
+    if (status !== "ACTIVE" && status !== "UNLISTED") return;
 
     try {
       const onlineStorePublicationId = await this.getOnlineStorePublicationId();
