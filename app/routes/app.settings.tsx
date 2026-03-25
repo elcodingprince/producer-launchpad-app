@@ -533,9 +533,9 @@ export default function SettingsPage() {
                   Stems add-on product
                 </Text>
                 <Text as="p" tone="subdued">
-                  Producer Launchpad can seed the unlisted Shopify product used
-                  by the license selector modal when a merchant sells stems as
-                  an add-on.
+                  Producer Launchpad can seed the Shopify product used by the
+                  license selector modal when a merchant sells stems as an
+                  add-on.
                 </Text>
               </BlockStack>
               <Badge tone={stemsAddonReady ? "success" : "attention"}>
@@ -571,9 +571,8 @@ export default function SettingsPage() {
 
             <Text as="p" tone="subdued">
               This product is seeded automatically during setup when possible.
-              It stays unlisted for storefront customers while the theme upsell
-              flow points at the seeded variant instead of a hardcoded demo
-              value.
+              The theme upsell flow points at the seeded variant instead of a
+              hardcoded demo value.
             </Text>
 
             <Form method="post">

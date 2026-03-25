@@ -1502,7 +1502,7 @@ export class MetafieldSetupService {
 
     return (
       product.handle === DEFAULT_STEMS_ADDON_HANDLE &&
-      String(product.status || "").toUpperCase() === "UNLISTED" &&
+      String(product.status || "").toUpperCase() === "ACTIVE" &&
       hasRequiredTags &&
       Boolean(product.featuredImage?.url) &&
       Boolean(variant?.id) &&
@@ -1582,7 +1582,7 @@ export class MetafieldSetupService {
         title: DEFAULT_STEMS_ADDON_TITLE,
         handle: DEFAULT_STEMS_ADDON_HANDLE,
         descriptionHtml: DEFAULT_STEMS_ADDON_DESCRIPTION_HTML,
-        status: "UNLISTED",
+        status: "ACTIVE",
         vendor,
         productType: "Add-On",
         tags: DEFAULT_STEMS_ADDON_TAGS,
@@ -1598,11 +1598,11 @@ export class MetafieldSetupService {
 
     if (!product) {
       product = await this.client.createProduct({
-        title: DEFAULT_STEMS_ADDON_TITLE,
-        handle: DEFAULT_STEMS_ADDON_HANDLE,
-        descriptionHtml: DEFAULT_STEMS_ADDON_DESCRIPTION_HTML,
-        status: "UNLISTED",
-        optionName: DEFAULT_STEMS_ADDON_OPTION_NAME,
+          title: DEFAULT_STEMS_ADDON_TITLE,
+          handle: DEFAULT_STEMS_ADDON_HANDLE,
+          descriptionHtml: DEFAULT_STEMS_ADDON_DESCRIPTION_HTML,
+          status: "ACTIVE",
+          optionName: DEFAULT_STEMS_ADDON_OPTION_NAME,
         vendor,
         productType: "Add-On",
         tags: DEFAULT_STEMS_ADDON_TAGS,

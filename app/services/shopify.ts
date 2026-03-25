@@ -658,7 +658,7 @@ export class ShopifyClient {
     title: string;
     handle?: string;
     descriptionHtml?: string;
-    status?: "ACTIVE" | "DRAFT" | "UNLISTED";
+    status?: "ACTIVE" | "DRAFT";
     optionName?: string;
     vendor?: string;
     productType?: string;
@@ -729,8 +729,8 @@ export class ShopifyClient {
     }
 
     const mutation = `
-      mutation CreateProduct($input: ProductInput!, $media: [CreateMediaInput!]) {
-        productCreate(input: $input, media: $media) {
+      mutation CreateProduct($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+        productCreate(product: $product, media: $media) {
           product {
             id
             title
@@ -777,7 +777,7 @@ export class ShopifyClient {
         };
         userErrors: Array<{ field: string[]; message: string }>;
       };
-    }>(mutation, { input: createInput, media: mediaInput });
+    }>(mutation, { product: createInput, media: mediaInput });
 
     const productCreateErrors = response.data?.productCreate.userErrors || [];
     if (productCreateErrors.length > 0) {
@@ -1048,7 +1048,7 @@ export class ShopifyClient {
     title?: string;
     handle?: string;
     descriptionHtml?: string;
-    status?: "ACTIVE" | "DRAFT" | "UNLISTED";
+    status?: "ACTIVE" | "DRAFT";
     vendor?: string;
     productType?: string;
     tags?: string[];
@@ -1112,9 +1112,9 @@ export class ShopifyClient {
 
   private async publishProductIfNeeded(
     productId: string,
-    status?: "ACTIVE" | "DRAFT" | "UNLISTED",
+    status?: "ACTIVE" | "DRAFT",
   ) {
-    if (status !== "ACTIVE" && status !== "UNLISTED") return;
+    if (status !== "ACTIVE") return;
 
     try {
       const onlineStorePublicationId = await this.getOnlineStorePublicationId();
