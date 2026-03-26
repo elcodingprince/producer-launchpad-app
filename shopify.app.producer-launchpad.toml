@@ -14,7 +14,12 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_metaobjects,read_products,read_publications,write_metaobjects,write_products,write_publications"
+scopes = "read_metaobjects,read_products,read_publications,write_metaobjects,write_products,write_publications,write_app_proxy"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
+
+[app_proxy]
+url = "/proxy"
+prefix = "apps"
+subpath = "producer-launchpad"

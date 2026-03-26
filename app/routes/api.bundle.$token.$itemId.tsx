@@ -30,6 +30,10 @@ function getObjectKeyFromUrl(storageUrl: string, bucketName: string) {
   return path.startsWith(bucketPrefix) ? path.slice(bucketPrefix.length) : path;
 }
 
+function getStorageKey(file: { storageKey?: string | null; storageUrl: string }, bucketName: string) {
+  return file.storageKey?.trim() || getObjectKeyFromUrl(file.storageUrl, bucketName);
+}
+
 function isAudioDeliverable(file: BeatFile) {
   return !["preview", "license_pdf", "cover"].includes(file.filePurpose);
 }
@@ -140,6 +144,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   const stemsFile = stemsIncludedInOrder
     ? await prisma.beatFile.findFirst({
         where: {
+          shop: deliveryAccess.shop,
           beatId: `gid://shopify/Product/${item.productId}`,
           filePurpose: "stems",
         },
@@ -191,7 +196,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
 
   try {
     for (const file of audioFiles) {
-      const key = getObjectKeyFromUrl(file.storageUrl, creds.bucketName);
+      const key = getStorageKey(file, creds.bucketName);
       const upstream = await downloadR2Object({
         accountId: creds.accountId,
         bucketName: creds.bucketName,

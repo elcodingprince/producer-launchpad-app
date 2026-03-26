@@ -119,6 +119,7 @@ function serializeUploadedFile(file: UploadedFile | null) {
     purpose: file.purpose,
     size: file.size,
     storageUrl: file.storageUrl || null,
+    storageKey: file.storageKey || null,
     shopifyResourceUrl: file.shopifyResourceUrl || null,
   };
 }
@@ -587,12 +588,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         purpose: metadata.purpose || entry.purpose || "other",
         size: metadata.size || `${result.size}`,
         storageUrl: result.storageUrl,
+        storageKey: result.storageKey,
       });
     }
 
-    // Track cover art and preview URLs by purpose
+    // Track cover art resource by purpose
     let coverArtUrl: string | undefined;
-    let previewUrl: string | undefined;
 
     // Upload cover art to Shopify's CDN directly to prevent "Media processing failed" timeouts
     const coverEntry = fileEntries.find(
@@ -647,7 +648,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       mergedLicenseFilePoolByPurpose.values(),
     );
 
-    previewUrl = mergedPreviewFile?.storageUrl;
     coverArtUrl =
       mergedCoverArtFile?.shopifyResourceUrl || mergedCoverArtFile?.storageUrl;
 
@@ -729,7 +729,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shopifyCoverResourceUrl ||
         mergedCoverArtFile?.shopifyResourceUrl ||
         coverArtUrl,
-      previewUrl,
     });
 
     // === SAVE FILE MAPPINGS TO DATABASE ===
@@ -765,9 +764,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const beatFile = await prisma.beatFile.create({
         data: {
+          shop: session.shop,
           beatId: productId,
           filename: file.name,
           storageUrl: file.storageUrl!,
+          storageKey: file.storageKey || null,
           fileType: file.type,
           filePurpose: file.purpose,
           size: sizeInBytes,
@@ -779,6 +780,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Create a map from tempId to database BeatFile id
     const tempIdToDbId = new Map(beatFileRecords.map((r) => [r.tempId, r.id]));
+
+    if (mergedPreviewFile?.id && tempIdToDbId.get(mergedPreviewFile.id)) {
+      await productService.setProductPreviewPlaybackUrl(productId);
+    }
 
     const licenseIdToVariantId = new Map(
       result.variants

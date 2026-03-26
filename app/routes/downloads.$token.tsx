@@ -129,6 +129,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
         const stemsFile = stemsIncludedInOrder
           ? await prisma.beatFile.findFirst({
               where: {
+                shop: order.shop,
                 beatId: `gid://shopify/Product/${item.productId}`,
                 filePurpose: "stems",
               },
@@ -138,6 +139,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
         // Also get the preview file if available to play right on the portal
         const previewFile = await prisma.beatFile.findFirst({
           where: {
+            shop: order.shop,
             beatId: `gid://shopify/Product/${item.productId}`,
             filePurpose: "preview",
           },

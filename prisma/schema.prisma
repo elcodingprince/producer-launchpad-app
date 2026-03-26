@@ -57,9 +57,11 @@ model ShopCatalogConfig {
 
 model BeatFile {
   id          String   @id @default(cuid())
+  shop        String   @default("")
   beatId      String // Shopify product ID or internal beat identifier
   filename    String
   storageUrl  String
+  storageKey  String?
   fileType    String // audio/mpeg, audio/wav, application/zip, image/jpeg, etc.
   filePurpose String // preview, mp3, wav, stems, cover, license_pdf
   size        Int // file size in bytes
@@ -71,6 +73,8 @@ model BeatFile {
 
   @@index([beatId])
   @@index([beatId, filePurpose])
+  @@index([shop])
+  @@index([shop, beatId, filePurpose])
 }
 
 model BeatDraft {

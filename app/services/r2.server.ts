@@ -33,6 +33,10 @@ export interface R2DownloadInput {
   key: string;
 }
 
+export interface R2SignedGetUrlInput extends R2DownloadInput {
+  expiresInSeconds: number;
+}
+
 function sha256Hex(payload: string): string {
   return crypto.createHash("sha256").update(payload, "utf8").digest("hex");
 }
@@ -49,7 +53,7 @@ function buildSigningKey(secretAccessKey: string, date: string) {
 }
 
 function createSignedHeaders(input: {
-  method: "GET" | "PUT" | "DELETE";
+  method: "GET" | "HEAD" | "PUT" | "DELETE";
   host: string;
   canonicalUri: string;
   accessKeyId: string;
@@ -124,7 +128,7 @@ function classifyR2Error(error: unknown): { message: string; type: StorageErrorT
 }
 
 async function signedR2Request(params: {
-  method: "GET" | "PUT" | "DELETE";
+  method: "GET" | "HEAD" | "PUT" | "DELETE";
   accountId: string;
   bucketName: string;
   accessKeyId: string;
@@ -203,40 +207,105 @@ export async function uploadR2Object(input: R2UploadInput) {
   }
 }
 
-export async function downloadR2Object(input: R2DownloadInput) {
+export async function downloadR2Object(
+  input: R2DownloadInput,
+  options?: { method?: "GET" | "HEAD"; range?: string | null },
+) {
   const host = `${input.accountId}.r2.cloudflarestorage.com`;
   const canonicalUri = `/${input.bucketName}/${input.key}`;
   const url = `https://${host}${canonicalUri}`;
   const emptyPayloadHash = sha256Hex("");
+  const method = options?.method || "GET";
 
-  const headers = createSignedHeaders({
-    method: "GET",
-    host,
-    canonicalUri,
-    accessKeyId: input.accessKeyId,
-    secretAccessKey: input.secretAccessKey,
-    payloadHash: emptyPayloadHash,
-  });
+  const headers = {
+    ...createSignedHeaders({
+      method,
+      host,
+      canonicalUri,
+      accessKeyId: input.accessKeyId,
+      secretAccessKey: input.secretAccessKey,
+      payloadHash: emptyPayloadHash,
+    }),
+    ...(options?.range ? { Range: options.range } : {}),
+  };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
     const response = await fetch(url, {
-      method: "GET",
+      method,
       headers,
       signal: controller.signal,
     });
 
     if (!response.ok) {
+      if (response.status === 416) {
+        return response;
+      }
       const responseText = await response.text().catch(() => "");
-      throw new Error(`R2 GET failed: ${response.status} ${response.statusText} ${responseText}`.trim());
+      throw new Error(`R2 ${method} failed: ${response.status} ${response.statusText} ${responseText}`.trim());
     }
 
     return response;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export function createSignedR2GetUrl(input: R2SignedGetUrlInput) {
+  const expiresInSeconds = Math.max(1, Math.min(60 * 60 * 24, Math.floor(input.expiresInSeconds)));
+  const host = `${input.accountId}.r2.cloudflarestorage.com`;
+  const canonicalUri = `/${input.bucketName}/${input.key}`
+    .split("/")
+    .map((segment, index) => (index === 0 ? segment : encodeURIComponent(segment)))
+    .join("/");
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
+  const searchParams = new URLSearchParams({
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": `${input.accessKeyId}/${credentialScope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": String(expiresInSeconds),
+    "X-Amz-SignedHeaders": "host",
+  });
+
+  const canonicalQueryString = Array.from(searchParams.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&");
+
+  const canonicalRequest = [
+    "GET",
+    canonicalUri,
+    canonicalQueryString,
+    `host:${host}\n`,
+    "host",
+    "UNSIGNED-PAYLOAD",
+  ].join("\n");
+
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    sha256Hex(canonicalRequest),
+  ].join("\n");
+
+  const signingKey = buildSigningKey(input.secretAccessKey, dateStamp);
+  const signature = crypto
+    .createHmac("sha256", signingKey)
+    .update(stringToSign, "utf8")
+    .digest("hex");
+
+  searchParams.set("X-Amz-Signature", signature);
+
+  return {
+    url: `https://${host}${canonicalUri}?${searchParams.toString()}`,
+    expiresAt: new Date(now.getTime() + expiresInSeconds * 1000).toISOString(),
+    expiresInSeconds,
+  };
 }
 
 export async function testR2Connection(input: R2ConnectionInput): Promise<R2ConnectionResult> {

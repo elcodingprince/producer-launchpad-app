@@ -22,8 +22,8 @@ export const REQUIRED_PRODUCT_METAFIELDS = [
     name: "Audio Preview",
     namespace: "custom",
     key: "audio_preview",
-    type: "url",
-    description: "URL to the audio preview file",
+    type: "single_line_text_field",
+    description: "App-managed stable preview playback URL served by the private preview endpoint.",
   },
   {
     name: "Genre",

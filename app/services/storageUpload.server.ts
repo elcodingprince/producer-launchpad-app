@@ -16,12 +16,21 @@ export interface UploadedFileResult {
   id: string;
   originalName: string;
   storageUrl: string;
+  storageKey: string;
   fileType: string;
   size: number;
 }
 
 function normalizeBaseUrl(url: string) {
   return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+function normalizeMerchantKey(shop: string) {
+  return shop.trim().toLowerCase().replace(/[^a-z0-9.-]+/g, "-");
+}
+
+function buildNamespacedKey(shop: string, beatSlug: string, filename: string) {
+  return `merchant/${normalizeMerchantKey(shop)}/product/${beatSlug}/${filename}`;
 }
 
 async function uploadSelfManagedR2(
@@ -43,7 +52,7 @@ async function uploadSelfManagedR2(
     const { file, fileType, originalName } = fileData;
     const extension = originalName.split('.').pop() || '';
     const safeName = originalName.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const key = `${beatSlug}/${Date.now()}-${safeName}`;
+    const key = buildNamespacedKey(shop, beatSlug, `${Date.now()}-${safeName}`);
     
     // Determine content type
     const contentTypeMap: Record<string, string> = {
@@ -69,6 +78,7 @@ async function uploadSelfManagedR2(
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       originalName,
       storageUrl: `${baseUrl}/${key}`,
+      storageKey: key,
       fileType,
       size: file.size,
     });
@@ -78,6 +88,7 @@ async function uploadSelfManagedR2(
 }
 
 async function uploadManagedR2(
+  shop: string,
   files: DynamicFileUpload[],
   beatSlug: string
 ): Promise<UploadedFileResult[]> {
@@ -96,7 +107,7 @@ async function uploadManagedR2(
   for (const fileData of files) {
     const { file, fileType, originalName } = fileData;
     const safeName = `${Date.now()}-${originalName.replace(/[^a-zA-Z0-9.-]/g, "_")}`;
-    const key = `${beatSlug}/${safeName}`;
+    const key = buildNamespacedKey(shop, beatSlug, safeName);
     
     // Determine content type
     const contentTypeMap: Record<string, string> = {
@@ -122,6 +133,7 @@ async function uploadManagedR2(
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       originalName,
       storageUrl: `${baseUrl}/${key}`,
+      storageKey: key,
       fileType,
       size: file.size,
     });
@@ -153,7 +165,7 @@ export async function uploadDynamicFilesForShop(
     return uploadSelfManagedR2(shop, files, beatSlug);
   }
 
-  return uploadManagedR2(files, beatSlug);
+  return uploadManagedR2(shop, files, beatSlug);
 }
 
 // Legacy function for backward compatibility
@@ -169,7 +181,7 @@ async function uploadSelfManagedR2Legacy(shop: string, files: BeatFileUpload, be
   const baseUrl = normalizeBaseUrl(config.publicBaseUrl);
 
   async function uploadFile(file: File, name: string, contentType: string) {
-    const key = `${beatSlug}/${name}`;
+    const key = buildNamespacedKey(shop, beatSlug, name);
     await uploadR2Object({
       accountId: creds.accountId,
       bucketName: creds.bucketName,
@@ -222,7 +234,7 @@ export async function uploadBeatFilesForShop(shop: string, files: BeatFileUpload
   if (files.stems) dynamicFiles.push({ file: files.stems, fileType: "stems", originalName: files.stems.name });
   if (files.coverArt) dynamicFiles.push({ file: files.coverArt, fileType: "cover", originalName: files.coverArt.name });
 
-  const uploaded = await uploadManagedR2(dynamicFiles, beatSlug);
+  const uploaded = await uploadManagedR2(shop, dynamicFiles, beatSlug);
   const result: UploadedBeatFiles = {};
   for (const item of uploaded) {
     if (!result.preview && item.fileType === "mp3") {

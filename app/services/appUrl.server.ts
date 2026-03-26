@@ -4,6 +4,12 @@ function ensureAbsoluteUrl(value: string) {
     : `https://${value}`;
 }
 
+function normalizeShopifyResourceId(id: string | null | undefined) {
+  if (!id) return "";
+  const match = id.match(/\/(\d+)$/);
+  return match ? match[1] : id;
+}
+
 export function getAppOrigin(request?: Request) {
   const rawHost =
     process.env.SHOPIFY_APP_URL || process.env.APP_URL || process.env.HOST;
@@ -21,6 +27,16 @@ export function getAppOrigin(request?: Request) {
 
 export function buildDownloadPortalUrl(token: string, request?: Request) {
   return `${getAppOrigin(request)}/downloads/${token}`;
+}
+
+export function buildProductPreviewPlaybackPath(productId: string) {
+  const normalizedProductId = normalizeShopifyResourceId(productId);
+
+  if (!normalizedProductId) {
+    throw new Error("Product ID is required to build a preview playback path.");
+  }
+
+  return `/apps/producer-launchpad/preview/${normalizedProductId}`;
 }
 
 export function formatStoreName(shop: string) {

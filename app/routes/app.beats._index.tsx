@@ -427,6 +427,7 @@ async function getActiveBeats(
       ? (
           await prisma.beatFile.findMany({
             where: {
+              shop,
               beatId: { in: beatIds },
               filePurpose: "stems",
             },

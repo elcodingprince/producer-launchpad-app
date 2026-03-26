@@ -58,6 +58,7 @@ export interface UploadedFile {
   size: string;
   file?: File;
   storageUrl?: string;
+  storageKey?: string;
   shopifyResourceUrl?: string;
 }
 

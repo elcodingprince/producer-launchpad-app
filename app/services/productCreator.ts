@@ -1,5 +1,6 @@
 import { createShopifyClient, ShopifyClient } from "./shopify";
 import { normalizeTemplateFields } from "./licenses/archetypes";
+import { buildProductPreviewPlaybackPath } from "./appUrl.server";
 
 export interface LicensePricing {
   licenseId: string;
@@ -23,7 +24,6 @@ export interface BeatProductData {
   licenses: LicensePricing[];
   tags?: string[];
   coverArtUrl?: string;
-  previewUrl?: string;
 }
 
 export class ProductCreatorService {
@@ -100,15 +100,6 @@ export class ProductCreatorService {
       });
     }
 
-    if (data.previewUrl) {
-      productMetafields.push({
-        namespace: "custom",
-        key: "audio_preview",
-        value: data.previewUrl,
-        type: "url",
-      });
-    }
-
     // Build variants array - one per license
     const variants = data.licenses.map((license) => ({
       title: license.licenseName || license.licenseId,
@@ -180,6 +171,18 @@ export class ProductCreatorService {
         licenseId: data.licenses[index]?.licenseId || "",
       })),
     };
+  }
+
+  async setProductPreviewPlaybackUrl(productId: string) {
+    await this.client.setMetafields([
+      {
+        ownerId: productId,
+        namespace: "custom",
+        key: "audio_preview",
+        type: "single_line_text_field",
+        value: buildProductPreviewPlaybackPath(productId),
+      },
+    ]);
   }
 
   async getLicenseMetaobjects(): Promise<

@@ -22,7 +22,7 @@ const shopify = shopifyApp({
   apiVersion: LATEST_API_VERSION,
   scopes: (
     process.env.SHOPIFY_APP_SCOPES ||
-    "read_products,write_products,read_publications,write_publications,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_orders,write_orders"
+    "read_products,write_products,read_publications,write_publications,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_orders,write_orders,write_app_proxy"
   ).split(","),
   isEmbeddedApp: true,
   authPathPrefix: "/auth",

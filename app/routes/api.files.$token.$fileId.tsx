@@ -35,6 +35,10 @@ function getObjectKeyFromUrl(storageUrl: string, bucketName: string) {
   return path.startsWith(bucketPrefix) ? path.slice(bucketPrefix.length) : path;
 }
 
+function getStorageKey(file: { storageKey?: string | null; storageUrl: string }, bucketName: string) {
+  return file.storageKey?.trim() || getObjectKeyFromUrl(file.storageUrl, bucketName);
+}
+
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   const { token, fileId } = params;
 
@@ -99,7 +103,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     return new Response("We couldn't prepare this download right now. Please contact support.", { status: 500 });
   }
 
-  const key = getObjectKeyFromUrl(file.storageUrl, creds.bucketName);
+  const key = getStorageKey(file, creds.bucketName);
 
   try {
     const upstream = await downloadR2Object({
