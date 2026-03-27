@@ -61,6 +61,56 @@ function hashValue(value: string | Buffer) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function formatAcceptedDeliveryPackage(
+  fileFormats: string | null | undefined,
+  stemsIncludedInOrder: boolean,
+) {
+  const tokens = String(fileFormats || "")
+    .toUpperCase()
+    .split(/[\s,]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (stemsIncludedInOrder && !tokens.includes("STEMS")) {
+    tokens.push("STEMS");
+  }
+
+  return tokens.join(" + ");
+}
+
+function buildAcceptedAgreementPayload(options: {
+  handle: string;
+  offerArchetype: string;
+  licenseName: string;
+  templateVersion: string;
+  agreementTemplateKey: string;
+  deliveryPackage: string;
+  stemsPolicy: string;
+}) {
+  return {
+    schema: "pl.acceptance.v1",
+    handle: options.handle,
+    offerArchetype: options.offerArchetype,
+    licenseName: options.licenseName,
+    templateVersion: options.templateVersion,
+    agreementTemplateKey: options.agreementTemplateKey,
+    deliveryPackage: options.deliveryPackage,
+    stemsPolicy: options.stemsPolicy,
+  };
+}
+
+function hashAcceptedAgreementPayload(options: {
+  handle: string;
+  offerArchetype: string;
+  licenseName: string;
+  templateVersion: string;
+  agreementTemplateKey: string;
+  deliveryPackage: string;
+  stemsPolicy: string;
+}) {
+  return hashValue(JSON.stringify(buildAcceptedAgreementPayload(options)));
+}
+
 export type ExecutedAgreementResolvedLicense = {
   licenseName?: string;
   fileFormats?: string;
@@ -91,6 +141,19 @@ type ShopifyAgreementContext = {
     fields?: Array<{ key: string; value: string | null }>;
   };
   licensePrice: string;
+};
+
+type AcceptedAgreementMetadata = {
+  acceptedAt: Date | null;
+  templateVersion: string | null;
+  templateHash: string | null;
+  licenseName: string | null;
+  deliveryPackage: string | null;
+  handle: string | null;
+  offerArchetype: string | null;
+  agreementTemplateKey: string | null;
+  source: string | null;
+  rawProperties: Record<string, string>;
 };
 
 async function fetchAgreementDocumentData(
@@ -294,6 +357,7 @@ export async function buildExecutedAgreementSnapshot(input: {
   >;
   customerEmail: string | null;
   customerName: string | null;
+  acceptedMetadata?: AcceptedAgreementMetadata | null;
 }) {
   const { session, admin } = await unauthenticated.admin(input.shop);
   const setupService = createMetafieldSetupService(session, admin);
@@ -357,6 +421,14 @@ export async function buildExecutedAgreementSnapshot(input: {
   const stemsIncludedInFinalOrder =
     input.orderItem.stemsIncludedInOrder ||
     resolvedStemsPolicy === "included_by_default";
+  const snapshotTemplateVersion = getLicenseTemplateVersion(
+    licenseHandle,
+    licenseFields,
+  );
+  const agreementTemplateKey = getFieldValue(
+    licenseFields,
+    "agreement_template_key",
+  );
 
   const license = {
     handle: licenseHandle,
@@ -386,6 +458,58 @@ export async function buildExecutedAgreementSnapshot(input: {
       getFieldValue(licenseFields, `term_${index + 1}`),
     ),
   };
+  const snapshotDeliveryPackage = formatAcceptedDeliveryPackage(
+    license.fileFormats,
+    stemsIncludedInFinalOrder,
+  );
+  const acceptedLicenseName =
+    input.acceptedMetadata?.licenseName?.trim() || license.licenseName;
+  const acceptedDeliveryPackage =
+    input.acceptedMetadata?.deliveryPackage?.trim() || snapshotDeliveryPackage;
+  const acceptanceHandle =
+    input.acceptedMetadata?.handle?.trim() || licenseHandle;
+  const acceptanceOfferArchetype =
+    input.acceptedMetadata?.offerArchetype?.trim() ||
+    normalizedFields.offerArchetype;
+  const acceptanceAgreementTemplateKey =
+    input.acceptedMetadata?.agreementTemplateKey?.trim() ||
+    agreementTemplateKey;
+  const snapshotAcceptanceHash = hashAcceptedAgreementPayload({
+    handle: acceptanceHandle,
+    offerArchetype: acceptanceOfferArchetype,
+    licenseName: acceptedLicenseName,
+    templateVersion: snapshotTemplateVersion,
+    agreementTemplateKey: acceptanceAgreementTemplateKey,
+    deliveryPackage: acceptedDeliveryPackage,
+    stemsPolicy: resolvedStemsPolicy,
+  });
+  const acceptedTemplateHash =
+    input.acceptedMetadata?.templateHash?.trim() || null;
+  const acceptedTemplateVersion =
+    input.acceptedMetadata?.templateVersion?.trim() ||
+    snapshotTemplateVersion ||
+    null;
+  const acceptedSnapshotMatch =
+    acceptedTemplateHash && snapshotAcceptanceHash
+      ? acceptedTemplateHash === snapshotAcceptanceHash
+      : null;
+  const acceptedProofJson = JSON.stringify({
+    schema: "pl.acceptance.v1",
+    acceptedAt: input.acceptedMetadata?.acceptedAt?.toISOString() || null,
+    acceptedTemplateVersion,
+    acceptedTemplateHash,
+    acceptedLicenseName,
+    acceptedDeliveryPackage,
+    acceptedHandle: acceptanceHandle,
+    acceptedOfferArchetype: acceptanceOfferArchetype,
+    acceptedAgreementTemplateKey: acceptanceAgreementTemplateKey,
+    acceptedStemsPolicy: resolvedStemsPolicy,
+    acceptedSource: input.acceptedMetadata?.source || null,
+    snapshotTemplateVersion: snapshotTemplateVersion || null,
+    snapshotAcceptanceHash,
+    snapshotMatch: acceptedSnapshotMatch,
+    rawProperties: input.acceptedMetadata?.rawProperties || {},
+  });
 
   const agreement = await renderAgreementPreview({
     mode: "resolved",
@@ -424,6 +548,13 @@ export async function buildExecutedAgreementSnapshot(input: {
       templateHandle: licenseHandle,
       offerArchetype: normalizedFields.offerArchetype,
       templateVersion: getLicenseTemplateVersion(licenseHandle, licenseFields),
+      acceptedAt: input.acceptedMetadata?.acceptedAt || null,
+      acceptedTemplateVersion,
+      acceptedTemplateHash,
+      acceptedLicenseName,
+      acceptedDeliveryPackage,
+      acceptedProofJson,
+      acceptedSnapshotMatch,
       resolvedLicenseJson: JSON.stringify(license),
       beatOfferSnapshotJson: JSON.stringify({
         variantId: input.orderItem.variantId,
@@ -456,6 +587,13 @@ export async function buildExecutedAgreementSnapshot(input: {
       templateHandle: licenseHandle,
       offerArchetype: normalizedFields.offerArchetype,
       templateVersion: getLicenseTemplateVersion(licenseHandle, licenseFields),
+      acceptedAt: input.acceptedMetadata?.acceptedAt || null,
+      acceptedTemplateVersion,
+      acceptedTemplateHash,
+      acceptedLicenseName,
+      acceptedDeliveryPackage,
+      acceptedProofJson,
+      acceptedSnapshotMatch,
       resolvedLicenseJson: JSON.stringify(license),
       beatOfferSnapshotJson: JSON.stringify({
         variantId: input.orderItem.variantId,

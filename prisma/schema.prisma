@@ -162,6 +162,13 @@ model ExecutedAgreement {
   templateHandle        String
   offerArchetype        String
   templateVersion       String?
+  acceptedAt            DateTime?
+  acceptedTemplateVersion String?
+  acceptedTemplateHash  String?
+  acceptedLicenseName   String?
+  acceptedDeliveryPackage String?
+  acceptedProofJson     String?
+  acceptedSnapshotMatch Boolean?
   resolvedLicenseJson   String
   beatOfferSnapshotJson String
   stemsIncludedInOrder  Boolean  @default(false)

@@ -59,6 +59,67 @@ function getCheckoutAuditFields(payload: any) {
   };
 }
 
+function extractLineItemProperties(
+  lineItem: { properties?: unknown } | null | undefined,
+) {
+  const rawProperties = lineItem?.properties;
+  const properties: Record<string, string> = {};
+
+  if (Array.isArray(rawProperties)) {
+    for (const entry of rawProperties) {
+      const key = String(
+        (entry as any)?.name || (entry as any)?.key || "",
+      ).trim();
+      if (!key) continue;
+      properties[key] = String((entry as any)?.value || "").trim();
+    }
+    return properties;
+  }
+
+  if (rawProperties && typeof rawProperties === "object") {
+    for (const [key, value] of Object.entries(
+      rawProperties as Record<string, unknown>,
+    )) {
+      const normalizedKey = String(key || "").trim();
+      if (!normalizedKey) continue;
+      properties[normalizedKey] = String(value || "").trim();
+    }
+  }
+
+  return properties;
+}
+
+function parseAcceptedLineItemMetadata(
+  lineItem: { properties?: unknown } | null | undefined,
+) {
+  const rawProperties = extractLineItemProperties(lineItem);
+  const acceptedAtValue = rawProperties._pl_accepted_at?.trim();
+  const acceptedAt = acceptedAtValue ? new Date(acceptedAtValue) : null;
+
+  return {
+    acceptedAt:
+      acceptedAt && !Number.isNaN(acceptedAt.getTime()) ? acceptedAt : null,
+    templateVersion:
+      normalizeOptionalString(rawProperties._pl_accepted_template_version) ||
+      null,
+    templateHash:
+      normalizeOptionalString(rawProperties._pl_accepted_template_hash) || null,
+    licenseName:
+      normalizeOptionalString(rawProperties._pl_accepted_license_name) || null,
+    deliveryPackage:
+      normalizeOptionalString(rawProperties._pl_accepted_delivery_package) ||
+      null,
+    handle: normalizeOptionalString(rawProperties._pl_license_handle) || null,
+    offerArchetype:
+      normalizeOptionalString(rawProperties._pl_offer_archetype) || null,
+    agreementTemplateKey:
+      normalizeOptionalString(rawProperties._pl_agreement_template_key) || null,
+    source:
+      normalizeOptionalString(rawProperties._pl_acceptance_source) || null,
+    rawProperties,
+  };
+}
+
 function normalizeStemsAddonLabel(value: unknown) {
   return String(value || "")
     .toLowerCase()
@@ -233,6 +294,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const { stemsAddonLineItemIds, parentVariantIdsWithStems } =
       await fetchOrderLineItemComposition(shop, orderId);
     const orderItems = [];
+    const acceptedMetadataByLineItemId = new Map<
+      string,
+      ReturnType<typeof parseAcceptedLineItemMetadata>
+    >();
 
     // Filter line items that might be beats (in a real app, you'd check if they have the specific product type or are in your app's DB)
     // Here we'll just parse all items for the demo since it's a dedicated beat store
@@ -245,6 +310,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           continue;
         }
 
+        const acceptedMetadata = parseAcceptedLineItemMetadata(item);
+        acceptedMetadataByLineItemId.set(item.id.toString(), acceptedMetadata);
+
         const normalizedVariantId = normalizeShopifyResourceId(
           item.variant_id.toString(),
         );
@@ -253,7 +321,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           productId: normalizeShopifyResourceId(item.product_id.toString()),
           variantId: normalizedVariantId,
           beatTitle: item.title,
-          licenseName: item.variant_title || "Standard License", // The variant title is the License Name from our setup
+          licenseName:
+            acceptedMetadata.licenseName ||
+            item.variant_title ||
+            "Standard License",
           stemsIncludedInOrder:
             parentVariantIdsWithStems.has(normalizedVariantId),
         });
@@ -321,6 +392,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           },
           customerEmail: customerEmail || null,
           customerName,
+          acceptedMetadata:
+            acceptedMetadataByLineItemId.get(item.shopifyLineId) || null,
         });
 
         const savedExecutedAgreement = await prisma.executedAgreement.create({
