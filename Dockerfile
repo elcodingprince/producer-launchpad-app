@@ -1,6 +1,5 @@
 FROM node:20-bookworm-slim
 
-ENV NODE_ENV=production
 ENV CHROME_PATH=/usr/bin/chromium
 
 WORKDIR /app
@@ -16,13 +15,16 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 
-# Keep dev dependencies available because runtime startup uses Prisma CLI.
-RUN npm ci
+# Keep dev dependencies available because the Vite build and Prisma CLI both
+# need packages from devDependencies during image build/runtime startup.
+RUN npm ci --include=dev
 
 COPY . .
 
 RUN npm run build
 
 EXPOSE 10000
+
+ENV NODE_ENV=production
 
 CMD ["npm", "run", "docker-start"]
