@@ -1,8 +1,35 @@
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { useEffect } from "react";
 import { Outlet, useLocation, useRouteLoaderData } from "@remix-run/react";
 import { NavMenu, useAppBridge } from "@shopify/app-bridge-react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import enTranslations from "@shopify/polaris/locales/en.json";
+import { authenticate } from "~/shopify.server";
+import {
+  buildManagedPricingUrl,
+  getManagedPricingAppHandle,
+  isBillingGateEnabled,
+} from "~/services/billing.server";
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { billing, redirect, session } = await authenticate.admin(request);
+
+  if (!isBillingGateEnabled()) {
+    return json({ billingRequired: false });
+  }
+
+  const { hasActivePayment } = await billing.check();
+
+  if (!hasActivePayment) {
+    return redirect(
+      buildManagedPricingUrl(session.shop, getManagedPricingAppHandle()),
+      { target: "_top" },
+    );
+  }
+
+  return json({ billingRequired: true });
+};
 
 export default function AppLayout() {
   const rootData = useRouteLoaderData<{ apiKey: string }>("root");
