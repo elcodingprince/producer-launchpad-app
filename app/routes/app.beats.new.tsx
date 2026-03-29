@@ -867,19 +867,30 @@ export default function NewBeatPage() {
   const initialTitle = draft?.title || "";
   const initialBpm = draft?.bpm || "";
   const initialKey = draft?.key || "C minor";
-  const initialGenreGids = draft?.genreGids?.length
-    ? draft.genreGids
-    : genres[0]?.id
-      ? [genres[0].id]
-      : [];
-  const initialProducerGids = draft?.producerGids?.length
-    ? draft.producerGids
-    : producers[0]?.id
-      ? [producers[0].id]
-      : [];
+  const initialGenreGids = useMemo(
+    () =>
+      draft?.genreGids?.length
+        ? draft.genreGids
+        : genres[0]?.id
+          ? [genres[0].id]
+          : [],
+    [draft?.genreGids, genres],
+  );
+  const initialProducerGids = useMemo(
+    () =>
+      draft?.producerGids?.length
+        ? draft.producerGids
+        : producers[0]?.id
+          ? [producers[0].id]
+          : [],
+    [draft?.producerGids, producers],
+  );
   const initialProducerAlias = draft?.producerAlias || "";
   const initialStatus = draft ? "draft" : "active";
-  const initialUploadedFiles = (draft?.uploadedFiles || []) as UploadedFile[];
+  const initialUploadedFiles = useMemo(
+    () => (draft?.uploadedFiles || []) as UploadedFile[],
+    [draft?.uploadedFiles],
+  );
   const initialLicenseFiles = useMemo(() => {
     const obj: LicenseFiles = draft?.licenseFiles || {};
     if (licenses)

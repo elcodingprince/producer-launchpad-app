@@ -221,6 +221,25 @@ model DeliveryAccess {
   @@index([downloadToken])
 }
 
+model PrivacyDataRequest {
+  id                   String   @id @default(cuid())
+  shop                 String
+  shopifyDataRequestId String
+  shopifyCustomerId    String?
+  customerEmail        String?
+  ordersRequestedJson  String   @default("[]")
+  requestPayloadJson   String
+  exportJson           String?
+  status               String   @default("pending")
+  fulfilledAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([shop, shopifyDataRequestId])
+  @@index([shop, status])
+  @@index([shop, customerEmail])
+}
+
 model TemplateGuardrailAcceptance {
   id                   String   @id @default(cuid())
   shop                 String

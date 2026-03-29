@@ -5,7 +5,7 @@ async function main() {
   const token = 'tok_dev_' + Math.random().toString(36).substring(2, 10);
   const randomId = Math.random().toString(36).substring(2, 10);
   
-  const order = await prisma.order.create({
+  await prisma.order.create({
     data: {
       shop: 'producer-launchpad.myshopify.com',
       shopifyOrderId: `test_order_${randomId}`,

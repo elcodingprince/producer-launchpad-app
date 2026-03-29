@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import prisma from "~/db.server";
 import { buildDerivedLicenseFields } from "./licenses/archetypes";
-import { createShopifyClient, ShopifyClient } from "./shopify";
+import { createShopifyClient, type ShopifyClient } from "./shopify";
 
 export const REQUIRED_PRODUCT_METAFIELDS = [
   {
