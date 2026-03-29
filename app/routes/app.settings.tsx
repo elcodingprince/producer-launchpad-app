@@ -6,7 +6,7 @@ import {
   useLoaderData,
   useNavigation,
 } from "@remix-run/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Banner,
   Badge,
@@ -18,31 +18,21 @@ import {
   FormLayout,
   InlineStack,
   Page,
-  Select,
   Text,
   TextField,
 } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
 import { authenticate } from "~/shopify.server";
 import { getAppReadiness } from "~/services/appReadiness.server";
+import { getBillingSummary } from "~/services/billing.server";
 import { getDeliveryEmailConfigSummary } from "~/services/email.server";
 import { createMetafieldSetupService } from "~/services/metafieldSetup";
-import {
-  getResolvedR2Credentials,
-  markStorageError,
-  parseStorageMode,
-  saveSelfManagedConfig,
-  setStorageMode,
-  type StorageMode,
-} from "~/services/storageConfig.server";
-import { testR2Connection } from "~/services/r2.server";
+import { setStorageMode } from "~/services/storageConfig.server";
 
 type ActionData = {
   success?: string;
   error?: string;
-  errorType?: string;
   repairResult?: { success: boolean; errors: string[] };
-  testResult?: { ok: boolean; message: string; errorType?: string };
 };
 
 function getMetaobjectFieldValue(
@@ -58,23 +48,23 @@ function getMetaobjectFieldValue(
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, admin } = await authenticate.admin(request);
+  const { session, admin, billing } = await authenticate.admin(request);
   const setupService = createMetafieldSetupService(session, admin);
   const deliveryEmail = getDeliveryEmailConfigSummary();
-  const [readiness, licensor, stemsAddonProduct] = await Promise.all([
-    getAppReadiness(session, admin),
-    setupService.getDefaultLicensor(),
-    setupService.getStemsAddonProductConfig(),
-  ]);
+  const [readiness, licensor, stemsAddonProduct, billingSummary] =
+    await Promise.all([
+      getAppReadiness(session, admin),
+      setupService.getDefaultLicensor(),
+      setupService.getStemsAddonProductConfig(),
+      getBillingSummary({ billing, shopDomain: session.shop }),
+    ]);
 
   return json({
     readiness,
+    billingSummary,
     deliveryEmail,
     licensor,
     stemsAddonProduct,
-    mode:
-      (readiness.storageConfig?.mode as StorageMode | undefined) ||
-      "disconnected",
   });
 };
 
@@ -85,7 +75,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
 
   const intent = String(formData.get("intent") || "");
-  const mode = parseStorageMode(String(formData.get("mode") || ""));
 
   if (intent === "repair") {
     try {
@@ -106,16 +95,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  if (intent === "save_mode") {
-    if (!mode) {
-      return json<ActionData>(
-        { error: "Select a storage mode." },
-        { status: 400 },
-      );
-    }
-
-    await setStorageMode(shop, mode);
-    return json<ActionData>({ success: "Storage mode saved." });
+  if (intent === "enable_managed_storage") {
+    await setStorageMode(shop, "managed");
+    return json<ActionData>({ success: "Managed storage enabled." });
   }
 
   if (intent === "ensure_stems_addon_product") {
@@ -155,104 +137,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json<ActionData>({ success: "Legal identity saved." });
   }
 
-  if (intent === "test_r2_connection") {
-    const accountId = String(formData.get("accountId") || "").trim();
-    const bucketName = String(formData.get("bucketName") || "").trim();
-    const accessKeyId = String(formData.get("accessKeyId") || "").trim();
-    const secretAccessKey = String(
-      formData.get("secretAccessKey") || "",
-    ).trim();
-
-    const result = await testR2Connection({
-      accountId,
-      bucketName,
-      accessKeyId,
-      secretAccessKey,
-    });
-
-    if (result.ok) {
-      return json<ActionData>({
-        testResult: { ok: true, message: "Connected - ready to upload" },
-      });
-    }
-
-    return json<ActionData>(
-      {
-        testResult: {
-          ok: false,
-          message: result.error || "Connection failed",
-          errorType: result.errorType,
-        },
-      },
-      { status: 400 },
-    );
-  }
-
-  if (intent === "save_self_managed") {
-    const accountId = String(formData.get("accountId") || "").trim();
-    const bucketName = String(formData.get("bucketName") || "").trim();
-    const publicBaseUrl = String(formData.get("publicBaseUrl") || "").trim();
-    const accessKeyIdInput = String(formData.get("accessKeyId") || "").trim();
-    const secretAccessKeyInput = String(
-      formData.get("secretAccessKey") || "",
-    ).trim();
-
-    const existing = await getResolvedR2Credentials(shop);
-    const accessKeyId = accessKeyIdInput || existing?.accessKeyId || "";
-    const secretAccessKey =
-      secretAccessKeyInput || existing?.secretAccessKey || "";
-
-    const testResult = await testR2Connection({
-      accountId,
-      bucketName,
-      accessKeyId,
-      secretAccessKey,
-    });
-
-    if (!testResult.ok) {
-      await markStorageError(
-        shop,
-        testResult.error || "Connection failed",
-        testResult.errorType || "unknown",
-      );
-      return json<ActionData>(
-        {
-          error: testResult.error || "Connection failed",
-          errorType: testResult.errorType,
-        },
-        { status: 400 },
-      );
-    }
-
-    await saveSelfManagedConfig({
-      shop,
-      accountId,
-      bucketName,
-      publicBaseUrl,
-      accessKeyId,
-      secretAccessKey,
-    });
-
-    return json<ActionData>({ success: "Storage saved and connected." });
-  }
-
   return json<ActionData>({ error: "Unknown action." }, { status: 400 });
 };
 
 export default function SettingsPage() {
-  const { readiness, deliveryEmail, licensor, stemsAddonProduct, mode } =
+  const { readiness, billingSummary, deliveryEmail, licensor, stemsAddonProduct } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
   const [showTechnical, setShowTechnical] = useState(false);
-  const testConnectionSubmitRef = useRef<HTMLButtonElement | null>(null);
-  const saveStorageSubmitRef = useRef<HTMLButtonElement | null>(null);
 
   const isSubmitting = navigation.state === "submitting";
-  const selectedMode =
-    (navigation.formData?.get("mode") as string) ||
-    (mode === "disconnected" ? "managed" : mode);
-  const providerOptions = [{ label: "Cloudflare R2", value: "r2" }];
   const storageConfig = readiness.storageConfig;
   const setupStatus = readiness.setupStatus;
   const [legalName, setLegalName] = useState(
@@ -276,18 +171,6 @@ export default function SettingsPage() {
   const [signatureLabel, setSignatureLabel] = useState(
     getMetaobjectFieldValue(licensor, "signature_label"),
   );
-  const [accountIdValue, setAccountIdValue] = useState(
-    storageConfig?.accountId || "",
-  );
-  const [bucketNameValue, setBucketNameValue] = useState(
-    storageConfig?.bucketName || "",
-  );
-  const [publicBaseUrlValue, setPublicBaseUrlValue] = useState(
-    storageConfig?.publicBaseUrl || "",
-  );
-  const [accessKeyIdValue, setAccessKeyIdValue] = useState("");
-  const [secretAccessKeyValue, setSecretAccessKeyValue] = useState("");
-
   useEffect(() => {
     setLegalName(getMetaobjectFieldValue(licensor, "legal_name"));
     setDbaName(getMetaobjectFieldValue(licensor, "dba_name"));
@@ -301,14 +184,6 @@ export default function SettingsPage() {
     setDisputeForum(getMetaobjectFieldValue(licensor, "dispute_forum"));
     setSignatureLabel(getMetaobjectFieldValue(licensor, "signature_label"));
   }, [licensor]);
-
-  useEffect(() => {
-    setAccountIdValue(storageConfig?.accountId || "");
-    setBucketNameValue(storageConfig?.bucketName || "");
-    setPublicBaseUrlValue(storageConfig?.publicBaseUrl || "");
-    setAccessKeyIdValue("");
-    setSecretAccessKeyValue("");
-  }, [storageConfig]);
 
   const technicalItems = [
     {
@@ -419,6 +294,53 @@ export default function SettingsPage() {
               </ul>
             </Banner>
           )}
+
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">
+                  Billing
+                </Text>
+                <Text as="p" tone="subdued">
+                  Your app subscription controls access to uploads, delivery,
+                  and fulfillment tools for this store.
+                </Text>
+              </BlockStack>
+              <Badge
+                tone={
+                  billingSummary.status === "active"
+                    ? "success"
+                    : billingSummary.status === "error"
+                      ? "critical"
+                      : billingSummary.status === "inactive"
+                        ? "attention"
+                        : "info"
+                }
+              >
+                {billingSummary.status === "active"
+                  ? "Active"
+                  : billingSummary.status === "inactive"
+                    ? "Needs subscription"
+                    : billingSummary.status === "error"
+                      ? "Needs attention"
+                      : "Pre-launch"}
+              </Badge>
+            </InlineStack>
+
+            <Text as="p" tone="subdued">
+              {billingSummary.message}
+            </Text>
+
+            <InlineStack gap="300">
+              {billingSummary.pricingUrl ? (
+                <Button url={billingSummary.pricingUrl} target="_top">
+                  Open pricing page
+                </Button>
+              ) : null}
+            </InlineStack>
+          </BlockStack>
+        </Card>
 
         <Card>
           <BlockStack gap="400">
@@ -600,8 +522,8 @@ export default function SettingsPage() {
                   Storage and delivery
                 </Text>
                 <Text as="p" tone="subdued">
-                  Choose where high-quality audio files live and keep delivery
-                  storage healthy.
+                  Confirm that this shop is ready for uploads and automated
+                  delivery.
                 </Text>
               </BlockStack>
               <Badge
@@ -618,32 +540,22 @@ export default function SettingsPage() {
             </InlineStack>
 
             <Form method="post">
-              <input type="hidden" name="intent" value="save_mode" />
+              <input
+                type="hidden"
+                name="intent"
+                value="enable_managed_storage"
+              />
               <BlockStack gap="300">
-                <label>
-                  <input
-                    type="radio"
-                    name="mode"
-                    value="self_managed"
-                    defaultChecked={selectedMode === "self_managed"}
-                  />{" "}
-                  Self-managed
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="mode"
-                    value="managed"
-                    defaultChecked={selectedMode !== "self_managed"}
-                  />{" "}
-                  Managed by Producer Launchpad
-                </label>
                 <Text as="p" tone="subdued">
-                  Switching mode does not migrate existing files automatically.
+                  Upload through the app and delivery files are prepared
+                  automatically for this shop. Storage allowance comes from the
+                  active app plan.
                 </Text>
                 <InlineStack gap="300">
                   <Button submit loading={isSubmitting}>
-                    Save mode
+                    {storageConfig?.status === "connected"
+                      ? "Refresh storage status"
+                      : "Enable storage"}
                   </Button>
                 </InlineStack>
               </BlockStack>
@@ -651,134 +563,18 @@ export default function SettingsPage() {
           </BlockStack>
         </Card>
 
-        {selectedMode === "self_managed" ? (
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Connect your storage
-              </Text>
-
-              <Form method="post">
-                <FormLayout>
-                  <input type="hidden" name="mode" value="self_managed" />
-                  <Select
-                    label="Provider"
-                    options={providerOptions}
-                    name="provider"
-                    value="r2"
-                    onChange={() => {}}
-                    disabled
-                  />
-
-                  <TextField
-                    label="Account ID"
-                    name="accountId"
-                    autoComplete="off"
-                    value={accountIdValue}
-                    onChange={setAccountIdValue}
-                  />
-                  <TextField
-                    label="Bucket Name"
-                    name="bucketName"
-                    autoComplete="off"
-                    value={bucketNameValue}
-                    onChange={setBucketNameValue}
-                  />
-                  <TextField
-                    label="Public Base URL"
-                    name="publicBaseUrl"
-                    autoComplete="off"
-                    value={publicBaseUrlValue}
-                    onChange={setPublicBaseUrlValue}
-                    helpText="Used to generate file links, for example https://pub-xxxx.r2.dev"
-                  />
-                  <TextField
-                    label="Access Key ID"
-                    name="accessKeyId"
-                    autoComplete="off"
-                    value={accessKeyIdValue}
-                    onChange={setAccessKeyIdValue}
-                    placeholder={
-                      storageConfig?.maskedAccessKeyId
-                        ? `Current: ${storageConfig.maskedAccessKeyId}`
-                        : "Enter access key ID"
-                    }
-                    helpText={
-                      storageConfig?.maskedAccessKeyId
-                        ? "Leave blank to keep current key."
-                        : undefined
-                    }
-                  />
-                  <TextField
-                    label="Secret Access Key"
-                    name="secretAccessKey"
-                    type="password"
-                    autoComplete="off"
-                    value={secretAccessKeyValue}
-                    onChange={setSecretAccessKeyValue}
-                    placeholder="Enter secret access key"
-                    helpText="Leave blank to keep current secret."
-                  />
-
-                  <button
-                    ref={testConnectionSubmitRef}
-                    type="submit"
-                    name="intent"
-                    value="test_r2_connection"
-                    style={{ display: "none" }}
-                  />
-                  <button
-                    ref={saveStorageSubmitRef}
-                    type="submit"
-                    name="intent"
-                    value="save_self_managed"
-                    style={{ display: "none" }}
-                  />
-
-                  <InlineStack gap="300">
-                    <Button
-                      onClick={() => testConnectionSubmitRef.current?.click()}
-                      loading={isSubmitting}
-                    >
-                      Test connection
-                    </Button>
-                    <Button
-                      variant="primary"
-                      onClick={() => saveStorageSubmitRef.current?.click()}
-                      loading={isSubmitting}
-                    >
-                      Save storage
-                    </Button>
-                  </InlineStack>
-                </FormLayout>
-              </Form>
-
-              {actionData?.testResult?.ok && (
-                <Banner title="Connected" tone="success">
-                  <p>{actionData.testResult.message}</p>
-                </Banner>
-              )}
-
-              {actionData?.testResult && !actionData.testResult.ok && (
-                <Banner title="Connection failed" tone="critical">
-                  <p>{actionData.testResult.message}</p>
-                </Banner>
-              )}
-            </BlockStack>
-          </Card>
-        ) : (
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">
-                Managed storage
-              </Text>
-              <Text as="p" tone="subdued">
-                Producer Launchpad will manage private file storage for this
-                shop.
-              </Text>
-            </BlockStack>
-          </Card>
-        )}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">
+              Included storage
+            </Text>
+            <Text as="p" tone="subdued">
+              Merchants upload through Producer Launchpad and files are stored
+              behind the scenes for delivery. Storage allowance depends on the
+              active app plan, so there is nothing extra to configure here.
+            </Text>
+          </BlockStack>
+        </Card>
 
         <Card>
           <BlockStack gap="400">
