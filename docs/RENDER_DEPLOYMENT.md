@@ -61,10 +61,11 @@ Set these in Render:
 - `SHOPIFY_APP_URL=https://YOUR-APP-HOST`
 - `SHOPIFY_APP_SCOPES=read_products,write_products,read_publications,write_publications,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_orders,write_app_proxy`
 - `SESSION_SECRET=...`
-- `BUNNY_STORAGE_ZONE=...`
-- `BUNNY_STORAGE_PASSWORD=...`
-- `BUNNY_PULL_ZONE=...`
-- `BUNNY_REGION=...`
+- `CF_R2_ACCOUNT_ID=...`
+- `CF_R2_BUCKET_NAME=...`
+- `CF_R2_ACCESS_KEY_ID=...`
+- `CF_R2_SECRET_ACCESS_KEY=...`
+- `CF_R2_PUBLIC_BASE_URL=...`
 - `RESEND_API_KEY=...`
 - `DELIVERY_EMAIL_FROM=Producer Launchpad <downloads@YOUR-DOMAIN>`
 - `DELIVERY_EMAIL_REPLY_TO=newradio.sound@gmail.com`
