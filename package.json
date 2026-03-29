@@ -4,7 +4,7 @@
   "description": "Shopify Embedded App for music producers to upload beats with automatic metafield configuration",
   "private": true,
   "scripts": {
-    "build": "remix build",
+    "build": "remix vite:build",
     "dev": "shopify app dev",
     "dev:web": "sh -c 'remix vite:dev --host 0.0.0.0 --port ${PORT:-5173}'",
     "push": "shopify app push",
@@ -12,7 +12,7 @@
     "deploy": "shopify app deploy",
     "config:use": "shopify app config use",
     "env": "shopify app env",
-    "start": "remix-serve ./build/server/index.js",
+    "start": "HOST=0.0.0.0 remix-serve ./build/server/index.js",
     "docker-start": "npm run setup && npm run start",
     "setup": "prisma generate && prisma db push",
     "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
