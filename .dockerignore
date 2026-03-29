@@ -1,0 +1,13 @@
+.git
+.DS_Store
+.cache
+.shopify
+node_modules
+build
+coverage
+*.log
+*.sqlite
+*.db
+.env
+.env.*
+!.env.example
