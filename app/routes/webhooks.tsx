@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import crypto from "crypto";
 import prisma from "~/db.server";
+import { recordPrivacyDataRequest } from "~/services/privacyRequests.server";
 import { authenticate } from "~/shopify.server";
 
 function normalizeShopDomain(shop: string) {
@@ -25,6 +26,10 @@ async function deleteShopData(shop: string) {
   await prisma.session.deleteMany({
     where: { shop: normalizedShop },
   });
+
+  await prisma.privacyDataRequest.deleteMany({
+    where: { shop: normalizedShop },
+  });
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -41,32 +46,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     case "CUSTOMERS_DATA_REQUEST": {
-      const customerEmail =
-        typeof payload === "object" &&
-        payload !== null &&
-        "customer" in payload &&
-        payload.customer &&
-        typeof payload.customer === "object" &&
-        "email" in payload.customer
-          ? String(payload.customer.email || "")
-          : "";
-
-      const matchingRecords = customerEmail
-        ? await prisma.deliveryAccess.findMany({
-            where: {
-              shop: normalizedShop,
-              customerEmail,
-            },
-            select: {
-              id: true,
-              orderId: true,
-              customerEmail: true,
-            },
-          })
-        : [];
+      const requestResult = await recordPrivacyDataRequest(
+        normalizedShop,
+        payload as Record<string, unknown>,
+      );
 
       console.log(
-        `Customer data request for ${normalizedShop}: ${matchingRecords.length} delivery record(s) matched`,
+        `Customer data request for ${normalizedShop}: stored request ${requestResult.privacyRequest.shopifyDataRequestId} with ${requestResult.matchingOrders.length} matched order(s)`,
       );
       break;
     }

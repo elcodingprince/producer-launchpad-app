@@ -1,3 +1,6 @@
+/* eslint-env node */
+/* eslint-disable no-unused-vars */
+
 const fs = require('fs');
 let content = fs.readFileSync('app/components/LicenseFileAssignment.tsx', 'utf8');
 

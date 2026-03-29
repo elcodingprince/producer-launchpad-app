@@ -1,4 +1,4 @@
-import { createShopifyClient, ShopifyClient } from "./shopify";
+import { createShopifyClient, type ShopifyClient } from "./shopify";
 import { normalizeTemplateFields } from "./licenses/archetypes";
 import { buildProductPreviewPlaybackPath } from "./appUrl.server";
 

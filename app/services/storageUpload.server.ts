@@ -50,7 +50,6 @@ async function uploadSelfManagedR2(
 
   for (const fileData of files) {
     const { file, fileType, originalName } = fileData;
-    const extension = originalName.split('.').pop() || '';
     const safeName = originalName.replace(/[^a-zA-Z0-9.-]/g, '_');
     const key = buildNamespacedKey(shop, beatSlug, `${Date.now()}-${safeName}`);
     

@@ -1,7 +1,9 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { getStarterPresetVersion } from "~/services/metafieldSetup";
-import { createMetafieldSetupService } from "~/services/metafieldSetup";
+import {
+  createMetafieldSetupService,
+  getStarterPresetVersion,
+} from "~/services/metafieldSetup";
 import {
   buildDerivedLicenseFields,
   resolveOfferArchetype,

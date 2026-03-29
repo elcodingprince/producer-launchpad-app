@@ -23,8 +23,7 @@ function ThankYouBlock() {
   const sessionToken = useSessionToken();
   const settings = useSettings<{app_url?: string}>();
   const api = useApi<'purchase.thank-you.block.render'>();
-  const orderConfirmation =
-    'orderConfirmation' in api ? useSubscription(api.orderConfirmation) : undefined;
+  const orderConfirmation = useSubscription(api.orderConfirmation);
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);

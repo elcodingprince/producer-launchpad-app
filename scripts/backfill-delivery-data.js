@@ -1,3 +1,5 @@
+/* eslint-env node */
+
 const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 

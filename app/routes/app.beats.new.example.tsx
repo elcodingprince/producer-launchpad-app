@@ -10,7 +10,7 @@ import {
   Card,
   BlockStack,
   Button,
-  Banner,
+  Text,
 } from '@shopify/polaris';
 import { authenticate } from '../shopify.server';
 import { LicenseFileAssignment } from '../components/LicenseFileAssignment';
@@ -32,10 +32,7 @@ export async function action({ request }) {
   
   if (intent === 'create-beat') {
     const beatData = JSON.parse(formData.get('beatData'));
-    
-    // Validate that each license tier has files
-    const { title, bpm, key, licenseFiles, uploadedFiles } = beatData;
-    
+
     // Create the beat product with file assignments
     const result = await createBeatWithLicenseFiles({
       admin,

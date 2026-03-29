@@ -11,7 +11,7 @@ export default function AppLayout() {
     <AppProvider
       apiKey={rootData?.apiKey || ""}
       i18n={enTranslations}
-      isEmbeddedApp={false}
+      isEmbeddedApp
     >
       <AppChrome />
       <Outlet />
@@ -57,6 +57,7 @@ function AppChrome() {
         <a href="/app/beats">Beats</a>
         <a href="/app/deliveries">Deliveries</a>
         <a href="/app/licenses">Licenses</a>
+        <a href="/app/privacy-requests">Privacy</a>
         <a href="/app/settings">Settings</a>
       </NavMenu>
     </>

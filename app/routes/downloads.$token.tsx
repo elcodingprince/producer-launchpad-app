@@ -150,8 +150,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
               mapping.beatFile,
           )
           .filter((file: BeatFile) => isBaseAudioDeliverable(file));
-        const stemsRequirementMissing =
-          stemsIncludedInOrder && !Boolean(stemsFile);
+        const stemsRequirementMissing = stemsIncludedInOrder && !stemsFile;
         const deliveryFormats = resolvedLicense
           ? getDeliveredFormatLabelsForOrder({
               fileFormats: resolvedLicense.fileFormats,
