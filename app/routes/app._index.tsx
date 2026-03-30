@@ -36,18 +36,10 @@ import { isResendWebhookTrackingEnabled } from "~/services/email.server";
 import { createMetafieldSetupService } from "~/services/metafieldSetup";
 import { createProductCreatorService } from "~/services/productCreator";
 import { getAppReadiness } from "~/services/appReadiness.server";
-import {
-  getResolvedR2Credentials,
-  markStorageError,
-  parseStorageMode,
-  saveSelfManagedConfig,
-  setStorageMode,
-} from "~/services/storageConfig.server";
-import { testR2Connection } from "~/services/r2.server";
+import { setStorageMode } from "~/services/storageConfig.server";
 
 type ActionData = {
   error?: string;
-  storageError?: string | null;
 };
 
 type AdminClient = {
@@ -332,52 +324,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const initialLicensorName = String(
     formData.get("initialLicensorName") || "",
   ).trim();
-  const mode =
-    parseStorageMode(String(formData.get("mode") || "managed")) || "managed";
-
-  let storageError: string | null = null;
-
-  if (mode === "self_managed") {
-    const accountId = String(formData.get("accountId") || "").trim();
-    const bucketName = String(formData.get("bucketName") || "").trim();
-    const publicBaseUrl = String(formData.get("publicBaseUrl") || "").trim();
-    const accessKeyIdInput = String(formData.get("accessKeyId") || "").trim();
-    const secretAccessKeyInput = String(
-      formData.get("secretAccessKey") || "",
-    ).trim();
-
-    const existing = await getResolvedR2Credentials(shop);
-    const accessKeyId = accessKeyIdInput || existing?.accessKeyId || "";
-    const secretAccessKey =
-      secretAccessKeyInput || existing?.secretAccessKey || "";
-
-    const testResult = await testR2Connection({
-      accountId,
-      bucketName,
-      accessKeyId,
-      secretAccessKey,
-    });
-
-    if (!testResult.ok) {
-      await markStorageError(
-        shop,
-        testResult.error || "Connection failed",
-        testResult.errorType || "unknown",
-      );
-      storageError = testResult.error || "Connection failed";
-    } else {
-      await saveSelfManagedConfig({
-        shop,
-        accountId,
-        bucketName,
-        publicBaseUrl,
-        accessKeyId,
-        secretAccessKey,
-      });
-    }
-  } else {
-    await setStorageMode(shop, "managed");
-  }
+  await setStorageMode(shop, "managed");
 
   try {
     const setupResult = await setupService.runFullSetup({
@@ -385,20 +332,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       initialLicensorName,
     });
 
-    if (setupResult.success && !storageError) {
+    if (setupResult.success) {
       return redirect("/app");
     }
 
     return json<ActionData>({
       error: setupResult.success ? undefined : "Setup finished with issues.",
-      storageError,
     });
   } catch (error) {
     console.error("Home setup error:", error);
     return json<ActionData>(
       {
         error: error instanceof Error ? error.message : "Setup failed",
-        storageError,
       },
       { status: 500 },
     );
@@ -431,28 +376,9 @@ export default function Dashboard() {
         (setupDefaults.initialProducerName || ""),
     ),
   );
-  const [storageMode, setStorageModeState] = useState(
-    readiness?.storageConfig?.mode || "managed",
-  );
-  const [accountId, setAccountId] = useState(
-    readiness?.storageConfig?.accountId || "",
-  );
-  const [bucketName, setBucketName] = useState(
-    readiness?.storageConfig?.bucketName || "",
-  );
-  const [publicBaseUrl, setPublicBaseUrl] = useState(
-    readiness?.storageConfig?.publicBaseUrl || "",
-  );
-  const [accessKeyId, setAccessKeyId] = useState("");
-  const [secretAccessKey, setSecretAccessKey] = useState("");
-
   useEffect(() => {
     if (readiness) {
       setStep(getInitialStep(readiness.nextStep));
-      setStorageModeState(readiness.storageConfig?.mode || "managed");
-      setAccountId(readiness.storageConfig?.accountId || "");
-      setBucketName(readiness.storageConfig?.bucketName || "");
-      setPublicBaseUrl(readiness.storageConfig?.publicBaseUrl || "");
       setInitialProducerName(setupDefaults?.initialProducerName || "");
       setInitialLicensorName(
         setupDefaults?.initialLicensorName ||
@@ -513,14 +439,6 @@ export default function Dashboard() {
             <Layout.Section>
               <Banner title="Setup needs attention" tone="critical">
                 <p>{actionData.error}</p>
-              </Banner>
-            </Layout.Section>
-          )}
-
-          {actionData?.storageError && (
-            <Layout.Section>
-              <Banner title="Storage connection failed" tone="critical">
-                <p>{actionData.storageError}</p>
               </Banner>
             </Layout.Section>
           )}
@@ -731,140 +649,23 @@ export default function Dashboard() {
                           Delivery storage
                         </Text>
                         <Text variant="bodyLg" as="p" tone="subdued">
-                          Choose where Producer Launchpad should keep the
-                          high-quality files it delivers after purchase.
+                          Upload through Producer Launchpad and your delivery
+                          files will be stored automatically for this shop.
                         </Text>
                       </BlockStack>
 
-                      <BlockStack gap="400">
-                        <div
-                          style={{
-                            border:
-                              storageMode === "managed"
-                                ? "2px solid var(--p-color-border-interactive)"
-                                : "1px solid var(--p-color-border)",
-                            borderRadius: "8px",
-                            padding: "16px",
-                            cursor: "pointer",
-                          }}
-                          onClick={() => setStorageModeState("managed")}
-                        >
-                          <InlineStack gap="300" blockAlign="start">
-                            <input
-                              type="radio"
-                              name="mode"
-                              value="managed"
-                              checked={storageMode === "managed"}
-                              readOnly
-                              style={{ marginTop: "4px" }}
-                            />
-                            <BlockStack gap="100">
-                              <Text as="p" variant="bodyLg" fontWeight="bold">
-                                Managed by Producer Launchpad
-                              </Text>
-                              <Text as="p" tone="subdued">
-                                Recommended if you want the fastest path to
-                                automated delivery.
-                              </Text>
-                            </BlockStack>
-                          </InlineStack>
-                        </div>
-
-                        <div
-                          style={{
-                            border:
-                              storageMode === "self_managed"
-                                ? "2px solid var(--p-color-border-interactive)"
-                                : "1px solid var(--p-color-border)",
-                            borderRadius: "8px",
-                            padding: "16px",
-                            cursor: "pointer",
-                          }}
-                          onClick={() => setStorageModeState("self_managed")}
-                        >
-                          <InlineStack gap="300" blockAlign="start">
-                            <input
-                              type="radio"
-                              name="mode"
-                              value="self_managed"
-                              checked={storageMode === "self_managed"}
-                              readOnly
-                              style={{ marginTop: "4px" }}
-                            />
-                            <BlockStack gap="100">
-                              <Text as="p" variant="bodyLg" fontWeight="bold">
-                                Connect my own Cloudflare R2 bucket
-                              </Text>
-                              <Text as="p" tone="subdued">
-                                Best if you already manage your own storage
-                                infrastructure.
-                              </Text>
-                            </BlockStack>
-                          </InlineStack>
-                        </div>
-                      </BlockStack>
-
-                      {storageMode === "self_managed" && (
-                        <Box paddingBlockStart="200" paddingInlineStart="400">
-                          <FormLayout>
-                            <TextField
-                              label="Account ID"
-                              name="accountId"
-                              autoComplete="off"
-                              value={accountId}
-                              onChange={setAccountId}
-                              requiredIndicator
-                            />
-                            <TextField
-                              label="Bucket name"
-                              name="bucketName"
-                              autoComplete="off"
-                              value={bucketName}
-                              onChange={setBucketName}
-                              requiredIndicator
-                            />
-                            <TextField
-                              label="Public base URL"
-                              name="publicBaseUrl"
-                              autoComplete="off"
-                              value={publicBaseUrl}
-                              onChange={setPublicBaseUrl}
-                              helpText="Example: https://pub-xxxx.r2.dev"
-                            />
-                            <TextField
-                              label="Access key ID"
-                              name="accessKeyId"
-                              autoComplete="off"
-                              value={accessKeyId}
-                              onChange={setAccessKeyId}
-                              placeholder={
-                                storageConfig?.maskedAccessKeyId
-                                  ? `Current: ${storageConfig.maskedAccessKeyId}`
-                                  : ""
-                              }
-                              requiredIndicator={
-                                !storageConfig?.maskedAccessKeyId
-                              }
-                            />
-                            <TextField
-                              label="Secret access key"
-                              name="secretAccessKey"
-                              type="password"
-                              autoComplete="off"
-                              value={secretAccessKey}
-                              onChange={setSecretAccessKey}
-                              placeholder={
-                                storageConfig?.maskedAccessKeyId
-                                  ? "Leave blank to keep current"
-                                  : ""
-                              }
-                              requiredIndicator={
-                                !storageConfig?.maskedAccessKeyId
-                              }
-                            />
-                          </FormLayout>
-                        </Box>
-                      )}
+                      <Card>
+                        <BlockStack gap="200">
+                          <Text as="h2" variant="headingMd">
+                            Included with your app plan
+                          </Text>
+                          <Text as="p" tone="subdued">
+                            There is nothing extra to connect here. Beat files
+                            are uploaded inside the app and prepared for secure
+                            post-purchase delivery automatically.
+                          </Text>
+                        </BlockStack>
+                      </Card>
 
                       <Box paddingBlockStart="200">
                         <InlineStack align="space-between">
