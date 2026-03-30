@@ -145,6 +145,9 @@ export async function generatePdfFromHtml(
 
     const chromeArgs = [
       "--headless=new",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
       "--disable-gpu",
       "--disable-background-networking",
       "--disable-component-update",

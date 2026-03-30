@@ -8,7 +8,7 @@ A Shopify Embedded App built with Remix that allows music producers to upload be
 - **Drag-and-Drop Upload**: Easy file upload for MP3 previews, WAV files, stems ZIP, and cover art
 - **License Management**: Create and manage beat licensing tiers (Basic, Premium, Unlimited)
 - **Polaris UI**: Native Shopify Admin interface using Polaris design system
-- **BunnyCDN Integration**: Fast file storage and delivery for audio files
+- **Cloudflare R2 Integration**: Managed file storage and delivery for audio files
 - **GraphQL API**: Direct Shopify Admin API integration
 
 ## Prerequisites
@@ -16,7 +16,7 @@ A Shopify Embedded App built with Remix that allows music producers to upload be
 - Node.js 18.20 or 20.10+
 - npm or yarn
 - Shopify Partner account
-- BunnyCDN account (for file storage)
+- Cloudflare account with R2 access (for file storage)
 - A development store (for testing)
 
 ## Environment Variables
@@ -27,16 +27,17 @@ Copy `.env.example` to `.env` and fill in your values:
 # Shopify API credentials - Get from Shopify Partner Dashboard
 SHOPIFY_API_KEY=your_api_key
 SHOPIFY_API_SECRET=your_api_secret
-SHOPIFY_APP_URL=https://your-app-url.com
+SHOPIFY_APP_URL=https://producer-launchpad-app.fly.dev
 
 # Session secret - Generate random string (32+ chars)
 SESSION_SECRET=your_random_secret
 
-# BunnyCDN credentials - Get from BunnyCDN dashboard
-BUNNY_STORAGE_ZONE=your-zone
-BUNNY_STORAGE_PASSWORD=your-password
-BUNNY_PULL_ZONE=your-zone.b-cdn.net
-BUNNY_REGION=ny
+# Cloudflare R2 credentials
+CF_R2_ACCOUNT_ID=your-account-id
+CF_R2_BUCKET_NAME=your-bucket-name
+CF_R2_ACCESS_KEY_ID=your-access-key-id
+CF_R2_SECRET_ACCESS_KEY=your-secret-access-key
+CF_R2_PUBLIC_BASE_URL=https://your-public-files-domain.com
 ```
 
 ## Setup Instructions
@@ -44,7 +45,6 @@ BUNNY_REGION=ny
 ### 1. Install Dependencies
 
 ```bash
-cd builds/solution_002/app
 npm install
 ```
 
@@ -55,11 +55,11 @@ npm install
 3. Copy the API key and secret to your `.env` file
 4. Update `shopify.app.toml` with your app details
 
-### 3. Configure BunnyCDN
+### 3. Configure Cloudflare R2
 
-1. Create a storage zone at [BunnyCDN](https://bunny.net)
-2. Create a pull zone linked to your storage
-3. Copy the storage password and zone names to `.env`
+1. Create an R2 bucket in your Cloudflare account
+2. Create an R2 access key with bucket access
+3. Add the R2 credentials and public base URL to `.env`
 
 ### 4. Run Locally
 
@@ -100,7 +100,7 @@ app/
 │   ├── services/         # Business logic
 │   │   ├── shopify.ts         # GraphQL client
 │   │   ├── metafieldSetup.ts  # Auto-setup logic
-│   │   ├── bunnyCdn.ts        # File upload service
+│   │   ├── r2.server.ts       # Cloudflare R2 helpers
 │   │   └── productCreator.ts  # Product creation
 │   ├── root.tsx          # App root with Polaris
 │   ├── entry.client.tsx  # Client entry
@@ -174,20 +174,14 @@ The setup wizard automatically creates:
 
 ## Deployment
 
-### Deploy to Vercel
+### Deploy to Fly.io
 
-```bash
-# Install Vercel CLI
-npm i -g vercel
+Use the deployment guide in [docs/FLY_DEPLOYMENT.md](/Users/payan/.codex/worktrees/0468/producer-launchpad-app/docs/FLY_DEPLOYMENT.md).
 
-# Deploy
-vercel --prod
-```
-
-Update `shopify.app.toml` with your production URL:
+Current production host:
 
 ```toml
-application_url = "https://your-app.vercel.app"
+application_url = "https://producer-launchpad-app.fly.dev"
 ```
 
 ### Environment Variables
@@ -198,10 +192,11 @@ Add these to your hosting platform:
 - `SHOPIFY_API_SECRET`
 - `SHOPIFY_APP_URL`
 - `SESSION_SECRET`
-- `BUNNY_STORAGE_ZONE`
-- `BUNNY_STORAGE_PASSWORD`
-- `BUNNY_PULL_ZONE`
-- `BUNNY_REGION`
+- `CF_R2_ACCOUNT_ID`
+- `CF_R2_BUCKET_NAME`
+- `CF_R2_ACCESS_KEY_ID`
+- `CF_R2_SECRET_ACCESS_KEY`
+- `CF_R2_PUBLIC_BASE_URL`
 
 ### Submit to Shopify App Store
 
@@ -229,8 +224,8 @@ Add these to your hosting platform:
 - Check that the shop has granted all requested permissions
 
 ### File uploads fail
-- Verify BunnyCDN credentials are correct
-- Check storage zone exists and is accessible
+- Verify Cloudflare R2 credentials are correct
+- Check the R2 bucket exists and is accessible
 - Ensure file sizes are under limits (500MB max)
 
 ### Products created but not showing in theme

@@ -1,13 +1,11 @@
-import { useEffect } from "react";
-import { useLocation, useNavigate } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const url = new URL(request.url);
+  throw redirect(`/app${url.search || ""}`);
+};
 
 export default function IndexRedirect() {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  useEffect(() => {
-    navigate(`/app${location.search || ""}`, { replace: true });
-  }, [navigate, location.search]);
-
   return null;
 }
