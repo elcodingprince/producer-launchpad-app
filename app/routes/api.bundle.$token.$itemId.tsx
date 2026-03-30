@@ -7,7 +7,6 @@ import type {
 } from "@prisma/client";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { PassThrough, Readable } from "node:stream";
-import type { ReadableStream } from "node:stream/web";
 import prisma from "~/db.server";
 import { parseExecutedAgreementLicense } from "~/services/executedAgreements.server";
 import { downloadR2Object } from "~/services/r2.server";
@@ -58,7 +57,7 @@ function buildBundleFilename(item: OrderItem) {
 
 interface BundleSource {
   file: BeatFile;
-  body: ReadableStream;
+  body: Buffer;
 }
 
 function mergeUniqueFiles(files: BeatFile[]) {
@@ -211,7 +210,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
 
       sources.push({
         file,
-        body: upstream.body as ReadableStream,
+        body: Buffer.from(await upstream.arrayBuffer()),
       });
     }
   } catch (error) {
@@ -237,7 +236,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   void (async () => {
     try {
       for (const source of sources) {
-        archive.append(Readable.fromWeb(source.body), {
+        archive.append(source.body, {
           name: source.file.filename,
         });
       }

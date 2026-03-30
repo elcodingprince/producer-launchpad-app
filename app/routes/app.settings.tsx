@@ -425,6 +425,32 @@ export default function SettingsPage() {
             <InlineStack align="space-between" blockAlign="center">
               <BlockStack gap="100">
                 <Text as="h2" variant="headingMd">
+                  Privacy and compliance
+                </Text>
+                <Text as="p" tone="subdued">
+                  Review Shopify privacy requests and keep your public-app
+                  compliance workflow in one place.
+                </Text>
+              </BlockStack>
+              <Badge tone="info">Operational</Badge>
+            </InlineStack>
+
+            <InlineStack align="space-between" blockAlign="center" gap="300">
+              <Text as="p" tone="subdued">
+                Customer data requests are stored in an internal queue so you
+                can review exports and mark them fulfilled when Shopify sends a
+                compliance webhook.
+              </Text>
+              <Button url="/app/privacy-requests">Open privacy queue</Button>
+            </InlineStack>
+          </BlockStack>
+        </Card>
+
+        <Card>
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">
                   Legal identity
                 </Text>
                 <Text as="p" tone="subdued">

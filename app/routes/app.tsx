@@ -57,7 +57,6 @@ function AppChrome() {
         <a href="/app/beats">Beats</a>
         <a href="/app/deliveries">Deliveries</a>
         <a href="/app/licenses">Licenses</a>
-        <a href="/app/privacy-requests">Privacy</a>
         <a href="/app/settings">Settings</a>
       </NavMenu>
     </>
