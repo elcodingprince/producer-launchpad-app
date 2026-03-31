@@ -6,19 +6,21 @@ Submit `Producer Launchpad` for a public Shopify listing with limited visibility
 
 ## Current Verdict
 
-Current status: not ready to submit.
+Current status: almost ready to submit.
 
 Reason:
 
-- the active app config still points at placeholder URLs
-- the privacy compliance flow for `customers/data_request` is incomplete
-- the embedded app shell is configured inconsistently
-- requested scopes look broader than the current code appears to require
-- listing and policy assets are not present in this repo, so they still need explicit verification before submission
+- ✅ the active app config points at production URLs
+- ✅ the privacy compliance flows for `customers/data_request`, `customers/redact`, and `shop/redact` are fully implemented
+- ✅ the embedded app shell is configured consistently
+- ✅ requested scopes have been reduced to match actual code usage (`write_orders` has been removed)
+- ⚠️ listing and policy assets are managed in the landing page repo, requiring final Partner Dashboard verification
 
 ## Launch Blockers
 
 ### 1. Fix production app URLs and redirects
+
+**Status: Complete** - Configs now correctly point to the production app.
 
 Files to review:
 
@@ -41,7 +43,7 @@ Definition of done:
 
 ### 2. Complete privacy compliance for `customers/data_request`
 
-File to review:
+**Status: Complete** - Webhook logic records requests and handles data redactions appropriately.
 
 - `app/routes/webhooks.tsx`
 
@@ -63,6 +65,8 @@ Definition of done:
 
 ### 3. Fix embedded app configuration mismatch
 
+**Status: Complete** - `isEmbeddedApp` is now correctly enabled.
+
 File to review:
 
 - `app/routes/app.tsx`
@@ -83,7 +87,7 @@ Definition of done:
 
 ### 4. Reduce scopes to least privilege
 
-Files to review:
+**Status: Complete** - `write_orders` and other unused scopes have been effectively removed from app configuration.
 
 - `shopify.app.toml`
 - `app/shopify.server.ts`
@@ -109,6 +113,8 @@ Definition of done:
 
 ### 5. Verify protected customer data access request
 
+**Status: Pending** - Needs verification in the Partner Dashboard directly.
+
 Because the app stores customer name/email and order-related records, confirm the Partner Dashboard protected customer data request is complete and justified.
 
 Actions:
@@ -118,6 +124,8 @@ Actions:
 - prepare a clear explanation of why each field is necessary
 
 ### 6. Add and verify listing/legal assets
+
+**Status: Complete (Hosted Externally)** - Terms of service and privacy policies are set up on the landing page site wrapper.
 
 These may live outside the repo, but they must be ready before submission.
 
