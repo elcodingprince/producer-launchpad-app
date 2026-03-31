@@ -342,10 +342,6 @@ async function getActiveBeats(
                           variant.metafield.reference.fields,
                           "offer_archetype",
                         ),
-                        licenseId: readMetaobjectField(
-                          variant.metafield.reference.fields,
-                          "license_id",
-                        ),
                         legalTemplateFamily: readMetaobjectField(
                           variant.metafield.reference.fields,
                           "legal_template_family",
@@ -521,7 +517,7 @@ async function getActiveBeats(
           ...beat.licenseTemplateIds,
           ...offers
             .map((offer) => offer.licenseMetaobjectId)
-            .filter((licenseId): licenseId is string => Boolean(licenseId)),
+            .filter((templateId): templateId is string => Boolean(templateId)),
         ]),
       ),
       offers,

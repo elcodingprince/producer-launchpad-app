@@ -1,5 +1,15 @@
 # Producer Launchpad Launch Plan
 
+## Status
+
+- `Active` as of March 29, 2026
+- phase progress:
+  - Phase 1 `Production Foundation`: `In progress`
+  - Phase 2 `Merchant Operations Minimum`: `Substantially complete in app code`
+  - Phase 3 `Delivery Hardening`: `Substantially complete in app code`
+  - Phase 4 `Production Validation`: `Pending hosted-environment testing`
+  - Phase 5 `Launch Freeze`: `Not started`
+
 ## Purpose
 
 This is the single source of truth for the work between today's state and launch.

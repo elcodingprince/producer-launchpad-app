@@ -1,5 +1,12 @@
 # License Template Phased Refactor Plan
 
+## Status
+
+- `Completed` as of March 29, 2026
+- phases 1 through 8 are complete in the prelaunch codebase
+- no existing merchant stores required migration when this was finished
+- no remaining launch work is tracked in this document
+
 This plan replaces the current "fully editable live template" model with a safer
 three-layer split:
 
@@ -136,7 +143,7 @@ Implementation:
   - `legal_template_family`
   - `file_formats`
 - remove stems add-on availability from the live template edit surface
-- keep `license_id` only as a compatibility mirror for now
+- keep the legacy template identifier only as a compatibility mirror for now
 - update app readers so they prefer archetype-derived values over stale editable
   values
 
@@ -332,7 +339,7 @@ Implementation:
 Important:
 
 - this phase is the real "freeze"
-- `license_id` is not the freeze mechanism
+- the legacy template identifier is not the freeze mechanism
 - the immutable executed agreement record is the freeze mechanism
 
 Test guide:
@@ -412,7 +419,12 @@ Test guide:
 
 Goal:
 
-- fully transition away from merchant-managed `license_id`
+- fully transition away from the legacy merchant-managed template identifier
+
+Status:
+
+- completed on March 28, 2026 for the prelaunch codebase
+- no existing merchant stores needed migration at the time this was completed
 
 Implementation:
 
@@ -421,14 +433,25 @@ Implementation:
   - `offer_archetype` for template type
   - variant-level `stems_addon_enabled` for live stems offers
   - variant/product/order IDs for fulfillment and delivery
-- remove remaining runtime dependence on merchant-editable `license_id`
-- keep compatibility mirrors only where still strictly necessary
+- remove remaining runtime dependence on the legacy merchant-editable template identifier
+- remove the legacy identifier field from `beat_license` setup/seeding
+- use Shopify `beat_license.id` as the internal app key where a stable unique
+  template identifier is needed
+
+Completed outcome:
+
+- app runtime no longer depends on the legacy identifier
+- upload flow keys template state and variant mapping by Shopify metaobject ID
+- template creation and setup no longer seed the legacy identifier field
+- setup schema reconciliation removes the legacy identifier from existing
+  `beat_license` definitions if present
+- no Phase 8 follow-up work remains for launch in the current prelaunch state
 
 Test guide:
 
-1. Search the app and theme for remaining runtime `license_id` dependencies.
+1. Search the app and theme for remaining runtime legacy identifier dependencies.
 2. Confirm upload, storefront, agreement generation, and delivery still work
-   without exposing `license_id` in the editor.
+   without exposing the legacy identifier in the editor.
 
 ## Implementation Order
 

@@ -7,7 +7,6 @@ export type StemsPolicy =
 type OfferArchetypeConfig = {
   value: OfferArchetype;
   label: string;
-  systemId: string;
   legalTemplateFamily: OfferArchetype;
   fileFormats: string;
   stemsPolicy: StemsPolicy;
@@ -32,7 +31,6 @@ export type NormalizedTemplateLimitFields = {
 
 export type NormalizedTemplateFields = NormalizedTemplateLimitFields & {
   offerArchetype: OfferArchetype;
-  licenseId: string;
   legalTemplateFamily: OfferArchetype;
   fileFormats: string;
   stemsPolicy: StemsPolicy;
@@ -45,7 +43,6 @@ const OFFER_ARCHETYPE_CONFIG: Record<OfferArchetype, OfferArchetypeConfig> = {
   basic: {
     value: "basic",
     label: "Basic",
-    systemId: "basic",
     legalTemplateFamily: "basic",
     fileFormats: "MP3",
     stemsPolicy: "available_as_addon",
@@ -57,7 +54,6 @@ const OFFER_ARCHETYPE_CONFIG: Record<OfferArchetype, OfferArchetypeConfig> = {
   premium: {
     value: "premium",
     label: "Premium",
-    systemId: "premium",
     legalTemplateFamily: "premium",
     fileFormats: "MP3, WAV",
     stemsPolicy: "available_as_addon",
@@ -69,7 +65,6 @@ const OFFER_ARCHETYPE_CONFIG: Record<OfferArchetype, OfferArchetypeConfig> = {
   unlimited: {
     value: "unlimited",
     label: "Unlimited",
-    systemId: "unlimited",
     legalTemplateFamily: "unlimited",
     fileFormats: "MP3, WAV, STEMS",
     stemsPolicy: "included_by_default",
@@ -130,15 +125,11 @@ export function normalizeOfferArchetype(value?: string | null): OfferArchetype {
 
 export function resolveOfferArchetype(input: {
   offerArchetype?: string | null;
-  licenseId?: string | null;
   legalTemplateFamily?: string | null;
   handle?: string | null;
 }): OfferArchetype {
   const direct = normalizeOfferArchetype(input.offerArchetype);
   if (input.offerArchetype) return direct;
-
-  const fromLicenseId = normalizeOfferArchetype(input.licenseId);
-  if (input.licenseId) return fromLicenseId;
 
   const fromFamily = normalizeOfferArchetype(input.legalTemplateFamily);
   if (input.legalTemplateFamily) return fromFamily;
@@ -236,7 +227,6 @@ export function buildDerivedLicenseFields(
 
     return {
       offerArchetype: config.value,
-      licenseId: config.systemId,
       legalTemplateFamily: config.legalTemplateFamily,
       fileFormats: stemsIncludedByDefault ? "MP3, WAV, STEMS" : "MP3, WAV",
       stemsPolicy,
@@ -256,7 +246,6 @@ export function buildDerivedLicenseFields(
 
   return {
     offerArchetype: config.value,
-    licenseId: config.systemId,
     legalTemplateFamily: config.legalTemplateFamily,
     fileFormats: config.fileFormats,
     stemsPolicy: config.stemsPolicy,
@@ -268,7 +257,6 @@ export function buildDerivedLicenseFields(
 
 export function normalizeTemplateFields(input: {
   offerArchetype?: string | null;
-  licenseId?: string | null;
   legalTemplateFamily?: string | null;
   handle?: string | null;
   stemsPolicy?: string | null;
@@ -290,7 +278,6 @@ export function normalizeTemplateFields(input: {
 
   return {
     offerArchetype,
-    licenseId: derivedFields.licenseId,
     legalTemplateFamily: derivedFields.legalTemplateFamily,
     fileFormats: derivedFields.fileFormats,
     stemsPolicy: derivedFields.stemsPolicy,

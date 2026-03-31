@@ -1,5 +1,12 @@
 # Product Execution Plan
 
+## Status
+
+- `Archived / superseded` as of March 29, 2026
+- this document reflects an earlier product state and its detailed bug statuses below should be treated as historical
+- current IA/navigation work is tracked in [APP_IA_AND_HOME_REBUILD_PLAN.md](/Users/payan/producer-launchpad-app/APP_IA_AND_HOME_REBUILD_PLAN.md)
+- current launch-critical work is tracked in [LAUNCH_PLAN.md](/Users/payan/producer-launchpad-app/LAUNCH_PLAN.md)
+
 ## Scope and Intent
 - This is the single source of truth for current UX bugs, onboarding flow fixes, upload flow expectations, and technical implementation references.
 - It consolidates planning and reference content that was previously split across multiple markdown files.

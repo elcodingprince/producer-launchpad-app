@@ -5,7 +5,7 @@ export const keySchema = z
   .regex(/^[A-G](#)? (major|minor)$/i, "Key must be in the format 'C major' or 'C# minor'");
 
 export const licensePriceSchema = z.object({
-  licenseId: z.string().min(1, "License ID is required"),
+  templateId: z.string().min(1, "License template is required"),
   licenseGid: z.string().min(1, "License reference is required"),
   price: z.number().min(0.01, "Price must be greater than 0"),
 });

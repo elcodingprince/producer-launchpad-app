@@ -3,7 +3,7 @@ import { normalizeTemplateFields } from "./licenses/archetypes";
 import { buildProductPreviewPlaybackPath } from "./appUrl.server";
 
 export interface LicensePricing {
-  licenseId: string;
+  templateId: string;
   licenseGid: string;
   licenseName: string;
   price: number;
@@ -49,7 +49,7 @@ export class ProductCreatorService {
 
   async createBeatProduct(data: BeatProductData): Promise<{
     productId: string;
-    variants: Array<{ id: string; price: string; licenseId: string }>;
+    variants: Array<{ id: string; price: string; templateId: string }>;
   }> {
     // Build product metafields array
     const productMetafields: Array<{
@@ -102,7 +102,7 @@ export class ProductCreatorService {
 
     // Build variants array - one per license
     const variants = data.licenses.map((license) => ({
-      title: license.licenseName || license.licenseId,
+      title: license.licenseName || "License",
       price: license.price.toFixed(2),
       compareAtPrice: license.compareAtPrice
         ? license.compareAtPrice.toFixed(2)
@@ -168,7 +168,7 @@ export class ProductCreatorService {
       variants: product.variants.edges.map((edge, index) => ({
         id: edge.node.id,
         price: edge.node.price,
-        licenseId: data.licenses[index]?.licenseId || "",
+        templateId: data.licenses[index]?.templateId || "",
       })),
     };
   }
@@ -190,7 +190,6 @@ export class ProductCreatorService {
       id: string;
       handle: string;
       offerArchetype: string;
-      licenseId: string;
       licenseName: string;
       displayName: string;
       legalTemplateFamily: string;
@@ -216,7 +215,6 @@ export class ProductCreatorService {
       const fields = new Map(obj.fields.map((f) => [f.key, f.value]));
       const normalizedFields = normalizeTemplateFields({
         offerArchetype: fields.get("offer_archetype") || "",
-        licenseId: fields.get("license_id") || "",
         legalTemplateFamily: fields.get("legal_template_family") || "",
         handle: obj.handle,
         stemsPolicy: fields.get("stems_policy") || "",
@@ -230,7 +228,6 @@ export class ProductCreatorService {
         id: obj.id,
         handle: obj.handle,
         offerArchetype: normalizedFields.offerArchetype,
-        licenseId: normalizedFields.licenseId,
         licenseName: fields.get("license_name") || "",
         displayName: fields.get("license_name") || "",
         legalTemplateFamily: normalizedFields.legalTemplateFamily,

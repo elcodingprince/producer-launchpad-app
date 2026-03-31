@@ -1,5 +1,21 @@
 # Producer Launchpad App IA and Home Rebuild Plan
 
+## Status
+
+- `Mostly completed` as of March 29, 2026
+- completed in app code:
+  - shared readiness model
+  - Settings route and nav access
+  - Home split into `Get started` and `Overview`
+  - route guard cleanup to `/app` and `/app/settings`
+  - legacy `/app/setup` and `/app/storage` redirects
+  - Deliveries positioning as a post-purchase operations surface
+- remaining or deferred:
+  - dedicated nested license editor route
+  - deeper Beats <-> Licenses navigation polish
+  - final end-to-end QA pass
+- launch-blocking progress should be tracked in [LAUNCH_PLAN.md](/Users/payan/producer-launchpad-app/LAUNCH_PLAN.md)
+
 ## Purpose
 
 This is the implementation roadmap for fixing Producer Launchpad's app structure, homepage, onboarding flow, and settings access.

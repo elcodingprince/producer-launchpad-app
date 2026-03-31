@@ -151,7 +151,7 @@ If any fail -> show "Fix Required" with exact mismatch + retry button
 | Unlimited [ Edit ] [ Preview Terms ]                             |
 |                                                                  |
 | Validation: all required fields present per license              |
-| (license_id, display_name, terms/features, file format metadata) |
+| (template metadata, display_name, terms/features, file format metadata) |
 |                                                                  |
 | [ Continue ]                                      (2/5 complete) |
 +------------------------------------------------------------------+

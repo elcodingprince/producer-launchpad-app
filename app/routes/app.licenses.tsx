@@ -55,7 +55,6 @@ type LicenseTemplate = {
   id: string;
   handle: string;
   offerArchetype: string;
-  licenseId: string;
   licenseName: string;
   legalTemplateFamily: string;
   streamLimit: string;
@@ -279,7 +278,6 @@ function buildLicenseForm(license?: LicenseTemplate): LicenseFormState {
 
   const offerArchetype = resolveOfferArchetype({
     offerArchetype: license.offerArchetype,
-    licenseId: license.licenseId,
     legalTemplateFamily: license.legalTemplateFamily,
     handle: license.handle,
   });
@@ -409,7 +407,7 @@ function getLicenseStatus(
 async function getLicenseUsage(admin: {
   graphql: (query: string, options?: Record<string, any>) => Promise<Response>;
 }): Promise<Record<string, LicenseUsageSummary>> {
-  const usageByLicenseId = new Map<string, Set<string>>();
+  const usageByTemplateId = new Map<string, Set<string>>();
   let hasNextPage = true;
   let cursor: string | null = null;
 
@@ -466,9 +464,9 @@ async function getLicenseUsage(admin: {
       const titlesByLicense = product.metafield?.references?.nodes ?? [];
       for (const licenseRef of titlesByLicense) {
         const existing =
-          usageByLicenseId.get(licenseRef.id) ?? new Set<string>();
+          usageByTemplateId.get(licenseRef.id) ?? new Set<string>();
         existing.add(product.title);
-        usageByLicenseId.set(licenseRef.id, existing);
+        usageByTemplateId.set(licenseRef.id, existing);
       }
     }
 
@@ -477,8 +475,8 @@ async function getLicenseUsage(admin: {
   }
 
   return Object.fromEntries(
-    [...usageByLicenseId.entries()].map(([licenseId, beatTitles]) => [
-      licenseId,
+    [...usageByTemplateId.entries()].map(([templateId, beatTitles]) => [
+      templateId,
       {
         beatCount: beatTitles.size,
         beatTitles: [...beatTitles].sort((a, b) => a.localeCompare(b)),
@@ -629,7 +627,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     String(formData.get("handle") || "").trim() || slugify(licenseName);
   const normalizedOfferArchetype = resolveOfferArchetype({
     offerArchetype: String(formData.get("offerArchetype") || "").trim(),
-    licenseId: String(formData.get("licenseId") || "").trim(),
     legalTemplateFamily: String(
       formData.get("legalTemplateFamily") || "",
     ).trim(),
@@ -641,7 +638,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const fields = [
     { key: "offer_archetype", value: derivedFields.offerArchetype },
-    { key: "license_id", value: derivedFields.licenseId },
     { key: "license_name", value: licenseName },
     { key: "legal_template_family", value: derivedFields.legalTemplateFamily },
     {
@@ -1174,21 +1170,21 @@ export default function LicensesPage() {
     guardrailFetcher.submit(formData, { method: "post" });
   }, [guardrailFetcher, guardrailModalTemplate]);
 
-  const handleRightsPopoverToggle = useCallback((licenseId: string) => {
+  const handleRightsPopoverToggle = useCallback((templateId: string) => {
     setActiveRightsPopoverId((current) =>
-      current === licenseId ? null : licenseId,
+      current === templateId ? null : templateId,
     );
   }, []);
 
-  const handleDeliveryPopoverToggle = useCallback((licenseId: string) => {
+  const handleDeliveryPopoverToggle = useCallback((templateId: string) => {
     setActiveDeliveryPopoverId((current) =>
-      current === licenseId ? null : licenseId,
+      current === templateId ? null : templateId,
     );
   }, []);
 
-  const handleUsagePopoverToggle = useCallback((licenseId: string) => {
+  const handleUsagePopoverToggle = useCallback((templateId: string) => {
     setActiveUsagePopoverId((current) =>
-      current === licenseId ? null : licenseId,
+      current === templateId ? null : templateId,
     );
   }, []);
 

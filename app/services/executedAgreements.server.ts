@@ -384,7 +384,6 @@ export async function buildExecutedAgreementSnapshot(input: {
     shopifyData.licenseReference.handle || "license-template";
   const normalizedFields = normalizeTemplateFields({
     offerArchetype: getFieldValue(licenseFields, "offer_archetype"),
-    licenseId: getFieldValue(licenseFields, "license_id"),
     legalTemplateFamily: getFieldValue(licenseFields, "legal_template_family"),
     handle: licenseHandle,
     stemsPolicy: getFieldValue(licenseFields, "stems_policy"),

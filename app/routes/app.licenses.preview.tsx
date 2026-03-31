@@ -33,7 +33,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const licenseHandle = String(formData.get("handle") || "").trim();
   const offerArchetype = resolveOfferArchetype({
     offerArchetype: String(formData.get("offerArchetype") || "").trim(),
-    licenseId: String(formData.get("licenseId") || "").trim(),
     legalTemplateFamily: String(
       formData.get("legalTemplateFamily") || "",
     ).trim(),

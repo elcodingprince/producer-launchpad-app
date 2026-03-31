@@ -80,15 +80,38 @@ function normalizeShopifyResourceId(id: string) {
 }
 
 function hasCompleteLicensePrices(
-  licenses: Array<{ licenseId: string }>,
+  licenses: Array<{ id: string }>,
   licensePrices: Record<string, string>,
 ) {
   return licenses.every((license) => {
-    const rawPrice = licensePrices[license.licenseId];
+    const rawPrice = licensePrices[license.id];
     if (rawPrice == null || rawPrice.trim() === "") return false;
     const parsed = Number.parseFloat(rawPrice);
     return Number.isFinite(parsed) && parsed > 0;
   });
+}
+
+function getLegacyLicenseKey(license: {
+  offerArchetype?: string | null;
+  handle?: string | null;
+}) {
+  return license.offerArchetype || license.handle || "";
+}
+
+function readTemplateScopedValue<T>(
+  record: Record<string, T>,
+  license: {
+    id: string;
+    offerArchetype?: string | null;
+    handle?: string | null;
+  },
+): T | undefined {
+  if (license.id in record) return record[license.id];
+
+  const legacyKey = getLegacyLicenseKey(license);
+  if (legacyKey && legacyKey in record) return record[legacyKey];
+
+  return undefined;
 }
 
 function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
@@ -373,14 +396,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Get actual license GIDs from the database
     const dbLicenses = await productService.getLicenseMetaobjects();
-    const licenseTiers = dbLicenses.map((l) => l.licenseId);
+    const templateIds = dbLicenses.map((license) => license.id);
 
     // Validate each license tier has the full package its template promises
     const missingAssignments: string[] = [];
 
     if (!isDraft) {
       for (const license of dbLicenses) {
-        const filesForTier = licenseFilesData[license.licenseId];
+        const filesForTier = licenseFilesData[license.id];
         const requiredFormats = getRequiredDeliveryFormats(license);
 
         if (
@@ -425,7 +448,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       licenseOffersStems(
         resolveOfferStemsPolicy(
           license.stemsPolicy,
-          stemsAddonSelectionsData[license.licenseId],
+          stemsAddonSelectionsData[license.id],
           license.offerArchetype,
         ),
       ),
@@ -440,7 +463,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           licenseOffersStems(
             resolveOfferStemsPolicy(
               license.stemsPolicy,
-              stemsAddonSelectionsData[license.licenseId],
+              stemsAddonSelectionsData[license.id],
               license.offerArchetype,
             ),
           ),
@@ -469,7 +492,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (!isDraft) {
       const missingPrices = dbLicenses
         .filter((license) => {
-          const rawPrice = licensePricesData[license.licenseId];
+          const rawPrice = licensePricesData[license.id];
           if (rawPrice == null || String(rawPrice).trim() === "") return true;
           const parsed = Number.parseFloat(String(rawPrice));
           return !Number.isFinite(parsed) || parsed <= 0;
@@ -514,8 +537,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (previewFileId) {
       allAssignedFileIds.add(previewFileId);
     }
-    for (const tier of licenseTiers) {
-      const filesForTier = licenseFilesData[tier] || [];
+    for (const templateId of templateIds) {
+      const filesForTier = licenseFilesData[templateId] || [];
       for (const fileId of filesForTier) {
         allAssignedFileIds.add(fileId);
       }
@@ -698,10 +721,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Prepare license prices
     const licensePrices = licenses.map((lp) => {
-      const customPriceStr = licensePricesData[lp.licenseId];
+      const customPriceStr = licensePricesData[lp.id];
       const customPrice = customPriceStr ? parseFloat(customPriceStr) : 0;
       return {
-        licenseId: lp.licenseId,
+        templateId: lp.id,
         licenseGid: lp.id,
         licenseName: lp.licenseName,
         price: isNaN(customPrice) ? 0 : customPrice,
@@ -709,7 +732,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         stemsAddonEnabled:
           resolveOfferStemsPolicy(
             lp.stemsPolicy,
-            stemsAddonSelectionsData[lp.licenseId],
+            stemsAddonSelectionsData[lp.id],
             lp.offerArchetype,
           ) === "available_as_addon",
       };
@@ -785,23 +808,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await productService.setProductPreviewPlaybackUrl(productId);
     }
 
-    const licenseIdToVariantId = new Map(
+    const templateIdToVariantId = new Map(
       result.variants
-        .filter((variant) => variant.id && variant.licenseId)
-        .map((variant) => [variant.licenseId, variant.id]),
+        .filter((variant) => variant.id && variant.templateId)
+        .map((variant) => [variant.templateId, variant.id]),
     );
 
     // Create LicenseFileMapping records for each created Shopify variant
-    for (const tier of licenseTiers) {
-      const variantId = licenseIdToVariantId.get(tier);
+    for (const templateId of templateIds) {
+      const variantId = templateIdToVariantId.get(templateId);
       if (!variantId) {
         throw new Error(
-          `Missing Shopify variant mapping for license tier "${tier}"`,
+          `Missing Shopify variant mapping for template "${templateId}"`,
         );
       }
       const normalizedVariantId = normalizeShopifyResourceId(variantId);
 
-      const tempFileIdsForTier = licenseFilesData[tier] || [];
+      const tempFileIdsForTier = licenseFilesData[templateId] || [];
 
       for (
         let sortOrder = 0;
@@ -892,27 +915,37 @@ export default function NewBeatPage() {
     [draft?.uploadedFiles],
   );
   const initialLicenseFiles = useMemo(() => {
-    const obj: LicenseFiles = draft?.licenseFiles || {};
-    if (licenses)
-      licenses
-        .filter(Boolean)
-        .forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || []));
+    const draftLicenseFiles = draft?.licenseFiles || {};
+    const obj: LicenseFiles = {};
+    if (licenses) {
+      licenses.filter(Boolean).forEach((license) => {
+        obj[license!.id] =
+          readTemplateScopedValue(draftLicenseFiles, license!) || [];
+      });
+    }
     return obj;
   }, [draft?.licenseFiles, licenses]);
   const initialLicensePrices = useMemo(() => {
-    const obj: Record<string, string> = draft?.licensePrices || {};
-    if (licenses)
-      licenses
-        .filter(Boolean)
-        .forEach((l) => (obj[l!.licenseId] = obj[l!.licenseId] || ""));
+    const draftLicensePrices = draft?.licensePrices || {};
+    const obj: Record<string, string> = {};
+    if (licenses) {
+      licenses.filter(Boolean).forEach((license) => {
+        obj[license!.id] =
+          readTemplateScopedValue(draftLicensePrices, license!) || "";
+      });
+    }
     return obj;
   }, [draft?.licensePrices, licenses]);
   const initialStemsAddonSelections = useMemo(() => {
-    const obj: StemsAddonSelections = draft?.stemsAddonSelections || {};
-    if (licenses)
+    const draftStemsSelections = draft?.stemsAddonSelections || {};
+    const obj: StemsAddonSelections = {};
+    if (licenses) {
       licenses.filter(Boolean).forEach((license) => {
-        obj[license!.licenseId] = Boolean(obj[license!.licenseId]);
+        obj[license!.id] = Boolean(
+          readTemplateScopedValue(draftStemsSelections, license!),
+        );
       });
+    }
     return obj;
   }, [draft?.stemsAddonSelections, licenses]);
   const initialPreviewFile = (draft?.previewFile ||
@@ -1097,14 +1130,14 @@ export default function NewBeatPage() {
         licenseOffersStems(
           resolveOfferStemsPolicy(
             license!.stemsPolicy,
-            stemsAddonSelections[license!.licenseId],
+            stemsAddonSelections[license!.id],
             license!.offerArchetype,
           ),
         ),
       );
     const hasAllLicenseFiles = licenses.filter(Boolean).every((license) => {
       const requiredFormats = getRequiredDeliveryFormats(license!);
-      const assignedFileIds = licenseFiles[license!.licenseId] || [];
+      const assignedFileIds = licenseFiles[license!.id] || [];
       const assignedFormats = new Set(
         assignedFileIds
           .map(
@@ -1121,7 +1154,7 @@ export default function NewBeatPage() {
     const hasAllLicensePrices = hasCompleteLicensePrices(
       licenses
         .filter(Boolean)
-        .map((license) => ({ licenseId: license!.licenseId })),
+        .map((license) => ({ id: license!.id })),
       licensePrices,
     );
 
@@ -1318,20 +1351,20 @@ export default function NewBeatPage() {
 
   // Map licenses to tier format for LicenseFileAssignment
   const dynamicLicenseTiers = licenses.filter(Boolean).map((l) => ({
-    id: l!.licenseId,
+    id: l!.id,
     name: l!.licenseName,
-    price: licensePrices[l!.licenseId]
-      ? `$${licensePrices[l!.licenseId]}`
+    price: licensePrices[l!.id]
+      ? `$${licensePrices[l!.id]}`
       : "Not set",
     description: l!.displayName,
     packageFormats: getRequiredDeliveryFormats(l!),
     stemsPolicy: resolveOfferStemsPolicy(
       l!.stemsPolicy,
-      stemsAddonSelections[l!.licenseId],
+      stemsAddonSelections[l!.id],
       l!.offerArchetype,
     ),
     templateStemsPolicy: l!.stemsPolicy,
-    stemsAddonEnabled: Boolean(stemsAddonSelections[l!.licenseId]),
+    stemsAddonEnabled: Boolean(stemsAddonSelections[l!.id]),
   }));
 
   const genreOptions = genres.filter(Boolean).map((g) => ({

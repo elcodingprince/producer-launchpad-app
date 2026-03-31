@@ -19,7 +19,6 @@ import { SoundIcon, ImageIcon, UploadIcon } from "@shopify/polaris-icons";
 export interface License {
   id: string;
   handle: string;
-  licenseId: string;
   licenseName: string;
   displayName: string;
 }
@@ -68,10 +67,10 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
   );
   const [producerAlias, setProducerAlias] = useState("");
   const [licensePrices, setLicensePrices] = useState<
-    Array<{ licenseId: string; licenseGid: string; price: string }>
+    Array<{ templateId: string; licenseGid: string; price: string }>
   >(
     licenses.map((l) => ({
-      licenseId: l.licenseId,
+      templateId: l.id,
       licenseGid: l.id,
       price: "29.99",
     }))
@@ -120,7 +119,7 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
       "licensePrices",
       JSON.stringify(
         licensePrices.map((lp) => ({
-          licenseId: lp.licenseId,
+          templateId: lp.templateId,
           licenseGid: lp.licenseGid,
           price: parseFloat(lp.price),
         }))
@@ -324,11 +323,11 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
       <Card title="License Pricing" sectioned>
         <BlockStack gap="500">
           {licensePrices.map((lp, index) => {
-            const license = licenses.find((l) => l.licenseId === lp.licenseId);
+            const license = licenses.find((l) => l.id === lp.templateId);
             return (
-              <FormLayout key={lp.licenseId}>
+              <FormLayout key={lp.templateId}>
                 <TextField
-                  label={`${license?.displayName || lp.licenseId} License Price`}
+                  label={`${license?.displayName || license?.licenseName || "License"} Price`}
                   type="number"
                   prefix="$"
                   value={lp.price}

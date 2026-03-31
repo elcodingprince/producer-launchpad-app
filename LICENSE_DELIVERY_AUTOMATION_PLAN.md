@@ -1,5 +1,11 @@
 # License Delivery Automation — Implementation Plan
 
+## Status
+
+- `Archived` as of March 29, 2026
+- the core delivery automation described here has been implemented in the app codebase
+- remaining launch work for delivery now lives in [LAUNCH_PLAN.md](/Users/payan/producer-launchpad-app/LAUNCH_PLAN.md)
+
 This document is now archived as the historical delivery architecture plan.
 
 Use [LAUNCH_PLAN.md](/Users/payan/producer-launchpad-app/LAUNCH_PLAN.md) as the single active roadmap from the current implementation state to launch.

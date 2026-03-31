@@ -99,12 +99,6 @@ export const BEAT_LICENSE_DEFINITION = {
       required: false,
     },
     {
-      key: "license_id",
-      name: "License ID",
-      type: "single_line_text_field",
-      required: true,
-    },
-    {
       key: "license_name",
       name: "License Name",
       type: "single_line_text_field",
@@ -442,10 +436,6 @@ export const DEFAULT_LICENSES = [
     handle: "basic-license",
     fields: [
       { key: "offer_archetype", value: "basic" },
-      {
-        key: "license_id",
-        value: buildDerivedLicenseFields("basic").licenseId,
-      },
       { key: "license_name", value: "Basic License" },
       {
         key: "legal_template_family",
@@ -482,10 +472,6 @@ export const DEFAULT_LICENSES = [
     handle: "premium-license",
     fields: [
       { key: "offer_archetype", value: "premium" },
-      {
-        key: "license_id",
-        value: buildDerivedLicenseFields("premium").licenseId,
-      },
       { key: "license_name", value: "Premium License" },
       {
         key: "legal_template_family",
@@ -522,10 +508,6 @@ export const DEFAULT_LICENSES = [
     handle: "unlimited-license",
     fields: [
       { key: "offer_archetype", value: "unlimited" },
-      {
-        key: "license_id",
-        value: buildDerivedLicenseFields("unlimited").licenseId,
-      },
       { key: "license_name", value: "Unlimited License" },
       {
         key: "legal_template_family",
@@ -1045,11 +1027,13 @@ export class MetafieldSetupService {
 
     const needsDisplayNameKey =
       definition.displayNameKey !== BEAT_LICENSE_DEFINITION.displayNameKey;
-    const hasLegacyDisplayNameField = existingByKey.has("display_name");
+    const legacyFieldKeys = ["display_name", "license_id"].filter((key) =>
+      existingByKey.has(key),
+    );
 
     if (
       !needsDisplayNameKey &&
-      !hasLegacyDisplayNameField &&
+      legacyFieldKeys.length === 0 &&
       missingFields.length === 0
     ) {
       return;
@@ -1059,7 +1043,7 @@ export class MetafieldSetupService {
       id: definition.id,
       displayNameKey: BEAT_LICENSE_DEFINITION.displayNameKey,
       createFields: missingFields,
-      deleteFieldKeys: hasLegacyDisplayNameField ? ["display_name"] : [],
+      deleteFieldKeys: legacyFieldKeys,
     });
   }
 
