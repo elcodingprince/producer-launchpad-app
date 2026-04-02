@@ -1,35 +1,31 @@
 # Render Deployment Guide
 
-This app can be deployed to Render tonight without changing the current PDF generation flow.
+This app can be deployed to Render without changing the current PDF generation flow.
 
 ## Why This Setup
 
 Producer Launchpad currently:
 
 - runs as a Remix/Node server
-- uses Prisma with SQLite
+- uses Prisma with PostgreSQL
 - generates agreement PDFs by converting HTML with headless Chromium
 
 That means the safest fast path is:
 
 - Render `Web Service`
 - `Docker` deploy
-- `Persistent Disk`
+- managed PostgreSQL
 
 ## Files Added For Render
 
 - `Dockerfile`
 - `.dockerignore`
 
-The Docker image installs Chromium and uses the existing runtime startup flow:
+The Docker image installs Chromium and starts the app with:
 
-- `npm run docker-start`
+- `npm run start`
 
-That command runs:
-
-- `prisma generate`
-- `prisma db push`
-- `remix-serve ./build/server/index.js`
+Run `npm run db:migrate:deploy` as part of your deployment process before the new app revision handles traffic.
 
 ## Render Service Setup
 
@@ -39,15 +35,6 @@ Create a new `Web Service` in Render and choose:
 - Plan: paid plan
 - Region: same region you expect to operate from if possible
 
-## Persistent Disk
-
-Attach a persistent disk to the web service.
-
-Recommended settings:
-
-- Mount path: `/data`
-- Size: `1 GB` is enough to start
-
 ## Required Environment Variables
 
 Set these in Render:
@@ -55,7 +42,7 @@ Set these in Render:
 - `NODE_ENV=production`
 - `PORT=10000`
 - `CHROME_PATH=/usr/bin/chromium`
-- `DATABASE_URL=file:/data/producer-launchpad.sqlite`
+- `DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/producer_launchpad_prod?sslmode=require`
 - `SHOPIFY_API_KEY=...`
 - `SHOPIFY_API_SECRET=...`
 - `SHOPIFY_APP_URL=https://YOUR-APP-HOST`
@@ -75,13 +62,9 @@ Set these in Render:
 
 ## Important Notes
 
-### 1. Keep a single instance
+### 1. Use PostgreSQL in production
 
-This deployment keeps SQLite for speed. Do not scale horizontally with this setup.
-
-Use:
-
-- `1` instance only
+Do not use SQLite for production app data. The app is intended to support many stores, and production should use a managed PostgreSQL service.
 
 ### 2. The app URL must be real
 
@@ -98,16 +81,16 @@ This setup is practical for getting the app live quickly.
 
 Later improvements can include:
 
-- moving from SQLite to Postgres
-- adding more formal backup handling
-- adding stricter production observability
+- connection pooling
+- more formal backup handling
+- stricter production observability
 
 ## Deploy Order
 
 1. Push this branch.
 2. Create the Render web service from the repo.
-3. Attach the persistent disk.
-4. Add the environment variables.
+3. Add the environment variables.
+4. Ensure `npm run db:migrate:deploy` runs before the release is promoted.
 5. Deploy.
 6. Open the live URL and verify the app boots.
 7. Update Shopify app URLs and redirects.

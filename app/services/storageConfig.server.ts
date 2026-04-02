@@ -35,7 +35,7 @@ function storageDelegate() {
   const delegate = (prisma as any).shopStorageConfig;
   if (!delegate) {
     throw new Error(
-      "ShopStorageConfig model is unavailable in the running Prisma client. Restart the dev server after prisma generate/db push."
+      "ShopStorageConfig model is unavailable in the running Prisma client. Restart the dev server after Prisma generate/migrate completes."
     );
   }
   return delegate;

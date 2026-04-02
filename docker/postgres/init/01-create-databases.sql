@@ -1,0 +1,2 @@
+CREATE DATABASE producer_launchpad_dev;
+CREATE DATABASE producer_launchpad_shadow;

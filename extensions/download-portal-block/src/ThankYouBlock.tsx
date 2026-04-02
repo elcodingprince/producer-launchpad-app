@@ -29,7 +29,7 @@ function ThankYouBlock() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const orderId = orderConfirmation?.order?.id;
   const orderNumber = orderConfirmation?.number;
-  const appUrl = settings.app_url?.trim();
+  const appUrl = 'https://producer-launchpad-app.fly.dev';
 
   useEffect(() => {
     if (editor || !appUrl || !orderId || !orderNumber) return;
@@ -156,12 +156,7 @@ function ThankYouBlock() {
             takes just a few seconds.
           </Text>
           <Spinner />
-          {!appUrl ? (
-            <Text size="small" appearance="subdued">
-              Configure the extension App URL setting in the checkout editor to enable
-              secure portal lookup.
-            </Text>
-          ) : null}
+
         </BlockStack>
       </Banner>
     );

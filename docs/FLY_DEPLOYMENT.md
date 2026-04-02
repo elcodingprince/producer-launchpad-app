@@ -1,45 +1,43 @@
 # Fly.io Deployment Guide
 
-This is the fastest practical Fly.io setup for Producer Launchpad tonight.
+This is the production-safe Fly.io setup for Producer Launchpad.
 
 ## What This Setup Assumes
 
 - the app runs from the checked-in `Dockerfile`
 - agreement PDFs are generated with Chromium
-- SQLite remains the production database for tonight
-- the app runs on a single Fly machine
+- production data lives in PostgreSQL, not on a Fly volume
+- database migrations run as a Fly release command before each deploy
 
 ## Files Used
 
 - `Dockerfile`
 - `fly.toml`
 
-## Why A Volume Is Required
+## Why PostgreSQL Is Required
 
-The app currently uses Prisma with SQLite.
+The app should not use SQLite in production.
 
-That means the database file must live on a Fly volume, not the default ephemeral filesystem.
+For an embedded Shopify app that is meant to support hundreds of stores, production needs:
 
-This config mounts the volume at:
+- concurrent connections from more than one app instance
+- durable backups and operational tooling
+- safe deploys that do not depend on a single mounted disk
+- a database engine that matches development and production
 
-- `/data`
+Use a managed PostgreSQL database and store the connection string as a Fly secret.
 
-and sets:
-
-- `DATABASE_URL=file:/data/producer-launchpad.sqlite`
+`fly.toml` now uses a Fly `release_command` to run `npm run db:migrate:deploy` before the new release is promoted.
 
 ## First-Time Commands
 
 Run these from the repo root:
 
-```bash
-fly volumes create producer_launchpad_data --region lax --size 1 -a producer-launchpad-app
-```
-
-Then set secrets:
+Create the Fly app if needed, then set secrets:
 
 ```bash
 fly secrets set \
+  DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/producer_launchpad_prod?sslmode=require \
   SHOPIFY_API_KEY=... \
   SHOPIFY_API_SECRET=... \
   SHOPIFY_APP_URL=https://producer-launchpad-app.fly.dev \
@@ -66,9 +64,13 @@ fly deploy -a producer-launchpad-app
 
 ## Notes
 
-### Single machine only
+### Database choice
 
-Do not scale horizontally with this SQLite setup.
+Fly supports release commands in `fly.toml`, and Fly documents `release_command` as the place to run one-off tasks like database migrations before a deploy is promoted.
+
+You can use Fly Managed Postgres or any other managed PostgreSQL provider that gives the app a stable connection string.
+
+Do not put the production `DATABASE_URL` in source control.
 
 ### PDF generation
 
@@ -90,7 +92,8 @@ Use that first. You can attach a custom domain later.
 
 1. Verify the app responds at `https://producer-launchpad-app.fly.dev`
 2. Update Shopify App URL and redirect URLs
-3. Test:
+3. Confirm the Fly release command applied Prisma migrations successfully
+4. Test:
    - install
    - reinstall
    - onboarding

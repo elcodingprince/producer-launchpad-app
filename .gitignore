@@ -23,5 +23,7 @@ yarn-error.log*
 
 # prisma local sqlite artifacts
 prisma/prisma/
+*.db
+*.db-journal
 *.sqlite
 *.sqlite-journal

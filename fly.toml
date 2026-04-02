@@ -4,15 +4,13 @@ primary_region = "lax"
 [build]
   dockerfile = "Dockerfile"
 
+[deploy]
+  release_command = "npm run db:migrate:deploy"
+
 [env]
   CHROME_PATH = "/usr/bin/chromium"
-  DATABASE_URL = "file:/data/producer-launchpad.sqlite"
   NODE_ENV = "production"
   PORT = "8080"
-
-[[mounts]]
-  source = "producer_launchpad_data"
-  destination = "/data"
 
 [http_service]
   internal_port = 8080
