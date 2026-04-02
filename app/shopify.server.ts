@@ -1,7 +1,7 @@
-import "@shopify/shopify-app-remix/adapters/node";
+import "@shopify/shopify-app-remix/server/adapters/node";
 import {
   shopifyApp,
-  LATEST_API_VERSION,
+  ApiVersion,
 } from "@shopify/shopify-app-remix/server";
 import { DeliveryMethod } from "@shopify/shopify-api";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
@@ -19,7 +19,7 @@ const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY!,
   apiSecretKey: process.env.SHOPIFY_API_SECRET!,
   appUrl,
-  apiVersion: LATEST_API_VERSION,
+  apiVersion: ApiVersion.January26,
   scopes: (
     process.env.SHOPIFY_APP_SCOPES ||
     "read_products,write_products,read_publications,write_publications,read_metaobjects,write_metaobjects,read_metaobject_definitions,write_metaobject_definitions,read_orders,write_app_proxy"
@@ -28,6 +28,7 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   future: {
     unstable_newEmbeddedAuthStrategy: true,
+    expiringOfflineAccessTokens: true,
   },
   sessionStorage: new PrismaSessionStorage(prisma),
   webhooks: {

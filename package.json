@@ -24,7 +24,7 @@
     "shopify": "shopify"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0",
+    "@prisma/client": "^6.19.0",
     "@react-email/components": "^1.0.9",
     "@react-email/render": "^2.0.4",
     "@react-pdf/renderer": "^4.3.2",
@@ -37,10 +37,10 @@
     "@shopify/cli": "^3.92.1",
     "@shopify/polaris": "^12.20.0",
     "@shopify/polaris-icons": "^8.11.0",
-    "@shopify/shopify-api": "^11.0.0",
-    "@shopify/shopify-app-remix": "^2.6.0",
-    "@shopify/shopify-app-session-storage-memory": "^4.0.5",
-    "@shopify/shopify-app-session-storage-prisma": "^5.2.3",
+    "@shopify/shopify-api": "^13.0.0",
+    "@shopify/shopify-app-remix": "^4.2.0",
+    "@shopify/shopify-app-session-storage-memory": "^6.0.0",
+    "@shopify/shopify-app-session-storage-prisma": "^9.0.0",
     "@shopify/ui-extensions": "^2025.7.3",
     "@shopify/ui-extensions-react": "^2025.7.3",
     "archiver": "^7.0.1",
@@ -60,7 +60,7 @@
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.2.5",
-    "prisma": "^5.22.0",
+    "prisma": "^6.19.0",
     "typescript": "^5.4.2",
     "vite-plugin-tsconfig-paths": "^1.4.1"
   },
