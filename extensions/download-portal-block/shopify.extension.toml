@@ -13,5 +13,3 @@ module = "./src/ThankYouBlock.tsx"
 [extensions.capabilities]
 api_access = true
 network_access = true
-
-

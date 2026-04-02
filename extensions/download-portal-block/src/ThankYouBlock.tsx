@@ -8,8 +8,7 @@ import {
   reactExtension,
   useApi,
   useExtensionEditor,
-  useSettings,
-  useSessionToken,
+  useShop,
   useSubscription,
 } from '@shopify/ui-extensions-react/checkout';
 import { useEffect, useState } from 'react';
@@ -20,19 +19,21 @@ export default reactExtension('purchase.thank-you.block.render', () => (
 
 function ThankYouBlock() {
   const editor = useExtensionEditor();
-  const sessionToken = useSessionToken();
-  const settings = useSettings<{app_url?: string}>();
   const api = useApi<'purchase.thank-you.block.render'>();
+  const shop = useShop();
   const orderConfirmation = useSubscription(api.orderConfirmation);
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const orderId = orderConfirmation?.order?.id;
   const orderNumber = orderConfirmation?.number;
-  const appUrl = 'https://producer-launchpad-app.fly.dev';
+  const storefrontUrl = shop.storefrontUrl?.trim();
+  const shopOrigin = storefrontUrl && storefrontUrl.length > 0
+    ? storefrontUrl
+    : `https://${shop.myshopifyDomain}`;
 
   useEffect(() => {
-    if (editor || !appUrl || !orderId || !orderNumber) return;
+    if (editor || !shopOrigin || !orderId || !orderNumber) return;
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -40,27 +41,15 @@ function ThankYouBlock() {
     const maxAttempts = 12;
 
     async function pollDeliveryStatus() {
-      if (!appUrl || !orderId || !orderNumber) return;
+      if (!shopOrigin || !orderId || !orderNumber) return;
       try {
-        const token = await sessionToken.get();
-        const requestUrl = new URL('/api/checkout/delivery-status', appUrl);
+        const requestUrl = new URL('/apps/producer-launchpad/checkout/delivery-status', shopOrigin);
         requestUrl.searchParams.set('orderId', orderId);
         requestUrl.searchParams.set('orderNumber', orderNumber);
 
-        const response = await fetch(
-          requestUrl.toString(),
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              orderId,
-              orderNumber,
-            }),
-          }
-        );
+        const response = await fetch(requestUrl.toString(), {
+          method: 'GET',
+        });
 
         if (!response.ok) {
           throw new Error(`Delivery status request failed with ${response.status}`);
@@ -106,7 +95,7 @@ function ThankYouBlock() {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [appUrl, editor, orderId, orderNumber, sessionToken]);
+  }, [editor, orderId, orderNumber, shopOrigin]);
 
   // Download URL is ready — show the real download button
   if (status === 'ready' && typeof downloadUrl === 'string' && downloadUrl.length > 0) {
