@@ -123,6 +123,7 @@ model Order {
   id             String   @id @default(cuid())
   shop           String
   shopifyOrderId String   @unique
+  shopifyCustomerId String?
   orderNumber    String
   browserIp      String?
   userAgent      String?
@@ -136,6 +137,7 @@ model Order {
   executedAgreements ExecutedAgreement[]
 
   @@index([shop, shopifyOrderId])
+  @@index([shop, shopifyCustomerId])
 }
 
 model OrderItem {
@@ -204,6 +206,7 @@ model DeliveryAccess {
   id                           String    @id @default(cuid())
   orderId                      String    @unique
   shop                         String
+  shopifyCustomerId            String?
   customerEmail                String
   customerName                 String?
   downloadToken                String    @unique
@@ -223,6 +226,7 @@ model DeliveryAccess {
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([shop])
+  @@index([shop, shopifyCustomerId])
   @@index([downloadToken])
 }
 

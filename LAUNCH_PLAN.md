@@ -42,12 +42,18 @@ This plan is intentionally optimized for:
 - public portal no longer leaks the merchant app shell
 - customer-facing portal failure states exist
 - download counts are tracked
+- privacy compliance logic has been validated in staging/dev with internal test tooling:
+  - `customers/data_request` creates stored request/export rows and matches the correct order
+  - `customers/redact` clears customer identity + telemetry while preserving redacted agreement proof
+  - `shop/redact` removes shop-scoped app data
 
 ### What is still missing before launch
 
 - stable hosted app URL and production app configuration
 - checkout block moved off the dev-preview URL workflow
 - final production validation on the hosted app domain
+- real Shopify webhook delivery verification for privacy webhooks in one known environment
+- public privacy-policy copy fully aligned with the validated app behavior
 - launch checklist pass and hard freeze
 
 ---
@@ -194,6 +200,11 @@ Goal: prove the hosted app works end to end on real storefront purchases.
   - included files
   - tracked downloads
 - verify merchant can resend delivery email successfully
+- verify staging/hosted privacy webhook delivery from Shopify into the intended environment:
+  - `customers/data_request`
+  - `customers/redact`
+  - `shop/redact`
+- capture DB + log evidence that the hosted webhook path reaches the same validated privacy logic
 
 ### Exit criteria
 
@@ -233,6 +244,8 @@ Goal: stop building and ship.
 - [ ] Merchant can resend delivery email
 - [ ] Customer-facing error states are acceptable
 - [ ] At least one real hosted-domain test order has been completed successfully for each core order shape
+- [ ] Privacy policy copy matches real app behavior
+- [ ] Real Shopify privacy webhooks have been verified against the staging or hosted environment
 
 ---
 
@@ -263,6 +276,7 @@ These items should resume only after launch unless one becomes urgent.
 - continue [LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md](/Users/payan/producer-launchpad-app/LICENSE_PDF_AND_METAOBJECT_FOLLOWUP.md)
 - refine PDF content and legal snapshot strategy
 - revisit license/metaobject design once launch pressure is removed
+- remove or disable any internal-only privacy test tooling after webhook verification is complete
 
 ### Setup and scale work
 

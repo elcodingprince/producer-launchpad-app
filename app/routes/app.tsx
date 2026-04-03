@@ -11,9 +11,11 @@ import {
   getManagedPricingAppHandle,
   isBillingGateEnabled,
 } from "~/services/billing.server";
+import { runPrivacyMaintenanceForShop } from "~/services/privacyCompliance.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { billing, redirect, session } = await authenticate.admin(request);
+  await runPrivacyMaintenanceForShop(session.shop);
 
   if (!isBillingGateEnabled()) {
     return json({ billingRequired: false });
@@ -84,7 +86,6 @@ function AppChrome() {
         <a href="/app/beats">Beats</a>
         <a href="/app/deliveries">Deliveries</a>
         <a href="/app/licenses">Licenses</a>
-        <a href="/app/privacy-requests">Privacy</a>
         <a href="/app/settings">Settings</a>
       </NavMenu>
     </>
