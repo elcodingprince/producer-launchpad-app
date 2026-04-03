@@ -10,10 +10,10 @@ primary_region = "lax"
 [env]
   CHROME_PATH = "/usr/bin/chromium"
   NODE_ENV = "production"
-  PORT = "8080"
+  PORT = "10000"
 
 [http_service]
-  internal_port = 8080
+  internal_port = 10000
   force_https = true
   auto_start_machines = true
   auto_stop_machines = "off"
