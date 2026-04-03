@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate, unauthenticated } from "~/shopify.server";
 import prisma from "~/db.server";
 import crypto from "crypto";
+import { Prisma } from "@prisma/client";
 import type { OrderItem } from "@prisma/client";
 import {
   isResendWebhookTrackingEnabled,
@@ -17,6 +18,15 @@ import {
 function normalizeShopifyResourceId(id: string) {
   const match = id.match(/\/(\d+)$/);
   return match ? match[1] : id;
+}
+
+function isDuplicateOrderCreateError(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002" &&
+    Array.isArray(error.meta?.target) &&
+    error.meta.target.includes("shopifyOrderId")
+  );
 }
 
 function buildCustomerName(payload: any) {
@@ -336,31 +346,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Save order in our DB
-    const createdOrder = await prisma.order.create({
-      data: {
-        shop,
-        shopifyOrderId: orderId,
-        orderNumber,
-        browserIp: checkoutAuditFields.browserIp,
-        userAgent: checkoutAuditFields.userAgent,
-        acceptLanguage: checkoutAuditFields.acceptLanguage,
-        items: {
-          create: orderItems,
-        },
-        deliveryAccess: {
-          create: {
-            shop,
-            customerEmail,
-            customerName,
-            downloadToken: token,
+    let createdOrder;
+    try {
+      createdOrder = await prisma.order.create({
+        data: {
+          shop,
+          shopifyOrderId: orderId,
+          orderNumber,
+          browserIp: checkoutAuditFields.browserIp,
+          userAgent: checkoutAuditFields.userAgent,
+          acceptLanguage: checkoutAuditFields.acceptLanguage,
+          items: {
+            create: orderItems,
+          },
+          deliveryAccess: {
+            create: {
+              shop,
+              customerEmail,
+              customerName,
+              downloadToken: token,
+            },
           },
         },
-      },
-      include: {
-        items: true,
-        deliveryAccess: true,
-      },
-    });
+        include: {
+          items: true,
+          deliveryAccess: true,
+        },
+      });
+    } catch (error) {
+      if (isDuplicateOrderCreateError(error)) {
+        console.log(
+          `[Webhook] Duplicate delivery ignored for Order #${orderNumber}`,
+        );
+        return new Response("Already processed", { status: 200 });
+      }
+
+      throw error;
+    }
 
     const executedAgreementByOrderItemId = new Map<
       string,

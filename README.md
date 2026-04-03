@@ -38,6 +38,10 @@ CF_R2_BUCKET_NAME=your-bucket-name
 CF_R2_ACCESS_KEY_ID=your-access-key-id
 CF_R2_SECRET_ACCESS_KEY=your-secret-access-key
 CF_R2_PUBLIC_BASE_URL=https://your-public-files-domain.com
+
+# Local PostgreSQL for Prisma
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/producer_launchpad_dev?schema=public
+SHADOW_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/producer_launchpad_shadow?schema=public
 ```
 
 ## Setup Instructions
@@ -64,10 +68,8 @@ npm install
 ### 4. Run Locally
 
 ```bash
-# Development mode with hot reload
-shopify app dev
-
-# Or with npm
+docker compose up -d postgres
+npm run setup
 npm run dev
 ```
 
@@ -76,6 +78,13 @@ This will:
 - Create a tunnel (using Cloudflare or ngrok)
 - Update your app URLs in Shopify Partner Dashboard
 - Open your development store with the app installed
+
+### Database Workflow
+
+- Development uses `npm run db:migrate:dev`
+- Production uses `npm run db:migrate:deploy`
+- Do not point local `.env` at the production database
+- Do not use `prisma db push` against production
 
 ### 5. Run Setup Wizard
 
@@ -176,7 +185,7 @@ The setup wizard automatically creates:
 
 ### Deploy to Fly.io
 
-Use the deployment guide in [docs/FLY_DEPLOYMENT.md](/Users/payan/.codex/worktrees/0468/producer-launchpad-app/docs/FLY_DEPLOYMENT.md).
+Use the deployment guide in `docs/FLY_DEPLOYMENT.md`.
 
 Current production host:
 

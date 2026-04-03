@@ -8,7 +8,6 @@ import {
   reactExtension,
   useApi,
   useExtensionEditor,
-  useSettings,
   useSessionToken,
   useSubscription,
 } from '@shopify/ui-extensions-react/checkout';
@@ -20,16 +19,15 @@ export default reactExtension('purchase.thank-you.block.render', () => (
 
 function ThankYouBlock() {
   const editor = useExtensionEditor();
-  const sessionToken = useSessionToken();
-  const settings = useSettings<{app_url?: string}>();
   const api = useApi<'purchase.thank-you.block.render'>();
+  const sessionToken = useSessionToken();
   const orderConfirmation = useSubscription(api.orderConfirmation);
 
-  const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'delayed'>('loading');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const orderId = orderConfirmation?.order?.id;
   const orderNumber = orderConfirmation?.number;
-  const appUrl = settings.app_url?.trim();
+  const appUrl = 'https://producer-launchpad-staging.fly.dev';
 
   useEffect(() => {
     if (editor || !appUrl || !orderId || !orderNumber) return;
@@ -37,7 +35,7 @@ function ThankYouBlock() {
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
-    const maxAttempts = 12;
+    const maxAttempts = 24;
 
     async function pollDeliveryStatus() {
       if (!appUrl || !orderId || !orderNumber) return;
@@ -76,14 +74,9 @@ function ThankYouBlock() {
           return;
         }
 
-        if (data.status === 'failed') {
-          setStatus('failed');
-          return;
-        }
-
         attempts += 1;
         if (attempts >= maxAttempts) {
-          setStatus('failed');
+          setStatus('delayed');
           return;
         }
 
@@ -93,7 +86,7 @@ function ThankYouBlock() {
         if (cancelled) return;
         attempts += 1;
         if (attempts >= maxAttempts) {
-          setStatus('failed');
+          setStatus('delayed');
           return;
         }
         timeoutId = setTimeout(pollDeliveryStatus, 2500);
@@ -111,14 +104,14 @@ function ThankYouBlock() {
   // Download URL is ready — show the real download button
   if (status === 'ready' && typeof downloadUrl === 'string' && downloadUrl.length > 0) {
     return (
-      <Banner status="success" title="Your beats are ready!">
+      <Banner status="success" title="Your download portal is ready">
         <BlockStack spacing="base">
           <Text>
-            Download your high-quality audio files and customized license agreement
-            instantly.
+            Your files are ready. You can open your download portal below or use the
+            delivery email we just sent.
           </Text>
           <Link to={downloadUrl} external>
-            Access Download Portal
+            Open download portal
           </Link>
         </BlockStack>
       </Banner>
@@ -128,18 +121,18 @@ function ThankYouBlock() {
   // Editor/customizer preview — show a preview with disabled button
   if (editor) {
     return (
-      <Banner status="success" title="Your beats are ready!">
+      <Banner status="info" title="Your files will be delivered shortly">
         <BlockStack spacing="base">
           <Text>
-            Download your high-quality audio files and customized license agreement
-            instantly.
+            After purchase, customers will see a delivery message here and can open
+            the download portal as soon as it is ready.
           </Text>
           <Button kind="primary" disabled>
-            Access Download Portal
+            Open download portal
           </Button>
           <Text size="small" appearance="subdued">
-            Preview mode: the real download link appears after purchase when the order
-            has a generated portal URL.
+            Preview mode: this block starts with an email-delivery message and upgrades
+            to the portal when it becomes available.
           </Text>
         </BlockStack>
       </Banner>
@@ -149,30 +142,30 @@ function ThankYouBlock() {
   // Real order but metafield not ready yet — show a loading/preparing state
   if (status === 'loading') {
     return (
-      <Banner status="info" title="Preparing your downloads...">
+      <Banner status="info" title="Your files are being prepared">
         <BlockStack spacing="base">
           <Text>
-            Your beat files and license agreement are being prepared. This usually
-            takes just a few seconds.
+            Your files are being prepared and will be delivered to your email shortly.
+          </Text>
+          <Text size="small" appearance="subdued">
+            If your download portal is ready in time, it will appear here automatically.
           </Text>
           <Spinner />
-          {!appUrl ? (
-            <Text size="small" appearance="subdued">
-              Configure the extension App URL setting in the checkout editor to enable
-              secure portal lookup.
-            </Text>
-          ) : null}
         </BlockStack>
       </Banner>
     );
   }
 
   return (
-    <Banner status="critical" title="We couldn't prepare your downloads yet">
+    <Banner status="info" title="Your order is confirmed">
       <BlockStack spacing="base">
         <Text>
-          Your order was received, but the download portal is not ready yet. Please
-          refresh this page in a moment or contact support if the issue persists.
+          Your files are still being prepared and will be delivered to your email
+          shortly.
+        </Text>
+        <Text size="small" appearance="subdued">
+          If you do not see the email soon, check spam or promotions, then contact
+          support with your order number.
         </Text>
       </BlockStack>
     </Banner>
