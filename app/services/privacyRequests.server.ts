@@ -117,17 +117,37 @@ function sanitizeOrder(order: OrderWithRelations) {
 
 async function findMatchingOrders(
   shop: string,
+  shopifyCustomerId: string | null,
   customerEmail: string | null,
   ordersRequested: string[],
 ) {
   const normalizedShop = normalizeShopDomain(shop);
   const matchedOrderIds = new Set<string>();
 
+  if (shopifyCustomerId) {
+    const matchingOrders = await prisma.order.findMany({
+      where: {
+        shop: normalizedShop,
+        shopifyCustomerId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    for (const order of matchingOrders) {
+      matchedOrderIds.add(order.id);
+    }
+  }
+
   if (customerEmail) {
     const matchingDeliveryAccess = await prisma.deliveryAccess.findMany({
       where: {
         shop: normalizedShop,
-        customerEmail,
+        OR: [
+          { customerEmail },
+          ...(shopifyCustomerId ? [{ shopifyCustomerId }] : []),
+        ],
       },
       select: {
         orderId: true,
@@ -177,11 +197,13 @@ export async function recordPrivacyDataRequest(
   payload: ShopifyDataRequestPayload,
 ) {
   const normalizedShop = normalizeShopDomain(shop);
+  const shopifyCustomerId = normalizeOptionalString(payload.customer?.id);
   const customerEmail = normalizeOptionalString(payload.customer?.email);
   const ordersRequested = parseOrdersRequested(payload);
   const shopifyDataRequestId = getShopifyDataRequestId(payload);
   const matchingOrders = await findMatchingOrders(
     normalizedShop,
+    shopifyCustomerId,
     customerEmail,
     ordersRequested,
   );
@@ -192,7 +214,7 @@ export async function recordPrivacyDataRequest(
     request: {
       shop: normalizedShop,
       shopifyDataRequestId,
-      shopifyCustomerId: normalizeOptionalString(payload.customer?.id),
+      shopifyCustomerId,
       customerEmail,
       ordersRequested,
     },
@@ -220,7 +242,7 @@ export async function recordPrivacyDataRequest(
     create: {
       shop: normalizedShop,
       shopifyDataRequestId,
-      shopifyCustomerId: normalizeOptionalString(payload.customer?.id),
+      shopifyCustomerId,
       customerEmail,
       ordersRequestedJson: JSON.stringify(ordersRequested),
       requestPayloadJson: JSON.stringify(payload),
@@ -228,7 +250,7 @@ export async function recordPrivacyDataRequest(
       status: "pending",
     },
     update: {
-      shopifyCustomerId: normalizeOptionalString(payload.customer?.id),
+      shopifyCustomerId,
       customerEmail,
       ordersRequestedJson: JSON.stringify(ordersRequested),
       requestPayloadJson: JSON.stringify(payload),

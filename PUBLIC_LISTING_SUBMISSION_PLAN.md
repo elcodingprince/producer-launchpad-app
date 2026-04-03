@@ -6,15 +6,19 @@ Submit `Producer Launchpad` for a public Shopify listing with limited visibility
 
 ## Current Verdict
 
-Current status: almost ready to submit.
+Current status: technically close, but not yet ready to submit.
 
 Reason:
 
 - ✅ the active app config points at production URLs
-- ✅ the privacy compliance flows for `customers/data_request`, `customers/redact`, and `shop/redact` are fully implemented
+- ✅ the privacy compliance flows for `customers/data_request`, `customers/redact`, and `shop/redact` are implemented in app code
+- ✅ staging/dev validation confirmed that `customers/data_request` stores a request + export payload and matches the correct order
+- ✅ staging/dev validation confirmed that `customers/redact` clears delivery/customer identity, clears order telemetry, redacts executed-agreement identity fields, and preserves redacted agreement proof artifacts
+- ✅ `shop/redact` destructive behavior has been observed against staging/dev data
 - ✅ the embedded app shell is configured consistently
 - ✅ requested scopes have been reduced to match actual code usage (`write_orders` has been removed)
-- ⚠️ listing and policy assets are managed in the landing page repo, requiring final Partner Dashboard verification
+- ⚠️ live Shopify-to-app webhook delivery still needs to be verified against one known environment without local tunnel ambiguity
+- ⚠️ listing and policy assets are managed in the landing page repo, requiring final Partner Dashboard verification and copy alignment
 
 ## Launch Blockers
 
@@ -43,24 +47,30 @@ Definition of done:
 
 ### 2. Complete privacy compliance for `customers/data_request`
 
-**Status: Complete** - Webhook logic records requests and handles data redactions appropriately.
+**Status: In app code complete; live webhook delivery verification still pending**
 
 - `app/routes/webhooks.tsx`
+- `app/services/privacyRequests.server.ts`
+- `app/services/privacyCompliance.server.ts`
 
 Current issue:
 
-- the webhook logs matching records but does not actually fulfill the request workflow
+- the app logic is working in staging/dev, but a real Shopify webhook delivery test has not yet been conclusively observed in the intended environment
 
 Actions:
 
-- define the exact response/operational path used when Shopify requests customer data
-- gather and structure the stored customer/order data that must be supplied to the merchant
+- keep the internal operational fulfillment path for `customers/data_request`
+- verify real Shopify webhook delivery against the staging app URL after deploying the latest privacy changes
+- capture logs and DB evidence for:
+  - `customers/data_request`
+  - `customers/redact`
+  - `shop/redact`
 - document the fulfillment process so support can execute it reliably
-- test the compliance webhook behavior end to end
+- remove or tightly gate internal privacy test tooling before public submission
 
 Definition of done:
 
-- `customers/data_request`, `customers/redact`, and `shop/redact` all have complete, tested behavior
+- `customers/data_request`, `customers/redact`, and `shop/redact` all have complete, tested behavior in staging via real webhook delivery
 - support knows how a data request is fulfilled within Shopify's required timeline
 
 ### 3. Fix embedded app configuration mismatch
@@ -122,10 +132,14 @@ Actions:
 - list exactly which customer fields are used
 - make sure the dashboard request matches that usage
 - prepare a clear explanation of why each field is necessary
+- align the dashboard request with the current implementation:
+  - customer name/email for licensee identity and delivery
+  - order identifiers and purchased license data for sold-license proof
+  - limited short-term telemetry for security/compliance handling
 
 ### 6. Add and verify listing/legal assets
 
-**Status: Complete (Hosted Externally)** - Terms of service and privacy policies are set up on the landing page site wrapper.
+**Status: Hosted externally, but copy alignment still pending**
 
 These may live outside the repo, but they must be ready before submission.
 
@@ -138,6 +152,11 @@ Checklist:
 - testing instructions
 - valid test credentials
 - short screencast showing onboarding and core flows
+- ensure the public privacy policy matches validated app behavior, including:
+  - preserved agreement proof artifacts
+  - customer-data redaction behavior
+  - retention windows
+  - compliance webhook handling
 
 Definition of done:
 
@@ -156,6 +175,8 @@ Technical checks:
 - webhook delivery path for `orders/create`
 - privacy webhooks
 - error states and recovery
+- staging deploy of the latest privacy changes
+- one real webhook delivery verification pass against the staging app URL
 
 Repo checks:
 
@@ -194,10 +215,16 @@ If any of those five items are incomplete, delay submission.
 - Where are the terms of service hosted?
 - What exact process will fulfill `customers/data_request`?
 - Has protected customer data access already been requested and approved in the Partner Dashboard?
+- Has the latest privacy code been deployed to staging and verified through real Shopify webhook delivery?
 
 ## Notes
 
 - Limited visibility is still a public App Store listing, so normal public-app review expectations still apply.
 - `npm run build` passed during audit.
+- `customers/data_request` and `customers/redact` were successfully validated against staging/dev data using an internal test harness:
+  - `customers/data_request` created a `PrivacyDataRequest` row with matching export data
+  - `customers/redact` cleared delivery identity, order telemetry, privacy export data, and agreement identity fields while preserving a redacted agreement artifact
+- `shop/redact` destructive behavior was also observed in staging/dev and removed shop-scoped data as expected.
+- `/app/privacy-test` now exists only as an internal route and should be enabled only with `ENABLE_INTERNAL_TEST_ROUTES=true` outside production.
 - `npm run lint` currently fails because the repo does not include an ESLint config.
 - `npm audit --omit=dev` currently reports unresolved vulnerabilities that should be triaged before launch.

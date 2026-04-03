@@ -57,6 +57,11 @@ function normalizeOptionalString(value: unknown) {
   return normalized || null;
 }
 
+function normalizeShopifyCustomerId(value: unknown) {
+  const normalized = normalizeOptionalString(value);
+  return normalized ? normalizeShopifyResourceId(normalized) : null;
+}
+
 function getCheckoutAuditFields(payload: any) {
   return {
     browserIp:
@@ -286,6 +291,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const orderNumber = payload.order_number?.toString() || orderId;
   const customerEmail = payload.contact_email || payload.email || "";
   const customerName = buildCustomerName(payload);
+  const shopifyCustomerId = normalizeShopifyCustomerId(payload.customer?.id);
   const checkoutAuditFields = getCheckoutAuditFields(payload);
 
   // Double check if we already processed it
@@ -352,6 +358,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         data: {
           shop,
           shopifyOrderId: orderId,
+          shopifyCustomerId,
           orderNumber,
           browserIp: checkoutAuditFields.browserIp,
           userAgent: checkoutAuditFields.userAgent,
@@ -362,6 +369,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           deliveryAccess: {
             create: {
               shop,
+              shopifyCustomerId,
               customerEmail,
               customerName,
               downloadToken: token,
