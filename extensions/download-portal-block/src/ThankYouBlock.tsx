@@ -27,7 +27,7 @@ function ThankYouBlock() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const orderId = orderConfirmation?.order?.id;
   const orderNumber = orderConfirmation?.number;
-  const appUrl = 'https://producer-launchpad-staging.fly.dev';
+  const appUrl = 'https://producer-launchpad-app.fly.dev';
 
   useEffect(() => {
     if (editor || !appUrl || !orderId || !orderNumber) return;
