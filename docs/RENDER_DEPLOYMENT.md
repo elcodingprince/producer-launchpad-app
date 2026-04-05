@@ -59,8 +59,38 @@ Set these in Render:
 - `DELIVERY_EMAIL_BRAND_NAME=Producer Launchpad`
 - `RESEND_WEBHOOKS_ENABLED=false`
 - `RESEND_WEBHOOK_SECRET=...` if webhook handling is enabled
+- `INTERNAL_JOB_SECRET=...` random secret used to authorize internal deletion-job processing
 
 ## Important Notes
+
+### 0. Keep uninstall deletion jobs moving
+
+Producer Launchpad now queues managed-storage cleanup when Shopify sends
+`APP_UNINSTALLED` and `SHOP_REDACT`. The webhook returns quickly, then the app
+deletes uploaded R2 objects in the background before removing related app
+records.
+
+To support the public "within 7 days" deletion promise, configure a recurring
+internal job trigger that sends a `POST` request to:
+
+- `https://YOUR-APP-HOST/api/internal/shop-deletion-jobs`
+
+Use this header:
+
+- `x-internal-job-secret: YOUR_INTERNAL_JOB_SECRET`
+
+Suggested request body:
+
+```json
+{ "maxJobs": 5, "batchSize": 25 }
+```
+
+Suggested cadence:
+
+- every 10 to 15 minutes in production
+
+This route is for internal operations only. Do not expose the secret in client
+code or public documentation.
 
 ### 1. Use PostgreSQL in production
 
@@ -91,16 +121,19 @@ Later improvements can include:
 2. Create the Render web service from the repo.
 3. Add the environment variables.
 4. Ensure `npm run db:migrate:deploy` runs before the release is promoted.
-5. Deploy.
-6. Open the live URL and verify the app boots.
-7. Update Shopify app URLs and redirects.
-8. Test:
+5. Configure the recurring internal `POST /api/internal/shop-deletion-jobs`
+   trigger with `INTERNAL_JOB_SECRET`.
+6. Deploy.
+7. Open the live URL and verify the app boots.
+8. Update Shopify app URLs and redirects.
+9. Test:
    - install
    - reinstall
    - onboarding
    - order webhook
    - delivery portal
    - PDF download
+   - uninstall cleanup queue
 
 ## If PDF Generation Fails
 

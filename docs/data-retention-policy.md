@@ -6,19 +6,13 @@ Draft status: internal working draft for operations and review.
 
 Producer Launchpad should not retain protected customer data longer than needed to operate the app, support merchants, preserve agreement evidence, and satisfy platform or legal compliance obligations.
 
-## Proposed Retention Targets
+## Launch Retention Targets
 
-### Delivery access and delivery status records
+### Core order, delivery, and agreement records
 
-- target retention: 24 months after the related order, unless a shorter or longer period is required for support or dispute handling
-
-### Executed agreements and agreement evidence
-
-- target retention: 24 months after purchase, unless a merchant support, legal, or dispute matter requires continued retention
-
-### Order-linked audit metadata
-
-- target retention: 12 months after the related order unless required for active support or incident review
+- retained while the merchant actively uses Producer Launchpad
+- purpose: preserve sold-license proof, maintain delivery history, and support merchant operations
+- deletion trigger: uninstall, `shop/redact`, or customer redact handling where applicable
 
 ### Privacy request exports
 
@@ -31,6 +25,7 @@ Producer Launchpad should not retain protected customer data longer than needed 
 ### Shop uninstall and redact events
 
 - customer and shop data should be deleted or redacted according to the Shopify compliance webhook workflow
+- merchant-uploaded files stored in Producer Launchpad managed storage should be queued for deletion immediately after uninstall and permanently removed within 7 days
 
 ## Operational Requirements
 
@@ -38,8 +33,11 @@ Producer Launchpad should not retain protected customer data longer than needed 
 - production backups must follow a defined retention period
 - local exports of protected customer data should be deleted promptly after fulfillment use
 
-## Next Implementation Steps
+## Current Implementation Notes
 
-- add scheduled cleanup for privacy request exports
-- define cleanup jobs for aged delivery and agreement data where appropriate
+- fulfilled privacy request exports are cleaned up after 90 days
+- browser and agreement telemetry fields are cleaned up after 90 days
+- delivery troubleshooting fields are cleaned up after 90 days
+- core order, delivery, and agreement records are retained for active stores and removed or redacted through uninstall and Shopify privacy-compliance workflows
+- maintain and monitor the managed-storage deletion queue used for uninstall and redact cleanup
 - align any production backup retention setting with this policy

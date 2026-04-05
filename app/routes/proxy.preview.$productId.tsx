@@ -1,11 +1,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import prisma from "~/db.server";
 import { downloadR2Object } from "~/services/r2.server";
-import {
-  getManagedR2Credentials,
-  getResolvedR2Credentials,
-  getStorageConfig,
-} from "~/services/storageConfig.server";
+import { getManagedR2Credentials } from "~/services/storageConfig.server";
 import { authenticate } from "~/shopify.server";
 
 const PREVIEW_CACHE_CONTROL = "private, no-store";
@@ -86,11 +82,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return new Response("Preview not found for this product.", { status: 404 });
   }
 
-  const storageConfig = await getStorageConfig(session.shop);
-  const creds =
-    storageConfig?.mode === "self_managed"
-      ? await getResolvedR2Credentials(session.shop)
-      : getManagedR2Credentials();
+  const creds = getManagedR2Credentials();
 
   if (!creds) {
     return new Response("Preview storage is not configured.", { status: 500 });

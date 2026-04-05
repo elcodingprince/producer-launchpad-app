@@ -654,7 +654,7 @@ export default function Dashboard() {
                       </BlockStack>
 
                       <Card>
-                        <BlockStack gap="200">
+                        <BlockStack gap="300">
                           <Text as="h2" variant="headingMd">
                             Included with your app plan
                           </Text>
@@ -662,6 +662,13 @@ export default function Dashboard() {
                             There is nothing extra to connect here. Beat files
                             are uploaded inside the app and prepared for secure
                             post-purchase delivery automatically.
+                          </Text>
+                          <Text as="p" tone="subdued">
+                            If you uninstall Producer Launchpad, we queue
+                            deletion immediately and permanently remove uploaded
+                            files plus app-controlled records within 7 days.
+                            Download anything you want to keep before
+                            uninstalling.
                           </Text>
                         </BlockStack>
                       </Card>

@@ -10,11 +10,7 @@ import { PassThrough, Readable } from "node:stream";
 import prisma from "~/db.server";
 import { parseExecutedAgreementLicense } from "~/services/executedAgreements.server";
 import { downloadR2Object } from "~/services/r2.server";
-import {
-  getManagedR2Credentials,
-  getResolvedR2Credentials,
-  getStorageConfig,
-} from "~/services/storageConfig.server";
+import { getManagedR2Credentials } from "~/services/storageConfig.server";
 
 function normalizeShopifyResourceId(id: string) {
   const match = id.match(/\/(\d+)$/);
@@ -178,11 +174,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     return Response.redirect(`/api/files/${token}/${audioFiles[0].id}`, 302);
   }
 
-  const storageConfig = await getStorageConfig(order.shop);
-  const creds =
-    storageConfig?.mode === "self_managed"
-      ? await getResolvedR2Credentials(order.shop)
-      : getManagedR2Credentials();
+  const creds = getManagedR2Credentials();
 
   if (!creds) {
     return new Response(

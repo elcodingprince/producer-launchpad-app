@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import type {
-  DeliveryAccess,
   ExecutedAgreement,
   Order,
   OrderItem,
@@ -14,6 +13,10 @@ import {
 } from "~/services/licenses/agreementRenderer.server";
 import { generatePdfFromHtml } from "~/services/pdf/htmlToPdf.server";
 
+// Launch policy: core transaction, delivery, and agreement records remain while
+// the merchant actively uses the app so they can support sold-license proof and
+// fulfillment history. Time-based cleanup currently applies only to sensitive
+// diagnostic metadata and fulfilled privacy-request artifacts.
 const PRIVACY_REQUEST_RETENTION_DAYS = 90;
 const TELEMETRY_RETENTION_DAYS = 90;
 const DELIVERY_EVENT_RETENTION_DAYS = 90;

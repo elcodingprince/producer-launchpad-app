@@ -12,10 +12,12 @@ import {
   isBillingGateEnabled,
 } from "~/services/billing.server";
 import { runPrivacyMaintenanceForShop } from "~/services/privacyCompliance.server";
+import { triggerQueuedShopDeletionProcessing } from "~/services/shopDeletionJobs.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { billing, redirect, session } = await authenticate.admin(request);
   await runPrivacyMaintenanceForShop(session.shop);
+  void triggerQueuedShopDeletionProcessing();
 
   if (!isBillingGateEnabled()) {
     return json({ billingRequired: false });
