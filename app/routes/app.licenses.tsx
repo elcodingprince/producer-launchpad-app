@@ -18,8 +18,11 @@ import {
   Button,
   Card,
   Checkbox,
+  EmptyState,
   FormLayout,
   Icon,
+  IndexFilters,
+  type IndexFiltersProps,
   IndexTable,
   InlineStack,
   Layout,
@@ -31,11 +34,21 @@ import {
   Text,
   TextField,
   Tooltip,
+  useIndexResourceState,
+  useSetIndexFiltersMode,
 } from "@shopify/polaris";
 import { CollectionIcon } from "@shopify/polaris-icons";
+import { AcknowledgmentModal } from "~/components/AcknowledgmentModal";
 import { FileFormatBadge } from "~/components/FileFormatBadge";
 import { LegalGuardrailModal } from "~/components/LegalGuardrailModal";
+import { SelectableListModal } from "~/components/SelectableListModal";
 import prisma from "~/db.server";
+import {
+  acceptMerchantAcknowledgment,
+  hasMerchantAcknowledged,
+  MERCHANT_ACKNOWLEDGMENT_KEYS,
+  normalizeSessionUserId,
+} from "~/services/merchantAcknowledgments.server";
 import {
   buildDerivedLicenseFields,
   getOfferArchetypeConfig,
@@ -81,6 +94,16 @@ type LicenseUsageSummary = {
   beatTitles: string[];
 };
 
+type LicenseBundle = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  isStarterBundle: boolean;
+  licenseMetaobjectIds: string[];
+  licenseNames: string[];
+  updatedAt: string;
+};
+
 type LimitPresetFieldKey =
   | "streamLimit"
   | "copyLimit"
@@ -114,8 +137,10 @@ type ActionDataShape = {
   intent?: string;
   error?: string;
   requiresGuardrail?: boolean;
+  requiresCustomTemplateGuardrail?: boolean;
   templateHandle?: string;
   starterVersion?: string | null;
+  bundleId?: string;
 };
 
 type AgreementPreviewData = {
@@ -162,6 +187,12 @@ const AGREEMENT_PREVIEW_TABS = [
   { id: "resolved", content: "With my settings" },
   { id: "starter", content: "Starter template" },
 ];
+const LICENSE_TABLE_TABS = [
+  { id: "all-licenses", content: "All licenses" },
+  { id: "bundles", content: "Bundles" },
+];
+const STARTER_BUNDLE_ID = "starter-preset-bundle";
+const STARTER_BUNDLE_NAME = "Starter Preset";
 
 function buildArchetypeBoundForm(
   offerArchetype: string,
@@ -373,20 +404,19 @@ function parseFileFormatBadges(value: string) {
     .filter(Boolean);
 }
 
-function normalizeSessionUserId(value: unknown) {
-  if (typeof value === "bigint") return value;
-  if (typeof value === "number" && Number.isInteger(value))
-    return BigInt(value);
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 
-  if (typeof value === "string" && value.trim()) {
-    try {
-      return BigInt(value);
-    } catch {
-      return null;
-    }
+function buildBundleMembershipSummary(bundleNames: string[]) {
+  if (bundleNames.length === 0) {
+    return { primary: "Manual only", secondary: [] as string[] };
   }
 
-  return null;
+  return {
+    primary: bundleNames[0],
+    secondary: bundleNames.slice(1),
+  };
 }
 
 function getLicenseStatus(
@@ -491,21 +521,39 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const starterHandles = [...STARTER_HANDLES];
-    const [licenses, licenseUsageById, guardrailAcceptances] =
-      await Promise.all([
-        productService.getLicenseMetaobjects(),
-        getLicenseUsage(admin),
-        prisma.templateGuardrailAcceptance.findMany({
-          where: {
-            shop: session.shop,
-            templateHandle: { in: starterHandles },
+    const [
+      licenses,
+      licenseUsageById,
+      guardrailAcceptances,
+      hasAcceptedCustomTemplateGuardrail,
+      bundleRecords,
+    ] = await Promise.all([
+      productService.getLicenseMetaobjects(),
+      getLicenseUsage(admin),
+      prisma.templateGuardrailAcceptance.findMany({
+        where: {
+          shop: session.shop,
+          templateHandle: { in: starterHandles },
+        },
+        select: {
+          templateHandle: true,
+          starterVersion: true,
+        },
+      }),
+      hasMerchantAcknowledged(
+        session.shop,
+        MERCHANT_ACKNOWLEDGMENT_KEYS.customLicenseTemplateCreation,
+      ),
+      prisma.licenseBundle.findMany({
+        where: { shop: session.shop },
+        include: {
+          items: {
+            orderBy: { sortOrder: "asc" },
           },
-          select: {
-            templateHandle: true,
-            starterVersion: true,
-          },
-        }),
-      ]);
+        },
+        orderBy: { updatedAt: "desc" },
+      }),
+    ]);
 
     const acceptedStarterKeys = new Set(
       guardrailAcceptances.map(
@@ -535,9 +583,52 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         return a.licenseName.localeCompare(b.licenseName);
       });
 
+    const starterBundle: LicenseBundle = {
+      id: STARTER_BUNDLE_ID,
+      name: STARTER_BUNDLE_NAME,
+      isDefault: true,
+      isStarterBundle: true,
+      licenseMetaobjectIds: normalizedLicenses
+        .filter((license) => license.isStarter)
+        .map((license) => license.id),
+      licenseNames: normalizedLicenses
+        .filter((license) => license.isStarter)
+        .map((license) => license.licenseName),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const customBundles: LicenseBundle[] = bundleRecords.map((bundle: {
+      id: string;
+      name: string;
+      isDefault: boolean;
+      updatedAt: Date;
+      items: Array<{
+        licenseMetaobjectId: string;
+        licenseHandle: string;
+      }>;
+    }) => ({
+      id: bundle.id,
+      name: bundle.name,
+      isDefault: bundle.isDefault,
+      isStarterBundle: false,
+      licenseMetaobjectIds: bundle.items.map(
+        (item: { licenseMetaobjectId: string }) => item.licenseMetaobjectId,
+      ),
+      licenseNames: bundle.items
+        .map((item: { licenseMetaobjectId: string; licenseHandle: string }) =>
+          normalizedLicenses.find(
+            (license) => license.id === item.licenseMetaobjectId,
+          )?.licenseName || item.licenseHandle,
+        )
+        .filter(Boolean),
+      updatedAt: bundle.updatedAt.toISOString(),
+    }));
+
     return json({
       licenses: normalizedLicenses,
+      bundles: [starterBundle, ...customBundles],
       licenseUsageById,
+      hasAcceptedCustomTemplateGuardrail,
       error: null,
     });
   } catch (error) {
@@ -545,7 +636,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json(
       {
         licenses: [] as LicenseTemplate[],
+        bundles: [] as LicenseBundle[],
         licenseUsageById: {} as Record<string, LicenseUsageSummary>,
+        hasAcceptedCustomTemplateGuardrail: false,
         error:
           error instanceof Error ? error.message : "Failed to load licenses",
       },
@@ -619,6 +712,198 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       intent,
       templateHandle,
       starterVersion,
+    } satisfies ActionDataShape);
+  }
+
+  if (intent === "accept_custom_template_guardrail") {
+    await acceptMerchantAcknowledgment({
+      shop: session.shop,
+      acknowledgment:
+        MERCHANT_ACKNOWLEDGMENT_KEYS.customLicenseTemplateCreation,
+      acceptedByUserId: sessionUserId,
+      acceptedByEmail: sessionEmail,
+    });
+
+    return json({
+      success: true,
+      intent,
+    } satisfies ActionDataShape);
+  }
+
+  if (intent === "create_bundle" || intent === "update_bundle") {
+    const bundleName = String(formData.get("bundleName") || "").trim();
+    const normalizedName = slugify(bundleName);
+    const selectedLicenseIds = formData
+      .getAll("licenseIds")
+      .map((value) => String(value))
+      .filter(Boolean);
+    const selectedLicenseHandles = formData
+      .getAll("licenseHandles")
+      .map((value) => String(value))
+      .filter(Boolean);
+    const bundleId = String(formData.get("bundleId") || "").trim();
+
+    if (!bundleName || !normalizedName) {
+      return json(
+        {
+          success: false,
+          intent,
+          error: "Bundle name is required.",
+        } satisfies ActionDataShape,
+        { status: 400 },
+      );
+    }
+
+    if (selectedLicenseIds.length === 0) {
+      return json(
+        {
+          success: false,
+          intent,
+          error: "Select at least one license to include in this bundle.",
+        } satisfies ActionDataShape,
+        { status: 400 },
+      );
+    }
+
+    try {
+      const data = {
+        name: bundleName,
+        normalizedName,
+        shop: session.shop,
+      };
+
+      if (intent === "create_bundle") {
+        const createdBundle = await prisma.licenseBundle.create({
+          data: {
+            ...data,
+            items: {
+              create: selectedLicenseIds.map((licenseId, index) => ({
+                licenseMetaobjectId: licenseId,
+                licenseHandle: selectedLicenseHandles[index] || licenseId,
+                sortOrder: index,
+              })),
+            },
+          },
+        });
+
+        return json({
+          success: true,
+          intent,
+          bundleId: createdBundle.id,
+        } satisfies ActionDataShape);
+      }
+
+      if (!bundleId) {
+        return json(
+          {
+            success: false,
+            intent,
+            error: "Missing bundle id.",
+          } satisfies ActionDataShape,
+          { status: 400 },
+        );
+      }
+
+      await prisma.licenseBundle.update({
+        where: { id: bundleId },
+        data: {
+          name: bundleName,
+          normalizedName,
+          items: {
+            deleteMany: {},
+            create: selectedLicenseIds.map((licenseId, index) => ({
+              licenseMetaobjectId: licenseId,
+              licenseHandle: selectedLicenseHandles[index] || licenseId,
+              sortOrder: index,
+            })),
+          },
+        },
+      });
+
+      return json({
+        success: true,
+        intent,
+        bundleId,
+      } satisfies ActionDataShape);
+    } catch (error) {
+      return json(
+        {
+          success: false,
+          intent,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to save bundle.",
+        } satisfies ActionDataShape,
+        { status: 500 },
+      );
+    }
+  }
+
+  if (intent === "add_to_existing_bundles") {
+    const bundleIds = formData
+      .getAll("bundleIds")
+      .map((value) => String(value))
+      .filter(Boolean)
+      .filter((value) => value !== STARTER_BUNDLE_ID);
+    const selectedLicenseIds = formData
+      .getAll("licenseIds")
+      .map((value) => String(value))
+      .filter(Boolean);
+    const selectedLicenseHandles = formData
+      .getAll("licenseHandles")
+      .map((value) => String(value))
+      .filter(Boolean);
+
+    if (bundleIds.length === 0) {
+      return json(
+        {
+          success: false,
+          intent,
+          error: "Select at least one bundle.",
+        } satisfies ActionDataShape,
+        { status: 400 },
+      );
+    }
+
+    if (selectedLicenseIds.length === 0) {
+      return json(
+        {
+          success: false,
+          intent,
+          error: "Select at least one license.",
+        } satisfies ActionDataShape,
+        { status: 400 },
+      );
+    }
+
+    await prisma.$transaction(
+      bundleIds.flatMap((bundleId) =>
+        selectedLicenseIds.map((licenseId, index) =>
+          prisma.licenseBundleItem.upsert({
+            where: {
+              bundleId_licenseMetaobjectId: {
+                bundleId,
+                licenseMetaobjectId: licenseId,
+              },
+            },
+            update: {
+              licenseHandle: selectedLicenseHandles[index] || licenseId,
+            },
+            create: {
+              bundleId,
+              licenseMetaobjectId: licenseId,
+              licenseHandle: selectedLicenseHandles[index] || licenseId,
+              sortOrder: index,
+            },
+          }),
+        ),
+      ),
+    );
+
+    return json({
+      success: true,
+      intent,
     } satisfies ActionDataShape);
   }
 
@@ -727,6 +1012,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     if (intent === "create") {
+      const hasAcceptedCustomTemplateGuardrail = await hasMerchantAcknowledged(
+        session.shop,
+        MERCHANT_ACKNOWLEDGMENT_KEYS.customLicenseTemplateCreation,
+      );
+
+      if (!hasAcceptedCustomTemplateGuardrail) {
+        return json(
+          {
+            success: false,
+            intent,
+            error:
+              "Review and accept the custom template acknowledgment before creating a template.",
+            requiresCustomTemplateGuardrail: true,
+          } satisfies ActionDataShape,
+          { status: 403 },
+        );
+      }
+
       await client.createMetaobject({
         type: "beat_license",
         handle: normalizedHandle,
@@ -811,7 +1114,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function LicensesPage() {
   const {
     licenses,
+    bundles,
     licenseUsageById,
+    hasAcceptedCustomTemplateGuardrail:
+      initialHasAcceptedCustomTemplateGuardrail,
     error: loaderError,
   } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as
@@ -822,9 +1128,13 @@ export default function LicensesPage() {
   const navigate = useNavigate();
   const navigation = useNavigation();
   const [searchParams] = useSearchParams();
+  const { mode, setMode } = useSetIndexFiltersMode();
 
   const [licenseForm, setLicenseForm] =
     useState<LicenseFormState>(emptyLicenseForm);
+  const [queryValue, setQueryValue] = useState("");
+  const [selectedTableView, setSelectedTableView] = useState(0);
+  const [sortSelected, setSortSelected] = useState(["updated desc"]);
   const [selectedPreviewTab, setSelectedPreviewTab] = useState(0);
   const [activeRightsPopoverId, setActiveRightsPopoverId] = useState<
     string | null
@@ -852,7 +1162,40 @@ export default function LicensesPage() {
   const [acceptedStarterVersions, setAcceptedStarterVersions] = useState<
     Record<string, string>
   >({});
+  const [
+    hasAcceptedCustomTemplateGuardrail,
+    setHasAcceptedCustomTemplateGuardrail,
+  ] = useState(initialHasAcceptedCustomTemplateGuardrail);
+  const [customTemplateGuardrailOpen, setCustomTemplateGuardrailOpen] =
+    useState(false);
+  const [customTemplateGuardrailChecked, setCustomTemplateGuardrailChecked] =
+    useState(false);
+  const [pendingCreateAfterGuardrail, setPendingCreateAfterGuardrail] =
+    useState(false);
+  const [bundleModalMode, setBundleModalMode] = useState<
+    "create" | "update" | null
+  >(null);
+  const [bundleModalOpen, setBundleModalOpen] = useState(false);
+  const [bundleModalName, setBundleModalName] = useState("");
+  const [bundleModalSelectedLicenseIds, setBundleModalSelectedLicenseIds] =
+    useState<string[]>([]);
+  const [initialBundleModalName, setInitialBundleModalName] = useState("");
+  const [initialBundleModalSelectedLicenseIds, setInitialBundleModalSelectedLicenseIds] =
+    useState<string[]>([]);
+  const [bundleModalSearchValue, setBundleModalSearchValue] = useState("");
+  const [bundleModalShowSelectedOnly, setBundleModalShowSelectedOnly] =
+    useState(false);
+  const [editingBundleId, setEditingBundleId] = useState<string | null>(null);
+  const [addToBundlesModalOpen, setAddToBundlesModalOpen] = useState(false);
+  const [selectedBundleIds, setSelectedBundleIds] = useState<string[]>([]);
+  const [initialSelectedBundleIds, setInitialSelectedBundleIds] = useState<
+    string[]
+  >([]);
+  const [bundleSearchValue, setBundleSearchValue] = useState("");
+  const [bundleShowSelectedOnly, setBundleShowSelectedOnly] = useState(false);
   const previewRequestSequence = useRef(0);
+  const customTemplateGuardrailFetcher = useFetcher<ActionDataShape>();
+  const bundleFetcher = useFetcher<ActionDataShape>();
 
   const editingHandle = searchParams.get("edit");
   const isCreating = searchParams.get("new") === "1";
@@ -874,6 +1217,61 @@ export default function LicensesPage() {
       }),
     [acceptedStarterVersions, licenses],
   );
+  const bundleNamesByLicenseId = useMemo(() => {
+    const next = new Map<string, string[]>();
+
+    for (const license of licensesWithGuardrailState) {
+      if (license.isStarter) {
+        next.set(license.id, [STARTER_BUNDLE_NAME]);
+      }
+    }
+
+    for (const bundle of bundles) {
+      if (bundle.isStarterBundle) continue;
+
+      for (const licenseId of bundle.licenseMetaobjectIds) {
+        const existing = next.get(licenseId) ?? [];
+        existing.push(bundle.name);
+        next.set(licenseId, existing);
+      }
+    }
+
+    return next;
+  }, [bundles, licensesWithGuardrailState]);
+  const filteredLicenses = useMemo(() => {
+    const normalizedQuery = queryValue.trim().toLowerCase();
+
+    if (!normalizedQuery) return licensesWithGuardrailState;
+
+    return licensesWithGuardrailState.filter((license) => {
+      const bundleNames = bundleNamesByLicenseId.get(license.id) ?? [];
+      return (
+        license.licenseName.toLowerCase().includes(normalizedQuery) ||
+        license.handle.toLowerCase().includes(normalizedQuery) ||
+        bundleNames.some((name) => name.toLowerCase().includes(normalizedQuery))
+      );
+    });
+  }, [bundleNamesByLicenseId, licensesWithGuardrailState, queryValue]);
+  const filteredBundles = useMemo(() => {
+    const normalizedQuery = queryValue.trim().toLowerCase();
+
+    if (!normalizedQuery) return bundles;
+
+    return bundles.filter((bundle) => {
+      return (
+        bundle.name.toLowerCase().includes(normalizedQuery) ||
+        bundle.licenseNames.some((name) =>
+          name.toLowerCase().includes(normalizedQuery),
+        )
+      );
+    });
+  }, [bundles, queryValue]);
+  const {
+    selectedResources: selectedLicenseIds,
+    allResourcesSelected,
+    handleSelectionChange,
+    clearSelection,
+  } = useIndexResourceState(filteredLicenses);
   const editorLicense = useMemo(
     () =>
       licensesWithGuardrailState.find(
@@ -931,11 +1329,117 @@ export default function LicensesPage() {
       navigation.formMethod?.toLowerCase() === "post" &&
       navigation.formData?.get("intent") === "accept_guardrail");
   const isPreviewLoading = previewState.isLoading;
+  const isAcceptingCustomTemplateGuardrail =
+    customTemplateGuardrailFetcher.state !== "idle";
   const requiresEditorGuardrail = Boolean(
     editorLicense?.isStarter &&
     editorLicense.starterVersion &&
     !editorLicense.hasAcceptedGuardrail,
   );
+  const requiresCreateGuardrail =
+    editorMode === "create" && !hasAcceptedCustomTemplateGuardrail;
+  const customTemplateGuardrailError =
+    customTemplateGuardrailFetcher.data?.intent ===
+      "accept_custom_template_guardrail" &&
+    !customTemplateGuardrailFetcher.data.success
+      ? customTemplateGuardrailFetcher.data.error ||
+        "Unable to record your review right now."
+      : null;
+  const bundleError =
+    bundleFetcher.data && !bundleFetcher.data.success
+      ? bundleFetcher.data.error || "Unable to save bundle changes right now."
+      : null;
+  const hasCustomBundles = bundles.some((bundle) => !bundle.isStarterBundle);
+  const addableBundles = useMemo(
+    () => bundles.filter((bundle) => !bundle.isStarterBundle),
+    [bundles],
+  );
+  const filteredModalLicenses = useMemo(() => {
+    const normalizedQuery = bundleModalSearchValue.trim().toLowerCase();
+    const baseList = bundleModalShowSelectedOnly
+      ? licensesWithGuardrailState.filter((license) =>
+          bundleModalSelectedLicenseIds.includes(license.id),
+        )
+      : licensesWithGuardrailState;
+
+    if (!normalizedQuery) return baseList;
+
+    return baseList.filter((license) =>
+      license.licenseName.toLowerCase().includes(normalizedQuery),
+    );
+  }, [
+    bundleModalSearchValue,
+    bundleModalSelectedLicenseIds,
+    bundleModalShowSelectedOnly,
+    licensesWithGuardrailState,
+  ]);
+  const filteredBundleOptions = useMemo(() => {
+    const normalizedQuery = bundleSearchValue.trim().toLowerCase();
+    const baseList = bundleShowSelectedOnly
+      ? addableBundles.filter((bundle) => selectedBundleIds.includes(bundle.id))
+      : addableBundles;
+
+    if (!normalizedQuery) return baseList;
+
+    return baseList.filter((bundle) =>
+      bundle.name.toLowerCase().includes(normalizedQuery),
+    );
+  }, [addableBundles, bundleSearchValue, bundleShowSelectedOnly, selectedBundleIds]);
+  const selectedLicenseCount = selectedLicenseIds.length;
+  const selectedLicenseLabel = pluralize(selectedLicenseCount, "license");
+  const tableTabs = LICENSE_TABLE_TABS;
+  const sortOptions = useMemo<IndexFiltersProps["sortOptions"]>(
+    () => [
+      { label: "Updated newest", value: "updated desc", directionLabel: "Newest" },
+    ],
+    [],
+  );
+  const hasBundleModalUnsavedChanges = useMemo(() => {
+    const currentIds = [...bundleModalSelectedLicenseIds].sort().join("|");
+    const initialIds = [...initialBundleModalSelectedLicenseIds]
+      .sort()
+      .join("|");
+
+    return (
+      bundleModalName.trim() !== initialBundleModalName.trim() ||
+      currentIds !== initialIds
+    );
+  }, [
+    bundleModalName,
+    bundleModalSelectedLicenseIds,
+    initialBundleModalName,
+    initialBundleModalSelectedLicenseIds,
+  ]);
+  const hasAddToBundlesUnsavedChanges = useMemo(() => {
+    const currentIds = [...selectedBundleIds].sort().join("|");
+    const initialIds = [...initialSelectedBundleIds].sort().join("|");
+
+    return currentIds !== initialIds;
+  }, [initialSelectedBundleIds, selectedBundleIds]);
+  const bundleModalItems = useMemo(
+    () =>
+      filteredModalLicenses.map((license) => ({
+        id: license.id,
+        title: license.licenseName,
+        subtitle: `${formatLimit(license.streamLimit, "streams")} • ${parseFileFormatBadges(license.fileFormats).length} formats`,
+      })),
+    [filteredModalLicenses],
+  );
+  const bundleOptionItems = useMemo(
+    () =>
+      filteredBundleOptions.map((bundle) => ({
+        id: bundle.id,
+        title: bundle.name,
+        subtitle: `${pluralize(bundle.licenseNames.length, "license")} included`,
+      })),
+    [filteredBundleOptions],
+  );
+
+  useEffect(() => {
+    setHasAcceptedCustomTemplateGuardrail(
+      initialHasAcceptedCustomTemplateGuardrail,
+    );
+  }, [initialHasAcceptedCustomTemplateGuardrail]);
 
   useEffect(() => {
     if (editorMode === "create") {
@@ -1074,6 +1578,27 @@ export default function LicensesPage() {
 
   useEffect(() => {
     if (
+      customTemplateGuardrailFetcher.data?.success &&
+      customTemplateGuardrailFetcher.data.intent ===
+        "accept_custom_template_guardrail"
+    ) {
+      setHasAcceptedCustomTemplateGuardrail(true);
+      setCustomTemplateGuardrailOpen(false);
+      setCustomTemplateGuardrailChecked(false);
+
+      if (pendingCreateAfterGuardrail) {
+        setPendingCreateAfterGuardrail(false);
+        navigate("/app/licenses?new=1");
+      }
+    }
+  }, [
+    customTemplateGuardrailFetcher.data,
+    navigate,
+    pendingCreateAfterGuardrail,
+  ]);
+
+  useEffect(() => {
+    if (
       actionData?.success &&
       (actionData.intent === "update" || actionData.intent === "create")
     ) {
@@ -1082,6 +1607,27 @@ export default function LicensesPage() {
       navigate(`/app/licenses?saved=${nextSavedState}`, { replace: true });
     }
   }, [actionData, navigate]);
+
+  useEffect(() => {
+    if (!bundleFetcher.data?.success) return;
+
+    if (
+      bundleFetcher.data.intent === "create_bundle" ||
+      bundleFetcher.data.intent === "update_bundle" ||
+      bundleFetcher.data.intent === "add_to_existing_bundles"
+    ) {
+      setBundleModalOpen(false);
+      setAddToBundlesModalOpen(false);
+      setBundleModalSearchValue("");
+      setBundleSearchValue("");
+      setBundleModalShowSelectedOnly(false);
+      setBundleShowSelectedOnly(false);
+      setSelectedBundleIds([]);
+      setEditingBundleId(null);
+      clearSelection();
+      navigate("/app/licenses", { replace: true });
+    }
+  }, [bundleFetcher.data, clearSelection, navigate]);
 
   useEffect(() => {
     if (
@@ -1119,9 +1665,67 @@ export default function LicensesPage() {
     }
   }, [actionData, editorLicense]);
 
+  useEffect(() => {
+    if (actionData?.requiresCustomTemplateGuardrail) {
+      setCustomTemplateGuardrailOpen(true);
+    }
+  }, [actionData]);
+
+  useEffect(() => {
+    if (isCreating && !hasAcceptedCustomTemplateGuardrail) {
+      setCustomTemplateGuardrailOpen(true);
+    }
+  }, [hasAcceptedCustomTemplateGuardrail, isCreating]);
+
   const handleOpenCreate = useCallback(() => {
+    if (!hasAcceptedCustomTemplateGuardrail) {
+      setPendingCreateAfterGuardrail(true);
+      setCustomTemplateGuardrailChecked(false);
+      setCustomTemplateGuardrailOpen(true);
+      return;
+    }
+
     navigate("/app/licenses?new=1");
-  }, [navigate]);
+  }, [hasAcceptedCustomTemplateGuardrail, navigate]);
+
+  const handleOpenCreateBundle = useCallback(
+    (preselectedLicenseIds: string[] = []) => {
+      setBundleModalMode("create");
+      setEditingBundleId(null);
+      setBundleModalName("");
+      setBundleModalSelectedLicenseIds(preselectedLicenseIds);
+      setInitialBundleModalName("");
+      setInitialBundleModalSelectedLicenseIds(preselectedLicenseIds);
+      setBundleModalSearchValue("");
+      setBundleModalShowSelectedOnly(false);
+      setBundleModalOpen(true);
+    },
+    [],
+  );
+
+  const handleOpenEditBundle = useCallback((bundle: LicenseBundle) => {
+    if (bundle.isStarterBundle) {
+      return;
+    }
+
+    setBundleModalMode("update");
+    setEditingBundleId(bundle.id);
+    setBundleModalName(bundle.name);
+    setBundleModalSelectedLicenseIds(bundle.licenseMetaobjectIds);
+    setInitialBundleModalName(bundle.name);
+    setInitialBundleModalSelectedLicenseIds(bundle.licenseMetaobjectIds);
+    setBundleModalSearchValue("");
+    setBundleModalShowSelectedOnly(false);
+    setBundleModalOpen(true);
+  }, []);
+
+  const handleOpenAddToBundles = useCallback(() => {
+    setSelectedBundleIds([]);
+    setInitialSelectedBundleIds([]);
+    setBundleSearchValue("");
+    setBundleShowSelectedOnly(false);
+    setAddToBundlesModalOpen(true);
+  }, []);
 
   const handleOpenEdit = useCallback(
     (license: LicenseTemplate) => {
@@ -1145,6 +1749,33 @@ export default function LicensesPage() {
     setPendingEditHandle(null);
     navigate("/app/licenses");
   }, [navigate]);
+
+  const handleCloseCustomTemplateGuardrail = useCallback(() => {
+    setCustomTemplateGuardrailOpen(false);
+    setCustomTemplateGuardrailChecked(false);
+    setPendingCreateAfterGuardrail(false);
+
+    if (isCreating && !hasAcceptedCustomTemplateGuardrail) {
+      navigate("/app/licenses");
+    }
+  }, [hasAcceptedCustomTemplateGuardrail, isCreating, navigate]);
+
+  const handleCloseBundleModal = useCallback(() => {
+    setBundleModalOpen(false);
+    setEditingBundleId(null);
+    setInitialBundleModalName("");
+    setInitialBundleModalSelectedLicenseIds([]);
+    setBundleModalSearchValue("");
+    setBundleModalShowSelectedOnly(false);
+  }, []);
+
+  const handleCloseAddToBundlesModal = useCallback(() => {
+    setAddToBundlesModalOpen(false);
+    setSelectedBundleIds([]);
+    setInitialSelectedBundleIds([]);
+    setBundleSearchValue("");
+    setBundleShowSelectedOnly(false);
+  }, []);
 
   const handleCloseGuardrailModal = useCallback(() => {
     setGuardrailModalTemplate(null);
@@ -1170,6 +1801,105 @@ export default function LicensesPage() {
     guardrailFetcher.submit(formData, { method: "post" });
   }, [guardrailFetcher, guardrailModalTemplate]);
 
+  const handleAcceptCustomTemplateGuardrail = useCallback(() => {
+    const formData = new FormData();
+    formData.append("intent", "accept_custom_template_guardrail");
+    customTemplateGuardrailFetcher.submit(formData, { method: "post" });
+  }, [customTemplateGuardrailFetcher]);
+
+  const handleQueryValueRemove = useCallback(() => setQueryValue(""), []);
+
+  const handleClearAll = useCallback(() => {
+    setQueryValue("");
+    setSelectedTableView(0);
+  }, []);
+
+  const handleToggleBundleLicense = useCallback((licenseId: string) => {
+    setBundleModalSelectedLicenseIds((current) =>
+      current.includes(licenseId)
+        ? current.filter((id) => id !== licenseId)
+        : [...current, licenseId],
+    );
+  }, []);
+
+  const handleSelectAllVisibleBundleLicenses = useCallback(() => {
+    setBundleModalSelectedLicenseIds((current) => {
+      const next = new Set(current);
+      filteredModalLicenses.forEach((license) => next.add(license.id));
+      return [...next];
+    });
+  }, [filteredModalLicenses]);
+
+  const handleClearAllBundleLicenses = useCallback(() => {
+    setBundleModalSelectedLicenseIds([]);
+  }, []);
+
+  const handleToggleBundle = useCallback((bundleId: string) => {
+    setSelectedBundleIds((current) =>
+      current.includes(bundleId)
+        ? current.filter((id) => id !== bundleId)
+        : [...current, bundleId],
+    );
+  }, []);
+
+  const handleSelectAllVisibleBundles = useCallback(() => {
+    setSelectedBundleIds((current) => {
+      const next = new Set(current);
+      filteredBundleOptions.forEach((bundle) => next.add(bundle.id));
+      return [...next];
+    });
+  }, [filteredBundleOptions]);
+
+  const handleClearAllBundles = useCallback(() => {
+    setSelectedBundleIds([]);
+  }, []);
+
+  const handleSubmitBundle = useCallback(() => {
+    const selectedLicenses = licensesWithGuardrailState.filter((license) =>
+      bundleModalSelectedLicenseIds.includes(license.id),
+    );
+    const formData = new FormData();
+    formData.append(
+      "intent",
+      bundleModalMode === "update" ? "update_bundle" : "create_bundle",
+    );
+    formData.append("bundleName", bundleModalName);
+    if (editingBundleId) {
+      formData.append("bundleId", editingBundleId);
+    }
+
+    selectedLicenses.forEach((license) => {
+      formData.append("licenseIds", license.id);
+      formData.append("licenseHandles", license.handle);
+    });
+
+    bundleFetcher.submit(formData, { method: "post" });
+  }, [
+    bundleFetcher,
+    bundleModalMode,
+    bundleModalName,
+    bundleModalSelectedLicenseIds,
+    editingBundleId,
+    licensesWithGuardrailState,
+  ]);
+
+  const handleSubmitAddToBundles = useCallback(() => {
+    const selectedLicenses = filteredLicenses.filter((license) =>
+      selectedLicenseIds.includes(license.id),
+    );
+    const formData = new FormData();
+    formData.append("intent", "add_to_existing_bundles");
+    selectedBundleIds.forEach((bundleId) => {
+      formData.append("bundleIds", bundleId);
+    });
+    selectedLicenses.forEach((license) => {
+      formData.append("licenseIds", license.id);
+      formData.append("licenseHandles", license.handle);
+    });
+
+    bundleFetcher.submit(formData, { method: "post" });
+  }, [bundleFetcher, filteredLicenses, selectedBundleIds, selectedLicenseIds]);
+
   const handleRightsPopoverToggle = useCallback((templateId: string) => {
     setActiveRightsPopoverId((current) =>
       current === templateId ? null : templateId,
@@ -1189,6 +1919,11 @@ export default function LicensesPage() {
   }, []);
 
   const handleSave = useCallback(() => {
+    if (editorMode === "create" && !hasAcceptedCustomTemplateGuardrail) {
+      setCustomTemplateGuardrailOpen(true);
+      return;
+    }
+
     if (
       editorMode === "update" &&
       editorLicense?.isStarter &&
@@ -1203,7 +1938,14 @@ export default function LicensesPage() {
     appendLicenseFormFields(formData, licenseForm);
 
     submit(formData, { method: "post" });
-  }, [editorLicense, editorMode, licenseForm, requiresEditorGuardrail, submit]);
+  }, [
+    editorLicense,
+    editorMode,
+    hasAcceptedCustomTemplateGuardrail,
+    licenseForm,
+    requiresEditorGuardrail,
+    submit,
+  ]);
 
   if (isEditorOpen) {
     const usage = editorLicense
@@ -1250,7 +1992,9 @@ export default function LicensesPage() {
             onAction: handleSave,
             loading: isSaving,
             disabled:
-              !licenseForm.licenseName.trim() || requiresEditorGuardrail,
+              !licenseForm.licenseName.trim() ||
+              requiresEditorGuardrail ||
+              requiresCreateGuardrail,
           }}
           secondaryActions={[
             {
@@ -1275,6 +2019,34 @@ export default function LicensesPage() {
                 </Banner>
               </Layout.Section>
             )}
+
+            {customTemplateGuardrailError && (
+              <Layout.Section>
+                <Banner title="Unable to record review" tone="critical">
+                  <p>{customTemplateGuardrailError}</p>
+                </Banner>
+              </Layout.Section>
+            )}
+
+            {requiresCreateGuardrail ? (
+              <Layout.Section>
+                <Banner
+                  title="Review required before creating a custom template"
+                  tone="warning"
+                  action={{
+                    content: "Review & Accept",
+                    onAction: () => setCustomTemplateGuardrailOpen(true),
+                  }}
+                >
+                  <p>
+                    You&apos;re creating a reusable template with terms you
+                    control. Producer Launchpad can generate and deliver this
+                    agreement, but you are responsible for the final language
+                    and settings you publish to buyers.
+                  </p>
+                </Banner>
+              </Layout.Section>
+            ) : null}
 
             {requiresEditorGuardrail && editorLicense ? (
               <Layout.Section>
@@ -1913,6 +2685,25 @@ export default function LicensesPage() {
           onAccept={handleAcceptGuardrail}
           onClose={handleCloseGuardrailModal}
         />
+
+        <AcknowledgmentModal
+          open={customTemplateGuardrailOpen}
+          title="You’re customizing the final license terms"
+          primaryActionLabel="I understand"
+          secondaryActionLabel="Back"
+          checkboxLabel="I understand that custom license terms are my responsibility."
+          checkboxChecked={customTemplateGuardrailChecked}
+          primaryActionLoading={isAcceptingCustomTemplateGuardrail}
+          onCheckboxChange={setCustomTemplateGuardrailChecked}
+          onPrimaryAction={handleAcceptCustomTemplateGuardrail}
+          onClose={handleCloseCustomTemplateGuardrail}
+        >
+          <Text as="p" variant="bodyMd">
+            This template includes terms you control. Producer Launchpad can
+            generate and deliver the agreement, but you are responsible for the
+            final language and settings you publish to buyers.
+          </Text>
+        </AcknowledgmentModal>
       </>
     );
   }
@@ -1921,12 +2712,18 @@ export default function LicensesPage() {
     <>
       <Page
         fullWidth
-        title="Starter Presets & Reusable Templates"
-        subtitle="Manage the Industry Standard Foundations and reusable templates your beat offers reference for storefront display, agreement generation, and delivery packaging."
+        title="Licenses"
+        subtitle="Manage reusable license templates and bundle them into faster upload setups."
         primaryAction={{
-          content: "Add template",
+          content: "Add license",
           onAction: handleOpenCreate,
         }}
+        secondaryActions={[
+          {
+            content: "Create bundle",
+            onAction: () => handleOpenCreateBundle(),
+          },
+        ]}
       >
         <Layout>
           {loaderError && (
@@ -1945,6 +2742,22 @@ export default function LicensesPage() {
             </Layout.Section>
           )}
 
+          {customTemplateGuardrailError && (
+            <Layout.Section>
+              <Banner title="Unable to record review" tone="critical">
+                <p>{customTemplateGuardrailError}</p>
+              </Banner>
+            </Layout.Section>
+          )}
+
+          {bundleError && (
+            <Layout.Section>
+              <Banner title="Unable to update bundle" tone="critical">
+                <p>{bundleError}</p>
+              </Banner>
+            </Layout.Section>
+          )}
+
           {savedState && (
             <Layout.Section>
               <Banner
@@ -1952,6 +2765,21 @@ export default function LicensesPage() {
                   savedState === "updated"
                     ? "Template updated"
                     : "Template created"
+                }
+                tone="success"
+              />
+            </Layout.Section>
+          )}
+
+          {bundleFetcher.data?.success && (
+            <Layout.Section>
+              <Banner
+                title={
+                  bundleFetcher.data.intent === "create_bundle"
+                    ? "Bundle created"
+                    : bundleFetcher.data.intent === "update_bundle"
+                      ? "Bundle updated"
+                      : "Licenses included in bundle"
                 }
                 tone="success"
               />
@@ -1973,58 +2801,113 @@ export default function LicensesPage() {
                   <Box padding="400">
                     <BlockStack gap="200">
                       <Text as="p" variant="bodyMd" fontWeight="medium">
-                        No Reusable Templates yet
+                        No licenses yet
                       </Text>
                       <Text as="p" tone="subdued">
-                        Create your first template to define storefront copy,
+                        Create your first license to define storefront copy,
                         usage limits, and delivery options for new beat offers.
                       </Text>
                       <InlineStack>
-                        <Button onClick={handleOpenCreate}>Add template</Button>
+                        <Button onClick={handleOpenCreate}>Add license</Button>
                       </InlineStack>
                     </BlockStack>
                   </Box>
                 </Card>
               ) : (
                 <Card padding="0">
-                  <IndexTable
-                    selectable={false}
-                    resourceName={{ singular: "template", plural: "templates" }}
-                    itemCount={licensesWithGuardrailState.length}
-                    headings={[
-                      { title: "Template" },
-                      { title: "Rights" },
-                      { title: "Delivery package" },
-                      { title: "Used by" },
-                      { title: "Status" },
-                      { title: "" },
-                    ]}
-                  >
-                    {licensesWithGuardrailState.map((license, index) => {
-                      const usage = licenseUsageById[license.id];
-                      const status = getLicenseStatus(license, usage);
-                      const customTermCount = countCustomTerms(license.terms);
-                      const storefrontSummary = parseFeatureLines(
-                        license.featuresShort,
-                      );
-                      const fileBadges = parseFileFormatBadges(
-                        license.fileFormats,
-                      );
-                      const templateDerivedFields = buildDerivedLicenseFields(
-                        license.offerArchetype,
-                        {
-                          stemsPolicy: license.stemsPolicy,
-                        },
-                      );
+                  <IndexFilters
+                    queryValue={queryValue}
+                    queryPlaceholder={
+                      selectedTableView === 0
+                        ? "Search licenses"
+                        : "Search bundles"
+                    }
+                    onQueryChange={setQueryValue}
+                    onQueryClear={handleQueryValueRemove}
+                    cancelAction={{
+                      onAction: handleClearAll,
+                      disabled:
+                        !queryValue &&
+                        selectedTableView === 0 &&
+                        (sortSelected[0] || "updated desc") === "updated desc",
+                      loading: false,
+                    }}
+                    tabs={tableTabs}
+                    selected={selectedTableView}
+                    onSelect={(index) => {
+                      setSelectedTableView(index);
+                      setQueryValue("");
+                      clearSelection();
+                    }}
+                    filters={[]}
+                    appliedFilters={[]}
+                    onClearAll={handleClearAll}
+                    sortOptions={sortOptions}
+                    sortSelected={sortSelected}
+                    onSort={setSortSelected}
+                    mode={mode}
+                    setMode={setMode}
+                    canCreateNewView={false}
+                  />
 
-                      return (
-                        <IndexTable.Row
-                          key={license.id}
-                          id={license.id}
-                          position={index}
-                        >
-                          <IndexTable.Cell>
-                            <BlockStack gap="100">
+                  {selectedTableView === 0 ? (
+                    <IndexTable
+                      selectable
+                      resourceName={{ singular: "license", plural: "licenses" }}
+                      itemCount={filteredLicenses.length}
+                      selectedItemsCount={
+                        allResourcesSelected ? "All" : selectedLicenseIds.length
+                      }
+                      onSelectionChange={handleSelectionChange}
+                      promotedBulkActions={[
+                        {
+                          content: "Include in license bundles",
+                          onAction: handleOpenAddToBundles,
+                        },
+                        {
+                          content: "Create new license bundle",
+                          onAction: () =>
+                            handleOpenCreateBundle(selectedLicenseIds),
+                        },
+                      ]}
+                      headings={[
+                        { title: "License" },
+                        { title: "Bundle" },
+                        { title: "Rights" },
+                        { title: "Delivery package" },
+                        { title: "Used by" },
+                        { title: "Status" },
+                        { title: "" },
+                      ]}
+                    >
+                      {filteredLicenses.map((license, index) => {
+                        const usage = licenseUsageById[license.id];
+                        const status = getLicenseStatus(license, usage);
+                        const customTermCount = countCustomTerms(license.terms);
+                        const storefrontSummary = parseFeatureLines(
+                          license.featuresShort,
+                        );
+                        const fileBadges = parseFileFormatBadges(
+                          license.fileFormats,
+                        );
+                        const templateDerivedFields = buildDerivedLicenseFields(
+                          license.offerArchetype,
+                          {
+                            stemsPolicy: license.stemsPolicy,
+                          },
+                        );
+                        const bundleSummary = buildBundleMembershipSummary(
+                          bundleNamesByLicenseId.get(license.id) ?? [],
+                        );
+
+                        return (
+                          <IndexTable.Row
+                            key={license.id}
+                            id={license.id}
+                            position={index}
+                            selected={selectedLicenseIds.includes(license.id)}
+                          >
+                            <IndexTable.Cell>
                               <Text
                                 as="span"
                                 variant="bodyMd"
@@ -2032,46 +2915,42 @@ export default function LicensesPage() {
                               >
                                 {license.licenseName}
                               </Text>
-                              <InlineStack gap="200">
-                                {license.isStarter ? (
-                                  <Badge tone="success">Starter Preset</Badge>
-                                ) : (
-                                  <Badge>Reusable Template</Badge>
-                                )}
-                                {license.isStarter &&
-                                !license.hasAcceptedGuardrail ? (
-                                  <Badge tone="attention">
-                                    Review required
-                                  </Badge>
-                                ) : null}
-                              </InlineStack>
-                            </BlockStack>
-                          </IndexTable.Cell>
+                            </IndexTable.Cell>
 
-                          <IndexTable.Cell>
-                            <Popover
-                              active={activeRightsPopoverId === license.id}
-                              autofocusTarget="first-node"
-                              preferredAlignment="left"
-                              preferredPosition="below"
-                              onClose={() => setActiveRightsPopoverId(null)}
-                              activator={
-                                <Button
-                                  disclosure
-                                  variant="monochromePlain"
-                                  size="slim"
-                                  textAlign="left"
-                                  onClick={() =>
-                                    handleRightsPopoverToggle(license.id)
-                                  }
-                                >
-                                  {formatLimit(license.streamLimit, "streams")}
-                                </Button>
-                              }
-                            >
-                              <Box padding="400" minWidth="240px">
-                                <BlockStack gap="200">
-                                  <InlineStack gap="200" blockAlign="center">
+                            <IndexTable.Cell>
+                              <BlockStack gap="050">
+                                <Text as="p">{bundleSummary.primary}</Text>
+                                {bundleSummary.secondary.length > 0 ? (
+                                  <Text as="p" variant="bodySm" tone="subdued">
+                                    +{bundleSummary.secondary.length} more
+                                  </Text>
+                                ) : null}
+                              </BlockStack>
+                            </IndexTable.Cell>
+
+                            <IndexTable.Cell>
+                              <Popover
+                                active={activeRightsPopoverId === license.id}
+                                autofocusTarget="first-node"
+                                preferredAlignment="left"
+                                preferredPosition="below"
+                                onClose={() => setActiveRightsPopoverId(null)}
+                                activator={
+                                  <Button
+                                    disclosure
+                                    variant="monochromePlain"
+                                    size="slim"
+                                    textAlign="left"
+                                    onClick={() =>
+                                      handleRightsPopoverToggle(license.id)
+                                    }
+                                  >
+                                    {formatLimit(license.streamLimit, "streams")}
+                                  </Button>
+                                }
+                              >
+                                <Box padding="400" minWidth="240px">
+                                  <BlockStack gap="200">
                                     <Text
                                       as="p"
                                       variant="headingSm"
@@ -2079,218 +2958,386 @@ export default function LicensesPage() {
                                     >
                                       Usage boundaries
                                     </Text>
-                                    {license.isStarter ? (
-                                      <Badge tone="success">
-                                        Starter Preset
-                                      </Badge>
-                                    ) : (
-                                      <Badge>Reusable Template</Badge>
-                                    )}
-                                  </InlineStack>
-                                  <Text as="p">
-                                    {formatLimit(
-                                      license.streamLimit,
-                                      "streams",
-                                    )}
-                                  </Text>
-                                  <Text as="p">
-                                    {formatLimit(license.copyLimit, "copies")}
-                                  </Text>
-                                  <Text as="p">
-                                    {formatTermLength(license.termYears)}
-                                  </Text>
-                                  <Text as="p" tone="subdued">
-                                    {customTermCount} reusable section
-                                    {customTermCount === 1 ? "" : "s"}
-                                  </Text>
-                                </BlockStack>
-                              </Box>
-                            </Popover>
-                          </IndexTable.Cell>
-
-                          <IndexTable.Cell>
-                            <Popover
-                              active={activeDeliveryPopoverId === license.id}
-                              autofocusTarget="first-node"
-                              preferredAlignment="left"
-                              preferredPosition="below"
-                              onClose={() => setActiveDeliveryPopoverId(null)}
-                              activator={
-                                <Button
-                                  disclosure
-                                  variant="monochromePlain"
-                                  size="slim"
-                                  textAlign="left"
-                                  onClick={() =>
-                                    handleDeliveryPopoverToggle(license.id)
-                                  }
-                                >
-                                  {fileBadges.length > 0
-                                    ? `${fileBadges.length} formats`
-                                    : "No formats"}
-                                </Button>
-                              }
-                            >
-                              <Box padding="400" minWidth="260px">
-                                <BlockStack gap="300">
-                                  <Text
-                                    as="p"
-                                    variant="headingSm"
-                                    fontWeight="semibold"
-                                  >
-                                    Delivery files
-                                  </Text>
-                                  {fileBadges.length > 0 ? (
-                                    <InlineStack gap="200">
-                                      {fileBadges.map((format) => (
-                                        <FileFormatBadge
-                                          key={format}
-                                          format={format}
-                                        />
-                                      ))}
-                                    </InlineStack>
-                                  ) : (
-                                    <Text as="p" tone="subdued">
-                                      No file formats listed yet
-                                    </Text>
-                                  )}
-
-                                  <InlineStack gap="200">
-                                    <Badge
-                                      tone={getTemplateStemsBadgeTone(
-                                        license.stemsPolicy,
+                                    <Text as="p">
+                                      {formatLimit(
+                                        license.streamLimit,
+                                        "streams",
                                       )}
-                                    >
-                                      {templateDerivedFields.stemsBehaviorLabel}
-                                    </Badge>
-                                  </InlineStack>
+                                    </Text>
+                                    <Text as="p">
+                                      {formatLimit(license.copyLimit, "copies")}
+                                    </Text>
+                                    <Text as="p">
+                                      {formatTermLength(license.termYears)}
+                                    </Text>
+                                    <Text as="p" tone="subdued">
+                                      {customTermCount} reusable section
+                                      {customTermCount === 1 ? "" : "s"}
+                                    </Text>
+                                  </BlockStack>
+                                </Box>
+                              </Popover>
+                            </IndexTable.Cell>
 
-                                  <Text as="p" tone="subdued">
-                                    {
-                                      templateDerivedFields.stemsBehaviorHelpText
+                            <IndexTable.Cell>
+                              <Popover
+                                active={activeDeliveryPopoverId === license.id}
+                                autofocusTarget="first-node"
+                                preferredAlignment="left"
+                                preferredPosition="below"
+                                onClose={() => setActiveDeliveryPopoverId(null)}
+                                activator={
+                                  <Button
+                                    disclosure
+                                    variant="monochromePlain"
+                                    size="slim"
+                                    textAlign="left"
+                                    onClick={() =>
+                                      handleDeliveryPopoverToggle(license.id)
                                     }
-                                  </Text>
-
-                                  {storefrontSummary.length > 0 ? (
-                                    <List type="bullet">
-                                      {storefrontSummary
-                                        .slice(0, 3)
-                                        .map((feature) => (
-                                          <List.Item key={feature}>
-                                            {feature}
-                                          </List.Item>
-                                        ))}
-                                    </List>
-                                  ) : (
-                                    <Text as="p" tone="subdued">
-                                      No storefront summary yet
-                                    </Text>
-                                  )}
-                                </BlockStack>
-                              </Box>
-                            </Popover>
-                          </IndexTable.Cell>
-
-                          <IndexTable.Cell>
-                            <Popover
-                              active={activeUsagePopoverId === license.id}
-                              autofocusTarget="first-node"
-                              preferredAlignment="left"
-                              preferredPosition="below"
-                              onClose={() => setActiveUsagePopoverId(null)}
-                              activator={
-                                <Button
-                                  disclosure={
-                                    usage?.beatCount ? "down" : undefined
-                                  }
-                                  variant="monochromePlain"
-                                  size="slim"
-                                  textAlign="left"
-                                  onClick={() =>
-                                    handleUsagePopoverToggle(license.id)
-                                  }
-                                >
-                                  {usage?.beatCount
-                                    ? `${usage.beatCount} beat${usage.beatCount === 1 ? "" : "s"}`
-                                    : "Not used yet"}
-                                </Button>
-                              }
-                            >
-                              <Box padding="400" minWidth="320px">
-                                <BlockStack gap="300">
-                                  <Text
-                                    as="p"
-                                    variant="headingSm"
-                                    fontWeight="semibold"
                                   >
-                                    Beats using this template
-                                  </Text>
-                                  {usage?.beatTitles.length ? (
-                                    <List type="bullet">
-                                      {usage.beatTitles
-                                        .slice(0, 6)
-                                        .map((title) => (
-                                          <List.Item key={title}>
-                                            {title}
-                                          </List.Item>
-                                        ))}
-                                    </List>
-                                  ) : (
-                                    <Text as="p" tone="subdued">
-                                      Assign this template to beats from the
-                                      upload or beat editing flow.
-                                    </Text>
-                                  )}
-                                  <Text as="p" tone="subdued">
-                                    {usage?.beatCount
-                                      ? `${usage.beatCount} beat${usage.beatCount === 1 ? "" : "s"} currently reference this template`
-                                      : "No beats reference this template yet"}
-                                  </Text>
-                                  <InlineStack>
-                                    <Button
-                                      variant="plain"
-                                      url={`/app/beats?license=${encodeURIComponent(license.id)}`}
+                                    {fileBadges.length > 0
+                                      ? `${fileBadges.length} formats`
+                                      : "No formats"}
+                                  </Button>
+                                }
+                              >
+                                <Box padding="400" minWidth="260px">
+                                  <BlockStack gap="300">
+                                    <Text
+                                      as="p"
+                                      variant="headingSm"
+                                      fontWeight="semibold"
                                     >
-                                      View in Beats
-                                    </Button>
-                                  </InlineStack>
-                                </BlockStack>
-                              </Box>
-                            </Popover>
+                                      Delivery files
+                                    </Text>
+                                    {fileBadges.length > 0 ? (
+                                      <InlineStack gap="200">
+                                        {fileBadges.map((format) => (
+                                          <FileFormatBadge
+                                            key={format}
+                                            format={format}
+                                          />
+                                        ))}
+                                      </InlineStack>
+                                    ) : (
+                                      <Text as="p" tone="subdued">
+                                        No file formats listed yet
+                                      </Text>
+                                    )}
+
+                                    <InlineStack gap="200">
+                                      <Badge
+                                        tone={getTemplateStemsBadgeTone(
+                                          license.stemsPolicy,
+                                        )}
+                                      >
+                                        {templateDerivedFields.stemsBehaviorLabel}
+                                      </Badge>
+                                    </InlineStack>
+
+                                    <Text as="p" tone="subdued">
+                                      {
+                                        templateDerivedFields.stemsBehaviorHelpText
+                                      }
+                                    </Text>
+
+                                    {storefrontSummary.length > 0 ? (
+                                      <List type="bullet">
+                                        {storefrontSummary
+                                          .slice(0, 3)
+                                          .map((feature) => (
+                                            <List.Item key={feature}>
+                                              {feature}
+                                            </List.Item>
+                                          ))}
+                                      </List>
+                                    ) : (
+                                      <Text as="p" tone="subdued">
+                                        No storefront summary yet
+                                      </Text>
+                                    )}
+                                  </BlockStack>
+                                </Box>
+                              </Popover>
+                            </IndexTable.Cell>
+
+                            <IndexTable.Cell>
+                              <Popover
+                                active={activeUsagePopoverId === license.id}
+                                autofocusTarget="first-node"
+                                preferredAlignment="left"
+                                preferredPosition="below"
+                                onClose={() => setActiveUsagePopoverId(null)}
+                                activator={
+                                  <Button
+                                    disclosure={
+                                      usage?.beatCount ? "down" : undefined
+                                    }
+                                    variant="monochromePlain"
+                                    size="slim"
+                                    textAlign="left"
+                                    onClick={() =>
+                                      handleUsagePopoverToggle(license.id)
+                                    }
+                                  >
+                                    {usage?.beatCount
+                                      ? pluralize(usage.beatCount, "beat")
+                                      : "Not used yet"}
+                                  </Button>
+                                }
+                              >
+                                <Box padding="400" minWidth="320px">
+                                  <BlockStack gap="300">
+                                    <Text
+                                      as="p"
+                                      variant="headingSm"
+                                      fontWeight="semibold"
+                                    >
+                                      Beats using this license
+                                    </Text>
+                                    {usage?.beatTitles.length ? (
+                                      <List type="bullet">
+                                        {usage.beatTitles
+                                          .slice(0, 6)
+                                          .map((title) => (
+                                            <List.Item key={title}>
+                                              {title}
+                                            </List.Item>
+                                          ))}
+                                      </List>
+                                    ) : (
+                                      <Text as="p" tone="subdued">
+                                        Assign this license to beats from the
+                                        upload or beat editing flow.
+                                      </Text>
+                                    )}
+                                    <InlineStack>
+                                      <Button
+                                        variant="plain"
+                                        url={`/app/beats?license=${encodeURIComponent(license.id)}`}
+                                      >
+                                        View in Beats
+                                      </Button>
+                                    </InlineStack>
+                                  </BlockStack>
+                                </Box>
+                              </Popover>
+                            </IndexTable.Cell>
+
+                            <IndexTable.Cell>
+                              <Tooltip
+                                content={
+                                  status.label === "Ready"
+                                    ? "This license is complete and already used by beats in your catalog."
+                                    : status.label === "Unused"
+                                      ? "This license is ready, but no beats reference it yet."
+                                      : "Add core package details before using this license on beats."
+                                }
+                              >
+                                <Badge tone={status.tone}>{status.label}</Badge>
+                              </Tooltip>
+                            </IndexTable.Cell>
+
+                            <IndexTable.Cell>
+                              <Button
+                                variant="plain"
+                                onClick={() => handleOpenEdit(license)}
+                              >
+                                Edit
+                              </Button>
+                            </IndexTable.Cell>
+                          </IndexTable.Row>
+                        );
+                      })}
+                    </IndexTable>
+                  ) : filteredBundles.length === 0 ? (
+                    <Card>
+                      <EmptyState
+                        heading="No bundles yet"
+                        image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                      >
+                        <p>
+                          Create a bundle to save a reusable set of licenses
+                          for faster beat uploads.
+                        </p>
+                        <Button onClick={() => handleOpenCreateBundle()}>
+                          Create bundle
+                        </Button>
+                      </EmptyState>
+                    </Card>
+                  ) : (
+                    <IndexTable
+                      selectable={false}
+                      resourceName={{ singular: "bundle", plural: "bundles" }}
+                      itemCount={filteredBundles.length}
+                      headings={[
+                        { title: "Bundle" },
+                        { title: "Included licenses" },
+                        { title: "Default" },
+                        { title: "Updated" },
+                        { title: "" },
+                      ]}
+                    >
+                      {filteredBundles.map((bundle, index) => (
+                        <IndexTable.Row
+                          key={bundle.id}
+                          id={bundle.id}
+                          position={index}
+                        >
+                          <IndexTable.Cell>
+                            <Text
+                              as="span"
+                              variant="bodyMd"
+                              fontWeight="semibold"
+                            >
+                              {bundle.name}
+                            </Text>
                           </IndexTable.Cell>
 
                           <IndexTable.Cell>
-                            <Tooltip
-                              content={
-                                status.label === "Ready"
-                                  ? "This template is complete and already used by beats in your catalog."
-                                  : status.label === "Unused"
-                                    ? "This template is ready, but no beats reference it yet."
-                                    : "Add core package details before using this template on beats."
-                              }
-                            >
-                              <Badge tone={status.tone}>{status.label}</Badge>
-                            </Tooltip>
+                            <BlockStack gap="050">
+                              <Text as="p">
+                                {pluralize(bundle.licenseNames.length, "license")}
+                              </Text>
+                              <Text as="p" variant="bodySm" tone="subdued">
+                                {bundle.licenseNames.slice(0, 3).join(", ") ||
+                                  "No licenses yet"}
+                              </Text>
+                            </BlockStack>
                           </IndexTable.Cell>
 
                           <IndexTable.Cell>
-                            <Button
-                              variant="plain"
-                              onClick={() => handleOpenEdit(license)}
-                            >
-                              Edit
-                            </Button>
+                            {bundle.isDefault ? (
+                              <Badge tone="success">Default</Badge>
+                            ) : (
+                              <Text as="span" tone="subdued">
+                                -
+                              </Text>
+                            )}
+                          </IndexTable.Cell>
+
+                          <IndexTable.Cell>
+                            <Text as="span" tone="subdued">
+                              {new Date(bundle.updatedAt).toLocaleDateString()}
+                            </Text>
+                          </IndexTable.Cell>
+
+                          <IndexTable.Cell>
+                            {bundle.isStarterBundle ? (
+                              <Text as="span" tone="subdued">
+                                Included by default
+                              </Text>
+                            ) : (
+                              <Button
+                                variant="plain"
+                                onClick={() => handleOpenEditBundle(bundle)}
+                              >
+                                Edit
+                              </Button>
+                            )}
                           </IndexTable.Cell>
                         </IndexTable.Row>
-                      );
-                    })}
-                  </IndexTable>
+                      ))}
+                    </IndexTable>
+                  )}
                 </Card>
               )}
             </BlockStack>
           </Layout.Section>
         </Layout>
       </Page>
+
+      <SelectableListModal
+        open={addToBundlesModalOpen}
+        title={
+          selectedLicenseCount > 0
+            ? `Include ${selectedLicenseLabel} in license bundles`
+            : "Include in license bundles"
+        }
+        resourceLabel="License bundles"
+        searchValue={bundleSearchValue}
+        searchPlaceholder="Search bundles"
+        showSelectedOnly={bundleShowSelectedOnly}
+        items={bundleOptionItems}
+        selectedIds={selectedBundleIds}
+        primaryActionLabel={
+          selectedLicenseCount === 1 ? "Add license" : "Add licenses"
+        }
+        primaryActionLoading={
+          bundleFetcher.state !== "idle" &&
+          bundleFetcher.formData?.get("intent") === "add_to_existing_bundles"
+        }
+        primaryActionDisabled={
+          selectedBundleIds.length === 0 ||
+          selectedLicenseCount === 0 ||
+          !hasCustomBundles
+        }
+        emptyStateTitle={
+          hasCustomBundles ? "No bundles match" : "No bundles available"
+        }
+        emptyStateBody={
+          hasCustomBundles
+            ? "Try a different search or turn off Show all selected."
+            : "Create a bundle first, then include these licenses in it."
+        }
+        hasUnsavedChanges={hasAddToBundlesUnsavedChanges}
+        onSearchChange={setBundleSearchValue}
+        onShowSelectedOnlyChange={setBundleShowSelectedOnly}
+        onToggleItem={handleToggleBundle}
+        onSelectAllVisible={handleSelectAllVisibleBundles}
+        onClearAllSelected={handleClearAllBundles}
+        onPrimaryAction={handleSubmitAddToBundles}
+        onClose={handleCloseAddToBundlesModal}
+      />
+
+      <SelectableListModal
+        open={bundleModalOpen}
+        title={
+          bundleModalMode === "update"
+            ? "Edit license bundle"
+            : bundleModalSelectedLicenseIds.length > 0
+              ? `Create license bundle from ${pluralize(
+                  bundleModalSelectedLicenseIds.length,
+                  "license",
+                )}`
+              : "Create license bundle"
+        }
+        resourceLabel="Licenses"
+        searchValue={bundleModalSearchValue}
+        searchPlaceholder="Search licenses"
+        showSelectedOnly={bundleModalShowSelectedOnly}
+        items={bundleModalItems}
+        selectedIds={bundleModalSelectedLicenseIds}
+        primaryActionLabel={
+          bundleModalMode === "update" ? "Save bundle" : "Create bundle"
+        }
+        primaryActionLoading={
+          bundleFetcher.state !== "idle" &&
+          (bundleFetcher.formData?.get("intent") === "create_bundle" ||
+            bundleFetcher.formData?.get("intent") === "update_bundle")
+        }
+        primaryActionDisabled={
+          !bundleModalName.trim() || bundleModalSelectedLicenseIds.length === 0
+        }
+        emptyStateTitle="No licenses match"
+        emptyStateBody="Try a different search or turn off Show all selected."
+        hasUnsavedChanges={hasBundleModalUnsavedChanges}
+        onSearchChange={setBundleModalSearchValue}
+        onShowSelectedOnlyChange={setBundleModalShowSelectedOnly}
+        onToggleItem={handleToggleBundleLicense}
+        onSelectAllVisible={handleSelectAllVisibleBundleLicenses}
+        onClearAllSelected={handleClearAllBundleLicenses}
+        onPrimaryAction={handleSubmitBundle}
+        onClose={handleCloseBundleModal}
+      >
+        <TextField
+          label="Bundle name"
+          value={bundleModalName}
+          onChange={setBundleModalName}
+          autoComplete="off"
+        />
+      </SelectableListModal>
 
       <LegalGuardrailModal
         open={Boolean(guardrailModalTemplate)}
@@ -2299,6 +3346,25 @@ export default function LicensesPage() {
         onAccept={handleAcceptGuardrail}
         onClose={handleCloseGuardrailModal}
       />
+
+      <AcknowledgmentModal
+        open={customTemplateGuardrailOpen}
+        title="You’re customizing the final license terms"
+        primaryActionLabel="I understand"
+        secondaryActionLabel="Back"
+        checkboxLabel="I understand that custom license terms are my responsibility."
+        checkboxChecked={customTemplateGuardrailChecked}
+        primaryActionLoading={isAcceptingCustomTemplateGuardrail}
+        onCheckboxChange={setCustomTemplateGuardrailChecked}
+        onPrimaryAction={handleAcceptCustomTemplateGuardrail}
+        onClose={handleCloseCustomTemplateGuardrail}
+      >
+        <Text as="p" variant="bodyMd">
+          This template includes terms you control. Producer Launchpad can
+          generate and deliver the agreement, but you are responsible for the
+          final language and settings you publish to buyers.
+        </Text>
+      </AcknowledgmentModal>
     </>
   );
 }

@@ -12,6 +12,7 @@
     "deploy": "shopify app deploy",
     "config:use": "shopify app config use",
     "env": "shopify app env",
+    "env:use:local": "node ./scripts/use-env.mjs .env.local",
     "start": "HOST=0.0.0.0 remix-serve ./build/server/index.js",
     "setup": "npm run db:generate && npm run db:migrate:dev",
     "db:generate": "prisma generate",

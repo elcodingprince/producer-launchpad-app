@@ -19,8 +19,15 @@ import {
   InlineStack,
 } from "@shopify/polaris";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
+import { AcknowledgmentModal } from "~/components/AcknowledgmentModal";
 import { createProductCreatorService } from "../services/productCreator";
 import { getAppReadiness } from "~/services/appReadiness.server";
+import {
+  acceptMerchantAcknowledgment,
+  hasMerchantAcknowledged,
+  MERCHANT_ACKNOWLEDGMENT_KEYS,
+  normalizeSessionUserId,
+} from "~/services/merchantAcknowledgments.server";
 import {
   formatDeliveryFormatLabel,
   getRequiredDeliveryFormats,
@@ -166,6 +173,14 @@ function hasSharedStemsSourceFile(
   );
 }
 
+type UploadActionData = {
+  success: boolean;
+  intent?: string;
+  error?: string;
+  redirectTo?: string;
+  requiresUploadGuardrail?: boolean;
+};
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const productService = createProductCreatorService(session, admin);
@@ -195,6 +210,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return redirect(readiness.onboardingRoute);
     }
 
+    const hasAcceptedUploadGuardrail = await hasMerchantAcknowledged(
+      session.shop,
+      MERCHANT_ACKNOWLEDGMENT_KEYS.uploadLicensePublishing,
+    );
+
     const draftRecord = draftId
       ? await prisma.beatDraft.findFirst({
           where: {
@@ -208,6 +228,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       licenses,
       genres,
       producers,
+      requiresUploadGuardrail: !hasAcceptedUploadGuardrail,
       draft: draftRecord
         ? {
             id: draftRecord.id,
@@ -258,6 +279,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         licenses: [],
         genres: [],
         producers: [],
+        requiresUploadGuardrail: false,
         draft: null,
         storageWarning: null,
         error:
@@ -271,6 +293,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const storageConfig = await getStorageConfigForDisplay(session.shop);
+  const sessionUserId = normalizeSessionUserId(
+    (session as { userId?: unknown }).userId,
+  );
+  const sessionEmail =
+    typeof (session as { email?: unknown }).email === "string"
+      ? (session as { email?: string }).email || null
+      : null;
 
   if (shouldHardBlockUpload(storageConfig)) {
     return redirect("/app/settings");
@@ -279,9 +308,40 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     console.info("[upload] started");
     const productService = createProductCreatorService(session, admin);
-
-    // Parse multipart form data to get actual File objects
     const formData = await request.formData();
+    const intent = String(formData.get("intent") || "submit_upload");
+
+    if (intent === "accept_upload_guardrail") {
+      await acceptMerchantAcknowledgment({
+        shop: session.shop,
+        acknowledgment: MERCHANT_ACKNOWLEDGMENT_KEYS.uploadLicensePublishing,
+        acceptedByUserId: sessionUserId,
+        acceptedByEmail: sessionEmail,
+      });
+
+      return json({
+        success: true,
+        intent,
+      } satisfies UploadActionData);
+    }
+
+    const hasAcceptedUploadGuardrail = await hasMerchantAcknowledged(
+      session.shop,
+      MERCHANT_ACKNOWLEDGMENT_KEYS.uploadLicensePublishing,
+    );
+
+    if (!hasAcceptedUploadGuardrail) {
+      return json(
+        {
+          success: false,
+          intent,
+          error:
+            "Review and accept the license publishing acknowledgment before uploading beats.",
+          requiresUploadGuardrail: true,
+        } satisfies UploadActionData,
+        { status: 403 },
+      );
+    }
 
     // Extract beat details
     const title = formData.get("title") as string;
@@ -710,7 +770,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({
         success: true,
         redirectTo: "/app/beats?success=true&status=draft",
-      });
+      } satisfies UploadActionData);
     }
 
     // Get actual license GIDs from the database
@@ -858,7 +918,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({
       success: true,
       redirectTo: `/app/beats?success=true&status=${statusValue}`,
-    });
+    } satisfies UploadActionData);
   } catch (error) {
     console.error("Upload error:", error);
     return json(
@@ -881,9 +941,11 @@ export default function NewBeatPage() {
     producers,
     draft,
     storageWarning,
+    requiresUploadGuardrail,
     error: loaderError,
   } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher<typeof action>();
+  const fetcher = useFetcher<UploadActionData>();
+  const acknowledgmentFetcher = useFetcher<UploadActionData>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
 
@@ -982,6 +1044,10 @@ export default function NewBeatPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isSaveSubmitting, setIsSaveSubmitting] = useState(false);
   const [suppressSaveBar, setSuppressSaveBar] = useState(false);
+  const [hasAcceptedUploadGuardrail, setHasAcceptedUploadGuardrail] = useState(
+    !requiresUploadGuardrail,
+  );
+  const [uploadGuardrailChecked, setUploadGuardrailChecked] = useState(false);
 
   // Handle file upload with purpose
   const handleFileUpload = useCallback(
@@ -1121,6 +1187,8 @@ export default function NewBeatPage() {
   const isDirty = initialSnapshot !== currentSnapshot;
   const isSubmittingForm = fetcher.state !== "idle";
   const isBusy = isSubmittingForm || isUploading || isSaveSubmitting;
+  const isAcceptingUploadGuardrail = acknowledgmentFetcher.state !== "idle";
+  const showUploadGuardrail = !hasAcceptedUploadGuardrail;
 
   const isReadyForActive = () => {
     const sharedStemsFilePresent = hasSharedStemsSourceFile(uploadedFiles);
@@ -1152,9 +1220,7 @@ export default function NewBeatPage() {
     });
 
     const hasAllLicensePrices = hasCompleteLicensePrices(
-      licenses
-        .filter(Boolean)
-        .map((license) => ({ id: license!.id })),
+      licenses.filter(Boolean).map((license) => ({ id: license!.id })),
       licensePrices,
     );
 
@@ -1304,6 +1370,11 @@ export default function NewBeatPage() {
   };
 
   useEffect(() => {
+    setHasAcceptedUploadGuardrail(!requiresUploadGuardrail);
+    setUploadGuardrailChecked(false);
+  }, [requiresUploadGuardrail]);
+
+  useEffect(() => {
     if (
       fetcher.data &&
       "success" in fetcher.data &&
@@ -1311,6 +1382,9 @@ export default function NewBeatPage() {
     ) {
       setIsSaveSubmitting(false);
       setSuppressSaveBar(false);
+      if (fetcher.data.requiresUploadGuardrail) {
+        setHasAcceptedUploadGuardrail(false);
+      }
     }
   }, [fetcher.data]);
 
@@ -1323,6 +1397,16 @@ export default function NewBeatPage() {
       setIsSaveSubmitting(false);
     }
   }, [fetcher.data, fetcher.state]);
+
+  useEffect(() => {
+    if (
+      acknowledgmentFetcher.data?.success &&
+      acknowledgmentFetcher.data.intent === "accept_upload_guardrail"
+    ) {
+      setHasAcceptedUploadGuardrail(true);
+      setUploadGuardrailChecked(false);
+    }
+  }, [acknowledgmentFetcher.data]);
 
   useEffect(() => {
     if (
@@ -1353,9 +1437,7 @@ export default function NewBeatPage() {
   const dynamicLicenseTiers = licenses.filter(Boolean).map((l) => ({
     id: l!.id,
     name: l!.licenseName,
-    price: licensePrices[l!.id]
-      ? `$${licensePrices[l!.id]}`
-      : "Not set",
+    price: licensePrices[l!.id] ? `$${licensePrices[l!.id]}` : "Not set",
     description: l!.displayName,
     packageFormats: getRequiredDeliveryFormats(l!),
     stemsPolicy: resolveOfferStemsPolicy(
@@ -1376,20 +1458,6 @@ export default function NewBeatPage() {
     label: p!.name,
     value: p!.id,
   }));
-
-  if (loaderError) {
-    return (
-      <Page title="Upload New Beat">
-        <Layout>
-          <Layout.Section>
-            <Banner title="Unable to load upload page" tone="critical">
-              <p>{loaderError}</p>
-            </Banner>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    );
-  }
 
   const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1415,262 +1483,318 @@ export default function NewBeatPage() {
     navigate("/app/beats");
   };
 
-  return (
-    <Page
-      title="Upload beat"
-      backAction={{ content: "Beats", onAction: handleBackAction }}
-    >
-      <SaveBar
-        id="beat-upload-save-bar"
-        open={
-          !suppressSaveBar && (isDirty || isSubmittingForm || isSaveSubmitting)
-        }
-        discardConfirmation
-      >
-        <button type="button" disabled={isBusy} onClick={resetFormState}>
-          Discard
-        </button>
-        <button
-          type="button"
-          variant="primary"
-          disabled={
-            isBusy ||
-            (effectiveSaveMode === "draft"
-              ? !hasDraftMinimumFields()
-              : !isReadyForActive())
-          }
-          loading={
-            isSaveSubmitting || isSubmittingForm || isUploading ? "" : undefined
-          }
-          onClick={() => handleSubmit(effectiveSaveMode)}
-        >
-          {saveActionLabel}
-        </button>
-      </SaveBar>
+  const handleAcceptUploadGuardrail = () => {
+    const formData = new FormData();
+    formData.append("intent", "accept_upload_guardrail");
+    acknowledgmentFetcher.submit(formData, { method: "post" });
+  };
 
-      <form
-        id="beat-upload-form"
-        onSubmit={handleFormSubmit}
-        onReset={handleFormReset}
-      >
+  const handleCloseUploadGuardrail = () => {
+    setUploadGuardrailChecked(false);
+    navigate("/app");
+  };
+
+  if (loaderError) {
+    return (
+      <Page title="Upload New Beat">
         <Layout>
-          {storageWarning && (
-            <Layout.Section>
-              <Banner
-                title="Storage warning"
-                tone="warning"
-                action={{ content: "Fix storage", url: "/app/settings" }}
-              >
-                <p>{storageWarning}</p>
-              </Banner>
-            </Layout.Section>
-          )}
+          <Layout.Section>
+            <Banner title="Unable to load upload page" tone="critical">
+              <p>{loaderError}</p>
+            </Banner>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
+  }
 
-          {fetcher.data &&
-            "success" in fetcher.data &&
-            fetcher.data.success === false && (
+  return (
+    <>
+      <Page
+        title="Upload beat"
+        backAction={{ content: "Beats", onAction: handleBackAction }}
+      >
+        <SaveBar
+          id="beat-upload-save-bar"
+          open={
+            !suppressSaveBar &&
+            (isDirty || isSubmittingForm || isSaveSubmitting)
+          }
+          discardConfirmation
+        >
+          <button type="button" disabled={isBusy} onClick={resetFormState}>
+            Discard
+          </button>
+          <button
+            type="button"
+            variant="primary"
+            disabled={
+              isBusy ||
+              (effectiveSaveMode === "draft"
+                ? !hasDraftMinimumFields()
+                : !isReadyForActive())
+            }
+            loading={
+              isSaveSubmitting || isSubmittingForm || isUploading
+                ? ""
+                : undefined
+            }
+            onClick={() => handleSubmit(effectiveSaveMode)}
+          >
+            {saveActionLabel}
+          </button>
+        </SaveBar>
+
+        <form
+          id="beat-upload-form"
+          onSubmit={handleFormSubmit}
+          onReset={handleFormReset}
+        >
+          <Layout>
+            {storageWarning && (
               <Layout.Section>
-                <Banner title="Upload failed" tone="critical">
-                  <p>
-                    {"error" in fetcher.data
-                      ? fetcher.data.error
-                      : "Upload failed"}
-                  </p>
+                <Banner
+                  title="Storage warning"
+                  tone="warning"
+                  action={{ content: "Fix storage", url: "/app/settings" }}
+                >
+                  <p>{storageWarning}</p>
                 </Banner>
               </Layout.Section>
             )}
 
-          {uploadError && (
+            {fetcher.data &&
+              "success" in fetcher.data &&
+              fetcher.data.success === false && (
+                <Layout.Section>
+                  <Banner title="Upload failed" tone="critical">
+                    <p>
+                      {"error" in fetcher.data
+                        ? fetcher.data.error
+                        : "Upload failed"}
+                    </p>
+                  </Banner>
+                </Layout.Section>
+              )}
+
+            {uploadError && (
+              <Layout.Section>
+                <Banner
+                  title="Upload error"
+                  tone="critical"
+                  onDismiss={() => setUploadError(null)}
+                >
+                  <p>{uploadError}</p>
+                </Banner>
+              </Layout.Section>
+            )}
+
             <Layout.Section>
-              <Banner
-                title="Upload error"
-                tone="critical"
-                onDismiss={() => setUploadError(null)}
-              >
-                <p>{uploadError}</p>
-              </Banner>
-            </Layout.Section>
-          )}
+              <BlockStack gap="500">
+                {/* Beat Details */}
+                <Card>
+                  <BlockStack gap="400">
+                    <Text variant="headingMd" as="h2">
+                      Beat details
+                    </Text>
 
-          <Layout.Section>
-            <BlockStack gap="500">
-              {/* Beat Details */}
-              <Card>
-                <BlockStack gap="400">
-                  <Text variant="headingMd" as="h2">
-                    Beat details
-                  </Text>
-
-                  <FormLayout>
-                    <TextField
-                      label={
-                        <span>
-                          Beat title{" "}
-                          <Text as="span" tone="subdued">
-                            (required)
-                          </Text>
-                        </span>
-                      }
-                      value={title}
-                      onChange={setTitle}
-                      autoComplete="off"
-                    />
-
-                    <FormLayout.Group>
+                    <FormLayout>
                       <TextField
                         label={
                           <span>
-                            BPM{" "}
+                            Beat title{" "}
                             <Text as="span" tone="subdued">
                               (required)
                             </Text>
                           </span>
                         }
-                        type="number"
-                        value={bpm}
-                        onChange={setBpm}
+                        value={title}
+                        onChange={setTitle}
                         autoComplete="off"
                       />
 
-                      <Select
-                        label={
-                          <span>
-                            Key{" "}
-                            <Text as="span" tone="subdued">
-                              (required)
-                            </Text>
-                          </span>
-                        }
-                        options={keyOptions.map((k) => ({
-                          label: k,
-                          value: k,
-                        }))}
-                        value={key}
-                        onChange={setKey}
+                      <FormLayout.Group>
+                        <TextField
+                          label={
+                            <span>
+                              BPM{" "}
+                              <Text as="span" tone="subdued">
+                                (required)
+                              </Text>
+                            </span>
+                          }
+                          type="number"
+                          value={bpm}
+                          onChange={setBpm}
+                          autoComplete="off"
+                        />
+
+                        <Select
+                          label={
+                            <span>
+                              Key{" "}
+                              <Text as="span" tone="subdued">
+                                (required)
+                              </Text>
+                            </span>
+                          }
+                          options={keyOptions.map((k) => ({
+                            label: k,
+                            value: k,
+                          }))}
+                          value={key}
+                          onChange={setKey}
+                        />
+                      </FormLayout.Group>
+                    </FormLayout>
+                  </BlockStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="400">
+                    <Text variant="headingMd" as="h2">
+                      Organization
+                    </Text>
+
+                    <FormLayout>
+                      <MultiSelectCombobox
+                        label="Producers"
+                        options={producerOptions}
+                        selectedValues={producerGids}
+                        onChange={setProducerGids}
+                        placeholder="Search producers"
                       />
-                    </FormLayout.Group>
-                  </FormLayout>
-                </BlockStack>
-              </Card>
 
-              <Card>
-                <BlockStack gap="400">
-                  <Text variant="headingMd" as="h2">
-                    Organization
-                  </Text>
+                      <TextField
+                        label="Producer alias (optional)"
+                        value={producerAlias}
+                        onChange={setProducerAlias}
+                        autoComplete="off"
+                      />
 
-                  <FormLayout>
-                    <MultiSelectCombobox
-                      label="Producers"
-                      options={producerOptions}
-                      selectedValues={producerGids}
-                      onChange={setProducerGids}
-                      placeholder="Search producers"
+                      <MultiSelectCombobox
+                        label="Genres"
+                        options={genreOptions}
+                        selectedValues={genreGids}
+                        onChange={setGenreGids}
+                        placeholder="Search genres"
+                      />
+                    </FormLayout>
+                  </BlockStack>
+                </Card>
+
+                <LicenseFileAssignment
+                  licenses={dynamicLicenseTiers}
+                  uploadedFiles={uploadedFiles}
+                  licenseFiles={licenseFiles}
+                  licensePrices={licensePrices}
+                  stemsAddonSelections={stemsAddonSelections}
+                  previewFile={previewFile}
+                  coverArtFile={coverArtFile}
+                  onChange={({
+                    uploadedFiles: newFiles,
+                    licenseFiles: newLicenseFiles,
+                    previewFile: newPreviewFile,
+                    coverArtFile: newCoverArtFile,
+                    licensePrices: newLicensePrices,
+                    stemsAddonSelections: newStemsAddonSelections,
+                  }) => {
+                    setUploadedFiles(newFiles);
+                    setLicenseFiles(newLicenseFiles);
+                    setPreviewFile(newPreviewFile);
+                    setCoverArtFile(newCoverArtFile);
+                    setLicensePrices(newLicensePrices);
+                    setStemsAddonSelections(newStemsAddonSelections);
+                  }}
+                  onUpload={handleFileUpload}
+                  uploading={isUploading}
+                  error={uploadError}
+                />
+              </BlockStack>
+            </Layout.Section>
+
+            <Layout.Section variant="oneThird">
+              <BlockStack gap="500">
+                {/* Status Card */}
+                <Card>
+                  <BlockStack gap="400">
+                    <InlineStatusHeader
+                      status={status}
+                      effectiveSaveMode={effectiveSaveMode}
+                      isReadyForActive={isReadyForActive()}
+                    />
+                    <Select
+                      label="Status"
+                      labelHidden
+                      options={[
+                        { label: "Active", value: "active" },
+                        { label: "Draft", value: "draft" },
+                      ]}
+                      value={status}
+                      onChange={setStatus}
                     />
 
-                    <TextField
-                      label="Producer alias (optional)"
-                      value={producerAlias}
-                      onChange={setProducerAlias}
-                      autoComplete="off"
-                    />
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Choose whether this beat stays in Producer Launchpad for
+                      later or publishes to Shopify when it is ready to sell.
+                    </Text>
 
-                    <MultiSelectCombobox
-                      label="Genres"
-                      options={genreOptions}
-                      selectedValues={genreGids}
-                      onChange={setGenreGids}
-                      placeholder="Search genres"
-                    />
-                  </FormLayout>
-                </BlockStack>
-              </Card>
+                    <Box
+                      background="bg-surface-secondary"
+                      borderRadius="300"
+                      padding="300"
+                    >
+                      <BlockStack gap="100">
+                        <Text as="p" variant="bodySm" fontWeight="medium">
+                          {status === "draft"
+                            ? "Stays in Producer Launchpad"
+                            : effectiveSaveMode === "draft"
+                              ? "Will save as a draft for now"
+                              : "Ready to publish to Shopify"}
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {status === "draft"
+                            ? "You can come back later to finish files, preview audio, and pricing."
+                            : effectiveSaveMode === "draft"
+                              ? "Add the remaining preview, delivery files, and pricing when you are ready to activate it."
+                              : "Saving will create the Shopify product and keep delivery automation ready."}
+                        </Text>
+                      </BlockStack>
+                    </Box>
+                  </BlockStack>
+                </Card>
+              </BlockStack>
+            </Layout.Section>
+          </Layout>
+        </form>
+      </Page>
 
-              <LicenseFileAssignment
-                licenses={dynamicLicenseTiers}
-                uploadedFiles={uploadedFiles}
-                licenseFiles={licenseFiles}
-                licensePrices={licensePrices}
-                stemsAddonSelections={stemsAddonSelections}
-                previewFile={previewFile}
-                coverArtFile={coverArtFile}
-                onChange={({
-                  uploadedFiles: newFiles,
-                  licenseFiles: newLicenseFiles,
-                  previewFile: newPreviewFile,
-                  coverArtFile: newCoverArtFile,
-                  licensePrices: newLicensePrices,
-                  stemsAddonSelections: newStemsAddonSelections,
-                }) => {
-                  setUploadedFiles(newFiles);
-                  setLicenseFiles(newLicenseFiles);
-                  setPreviewFile(newPreviewFile);
-                  setCoverArtFile(newCoverArtFile);
-                  setLicensePrices(newLicensePrices);
-                  setStemsAddonSelections(newStemsAddonSelections);
-                }}
-                onUpload={handleFileUpload}
-                uploading={isUploading}
-                error={uploadError}
-              />
-            </BlockStack>
-          </Layout.Section>
-
-          <Layout.Section variant="oneThird">
-            <BlockStack gap="500">
-              {/* Status Card */}
-              <Card>
-                <BlockStack gap="400">
-                  <InlineStatusHeader
-                    status={status}
-                    effectiveSaveMode={effectiveSaveMode}
-                    isReadyForActive={isReadyForActive()}
-                  />
-                  <Select
-                    label="Status"
-                    labelHidden
-                    options={[
-                      { label: "Active", value: "active" },
-                      { label: "Draft", value: "draft" },
-                    ]}
-                    value={status}
-                    onChange={setStatus}
-                  />
-
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Choose whether this beat stays in Producer Launchpad for
-                    later or publishes to Shopify when it is ready to sell.
-                  </Text>
-
-                  <Box
-                    background="bg-surface-secondary"
-                    borderRadius="300"
-                    padding="300"
-                  >
-                    <BlockStack gap="100">
-                      <Text as="p" variant="bodySm" fontWeight="medium">
-                        {status === "draft"
-                          ? "Stays in Producer Launchpad"
-                          : effectiveSaveMode === "draft"
-                            ? "Will save as a draft for now"
-                            : "Ready to publish to Shopify"}
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {status === "draft"
-                          ? "You can come back later to finish files, preview audio, and pricing."
-                          : effectiveSaveMode === "draft"
-                            ? "Add the remaining preview, delivery files, and pricing when you are ready to activate it."
-                            : "Saving will create the Shopify product and keep delivery automation ready."}
-                      </Text>
-                    </BlockStack>
-                  </Box>
-                </BlockStack>
-              </Card>
-            </BlockStack>
-          </Layout.Section>
-        </Layout>
-      </form>
-    </Page>
+      <AcknowledgmentModal
+        open={showUploadGuardrail}
+        title="Before you publish your license offers"
+        primaryActionLabel="I understand"
+        secondaryActionLabel="Back to home"
+        checkboxLabel="I understand that I am responsible for reviewing and approving the license terms I publish."
+        checkboxChecked={uploadGuardrailChecked}
+        primaryActionLoading={isAcceptingUploadGuardrail}
+        onCheckboxChange={setUploadGuardrailChecked}
+        onPrimaryAction={handleAcceptUploadGuardrail}
+        onClose={handleCloseUploadGuardrail}
+      >
+        <Text as="p" variant="bodyMd">
+          Producer Launchpad gives you ready-to-use music license templates
+          built from common industry-standard clauses and your selected
+          settings.
+        </Text>
+        <Text as="p" variant="bodyMd">
+          You can customize the business terms to fit your store. We&apos;re
+          here to help you publish with confidence, but you&apos;re responsible
+          for reviewing and approving the final license terms you offer to
+          buyers. Producer Launchpad provides tools and templates, not legal
+          advice.
+        </Text>
+      </AcknowledgmentModal>
+    </>
   );
 }
 

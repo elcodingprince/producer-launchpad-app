@@ -79,6 +79,22 @@ This will:
 - Update your app URLs in Shopify Partner Dashboard
 - Open your development store with the app installed
 
+### Local env workflow
+
+For local `npm run dev`, Prisma uses the `DATABASE_URL` from `.env`.
+
+To keep local development explicit:
+
+1. Copy `.env.local.example` to `.env.local`
+2. Fill in your non-production values
+3. Activate it with:
+
+```bash
+npm run env:use:local
+```
+
+If you want local dev to share the staging database, use the Neon `staging` branch connection string in `.env.local`.
+
 ### Database Workflow
 
 - Development uses `npm run db:migrate:dev`

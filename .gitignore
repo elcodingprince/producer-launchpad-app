@@ -10,6 +10,7 @@ public/build/
 .env
 .env.*
 !.env.example
+!.env.local.example
 
 # OS/editor
 .DS_Store

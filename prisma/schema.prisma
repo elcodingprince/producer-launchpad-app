@@ -8,22 +8,22 @@ datasource db {
 }
 
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
-  refreshToken  String?
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
   refreshTokenExpires DateTime?
 
   @@index([shop])
@@ -120,20 +120,20 @@ model LicenseFileMapping {
 }
 
 model Order {
-  id             String   @id @default(cuid())
-  shop           String
-  shopifyOrderId String   @unique
+  id                String   @id @default(cuid())
+  shop              String
+  shopifyOrderId    String   @unique
   shopifyCustomerId String?
-  orderNumber    String
-  browserIp      String?
-  userAgent      String?
-  acceptLanguage String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  status         String   @default("active")
+  orderNumber       String
+  browserIp         String?
+  userAgent         String?
+  acceptLanguage    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  status            String   @default("active")
 
-  items          OrderItem[]
-  deliveryAccess DeliveryAccess?
+  items              OrderItem[]
+  deliveryAccess     DeliveryAccess?
   executedAgreements ExecutedAgreement[]
 
   @@index([shop, shopifyOrderId])
@@ -153,45 +153,45 @@ model OrderItem {
   createdAt            DateTime @default(now())
 
   // Relations
-  order              Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  executedAgreement  ExecutedAgreement?
+  order             Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  executedAgreement ExecutedAgreement?
 
   @@index([orderId])
   @@index([variantId])
 }
 
 model ExecutedAgreement {
-  id                    String   @id @default(cuid())
-  shop                  String
-  orderId               String
-  orderItemId           String   @unique
-  templateMetaobjectId  String?
-  templateHandle        String
-  offerArchetype        String
-  templateVersion       String?
-  acceptedAt            DateTime?
+  id                      String    @id @default(cuid())
+  shop                    String
+  orderId                 String
+  orderItemId             String    @unique
+  templateMetaobjectId    String?
+  templateHandle          String
+  offerArchetype          String
+  templateVersion         String?
+  acceptedAt              DateTime?
   acceptedTemplateVersion String?
-  acceptedTemplateHash  String?
-  acceptedLicenseName   String?
+  acceptedTemplateHash    String?
+  acceptedLicenseName     String?
   acceptedDeliveryPackage String?
-  acceptedProofJson     String?
-  acceptedSnapshotMatch Boolean?
-  resolvedLicenseJson   String
-  beatOfferSnapshotJson String
-  stemsIncludedInOrder  Boolean  @default(false)
-  licensorSnapshotJson  String
-  renderedHtml          String
-  htmlHash              String
-  pdfData               Bytes?
-  pdfHash               String?
-  pdfStatus             String   @default("pending")
-  pdfError              String?
-  buyerEmail            String?
-  buyerIp               String?
-  userAgent             String?
-  purchasedAt           DateTime
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  acceptedProofJson       String?
+  acceptedSnapshotMatch   Boolean?
+  resolvedLicenseJson     String
+  beatOfferSnapshotJson   String
+  stemsIncludedInOrder    Boolean   @default(false)
+  licensorSnapshotJson    String
+  renderedHtml            String
+  htmlHash                String
+  pdfData                 Bytes?
+  pdfHash                 String?
+  pdfStatus               String    @default("pending")
+  pdfError                String?
+  buyerEmail              String?
+  buyerIp                 String?
+  userAgent               String?
+  purchasedAt             DateTime
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
@@ -231,18 +231,18 @@ model DeliveryAccess {
 }
 
 model PrivacyDataRequest {
-  id                   String   @id @default(cuid())
+  id                   String    @id @default(cuid())
   shop                 String
   shopifyDataRequestId String
   shopifyCustomerId    String?
   customerEmail        String?
-  ordersRequestedJson  String   @default("[]")
+  ordersRequestedJson  String    @default("[]")
   requestPayloadJson   String
   exportJson           String?
-  status               String   @default("pending")
+  status               String    @default("pending")
   fulfilledAt          DateTime?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   @@unique([shop, shopifyDataRequestId])
   @@index([shop, status])
@@ -264,4 +264,51 @@ model TemplateGuardrailAcceptance {
   @@unique([shop, templateHandle, starterVersion])
   @@index([shop])
   @@index([templateHandle])
+}
+
+model MerchantAcknowledgment {
+  id                String   @id @default(cuid())
+  shop              String
+  acknowledgmentKey String
+  version           String
+  acceptedAt        DateTime
+  acceptedByUserId  BigInt?
+  acceptedByEmail   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shop, acknowledgmentKey, version])
+  @@index([shop])
+  @@index([acknowledgmentKey])
+}
+
+model LicenseBundle {
+  id             String              @id @default(cuid())
+  shop           String
+  name           String
+  normalizedName String
+  isDefault      Boolean             @default(false)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  items LicenseBundleItem[]
+
+  @@unique([shop, normalizedName])
+  @@index([shop])
+}
+
+model LicenseBundleItem {
+  id                String   @id @default(cuid())
+  bundleId          String
+  licenseMetaobjectId String
+  licenseHandle     String
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  bundle LicenseBundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+
+  @@unique([bundleId, licenseMetaobjectId])
+  @@index([bundleId])
+  @@index([licenseMetaobjectId])
 }
