@@ -128,7 +128,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json<ActionData>({
       success: true,
       id,
-      message: "Privacy request marked fulfilled.",
+      message:
+        "Privacy request marked fulfilled after delivery to the store owner.",
     });
   } catch (error) {
     return json<ActionData>(
@@ -155,14 +156,35 @@ export default function PrivacyRequestsPage() {
   return (
     <Page
       title="Privacy Requests"
-      subtitle="Review and fulfill customer data requests captured from Shopify compliance webhooks."
+      subtitle="Shopify privacy webhooks are captured automatically. Producer Launchpad support reviews the export and fulfills the request within Shopify's required timeframe."
     >
       <BlockStack gap="500">
         <Banner tone="info">
-          Shopify requires public apps to respond to customer data requests.
-          This page stores the generated export payload so you can review and
-          fulfill each request operationally.
+          Shopify sends `customers/data_request` webhooks to the app
+          automatically. Producer Launchpad prepares the matching app-held data
+          here, then support sends it securely to the store owner and marks the
+          request fulfilled.
         </Banner>
+
+        <Card>
+          <BlockStack gap="200">
+            <Text as="h2" variant="headingMd">
+              Support workflow
+            </Text>
+            <Text as="p" variant="bodyMd">
+              1. Shopify sends the request automatically.
+            </Text>
+            <Text as="p" variant="bodyMd">
+              2. Producer Launchpad prepares the export payload stored below.
+            </Text>
+            <Text as="p" variant="bodyMd">
+              3. Support sends the export securely to the store owner.
+            </Text>
+            <Text as="p" variant="bodyMd">
+              4. Mark the request fulfilled after delivery is complete.
+            </Text>
+          </BlockStack>
+        </Card>
 
         {actionData?.success ? (
           <Banner tone="success">{actionData.message}</Banner>
@@ -189,7 +211,8 @@ export default function PrivacyRequestsPage() {
               </Text>
               <Text as="p" variant="bodyMd">
                 When Shopify sends a `customers/data_request` webhook, the
-                matching export will appear here for review.
+                matching export will appear here for support review and delivery
+                to the store owner.
               </Text>
             </BlockStack>
           </Card>
@@ -225,7 +248,7 @@ export default function PrivacyRequestsPage() {
                         <input type="hidden" name="intent" value="mark_fulfilled" />
                         <input type="hidden" name="id" value={requestRecord.id} />
                         <Button submit variant="primary" loading={isSubmitting}>
-                          Mark fulfilled
+                          Mark sent to store owner
                         </Button>
                       </Form>
                     ) : (
@@ -254,6 +277,12 @@ export default function PrivacyRequestsPage() {
                   <Text as="p" variant="bodyMd">
                     <strong>Orders requested:</strong>{" "}
                     {requestRecord.ordersRequestedJson}
+                  </Text>
+
+                  <Text as="p" variant="bodyMd" tone="subdued">
+                    Use this stored export to fulfill the request securely for
+                    the store owner. Mark it fulfilled only after support has
+                    completed delivery.
                   </Text>
 
                   <Box

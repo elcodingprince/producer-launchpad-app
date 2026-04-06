@@ -108,7 +108,7 @@ Producer Launchpad supports Shopify privacy compliance webhooks for:
 - `customers/redact`
 - `shop/redact`
 
-When Shopify sends a `customers/data_request` webhook, Producer Launchpad gathers the customer-related data stored by the app and makes it available for operational fulfillment to the merchant/store owner within Shopify's required time frame.
+When Shopify sends a `customers/data_request` webhook, Producer Launchpad automatically records the request, gathers the customer-related data stored by the app, and prepares an export for support-operated fulfillment to the merchant/store owner within Shopify's required time frame.
 
 When Shopify sends a `customers/redact` webhook, Producer Launchpad removes or anonymizes stored customer-related data, including delivery contact data and technical telemetry, while preserving only the minimum agreement-proof records needed for the app's sold-license recordkeeping workflow.
 

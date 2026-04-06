@@ -27,13 +27,14 @@ Focused checklist based only on our completed audits and the current codebase.
 
 - [ ] Finish the customer data request flow so it is not just stored for manual review, or narrow the policy language to explicitly say fulfillment is merchant-reviewed and operational.
   Audit: privacy audit
-  Status: ⏳ Pending
+  Status: ⏳ Pending verification
   File/component to modify: [privacyRequests.server.ts](/Users/payan/producer-launchpad-app-uninstall-cleanup/app/services/privacyRequests.server.ts), [app.privacy-requests.tsx](/Users/payan/producer-launchpad-app-uninstall-cleanup/app/routes/app.privacy-requests.tsx), [privacy-policy-app-behavior-draft.md](/Users/payan/producer-launchpad-app-uninstall-cleanup/docs/privacy-policy-app-behavior-draft.md), then immediately update [privacy.astro](/Users/payan/producer-launchpad-site/src/pages/privacy.astro)
 
 - [ ] Verify hosted delivery of `customers/data_request`, `customers/redact`, and `shop/redact` against the intended production-like environment and capture evidence.
   Audit: privacy audit
-  Status: ⏳ Pending
-  File/component to modify: [shopify.app.toml](/Users/payan/producer-launchpad-app-uninstall-cleanup/shopify.app.toml), [webhooks.tsx](/Users/payan/producer-launchpad-app-uninstall-cleanup/app/routes/webhooks.tsx), then immediately tighten or confirm [privacy.astro](/Users/payan/producer-launchpad-site/src/pages/privacy.astro)
+  Status: ✅ Completed
+  File/component to modify: [shopify.app.staging.toml](/Users/payan/producer-launchpad-app-uninstall-cleanup/shopify.app.staging.toml), [webhooks.tsx](/Users/payan/producer-launchpad-app-uninstall-cleanup/app/routes/webhooks.tsx), then immediately tighten or confirm [privacy.astro](/Users/payan/producer-launchpad-site/src/pages/privacy.astro)
+  Verification note: Sample webhook deliveries were triggered against `https://producer-launchpad-staging.fly.dev/webhooks` on April 5, 2026 / April 6, 2026 UTC. Staging logs showed `CUSTOMERS_DATA_REQUEST` at `2026-04-06T01:34:33Z`, `CUSTOMERS_REDACT` at `2026-04-06T01:34:34Z`, and `SHOP_REDACT` at `2026-04-06T01:34:57Z`, each followed by `POST /webhooks 200`.
 
 ## 2. Legal & Disclaimers (From Guardrail Audit)
 
