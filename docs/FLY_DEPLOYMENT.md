@@ -53,6 +53,7 @@ fly secrets set \
   DELIVERY_EMAIL_REPLY_TO=newradio.sound@gmail.com \
   DELIVERY_EMAIL_BRAND_NAME='Producer Launchpad' \
   RESEND_WEBHOOKS_ENABLED=false \
+  INTERNAL_JOB_SECRET=replace-with-a-random-secret \
   -a producer-launchpad-app
 ```
 
@@ -63,6 +64,34 @@ fly deploy -a producer-launchpad-app
 ```
 
 ## Notes
+
+### Background deletion processing
+
+Producer Launchpad now queues managed-storage cleanup when Shopify sends
+`APP_UNINSTALLED` and `SHOP_REDACT`. The app should answer those webhooks
+quickly, then delete uploaded R2 objects in the background before removing
+related app records.
+
+To keep that queue processing reliably in production, set up a recurring
+internal job trigger that sends a `POST` request to:
+
+- `https://producer-launchpad-app.fly.dev/api/internal/shop-deletion-jobs`
+
+Include this header:
+
+- `x-internal-job-secret: YOUR_INTERNAL_JOB_SECRET`
+
+Suggested request body:
+
+```json
+{ "maxJobs": 5, "batchSize": 25 }
+```
+
+Suggested cadence:
+
+- every 10 to 15 minutes
+
+This endpoint is internal-only and should never be exposed to the browser.
 
 ### Database choice
 
@@ -93,10 +122,13 @@ Use that first. You can attach a custom domain later.
 1. Verify the app responds at `https://producer-launchpad-app.fly.dev`
 2. Update Shopify App URL and redirect URLs
 3. Confirm the Fly release command applied Prisma migrations successfully
-4. Test:
+4. Confirm the recurring deletion-job trigger is configured with
+   `INTERNAL_JOB_SECRET`
+5. Test:
    - install
    - reinstall
    - onboarding
    - delivery portal
    - license PDF download
    - order webhook path
+   - uninstall cleanup queue

@@ -76,13 +76,13 @@ Producer Launchpad uses data to:
 
 ## Data Sharing
 
-Producer Launchpad shares data only as needed to operate the service. Depending on the merchant's configuration and deployment setup, this can include service providers used for:
+Producer Launchpad shares data only as needed to operate the service. This currently includes service providers used for:
 
 - application hosting
 - managed database infrastructure
-- file storage and delivery
-- email delivery
-- error monitoring, logging, and infrastructure operations
+- Cloudflare R2 managed file storage and delivery
+- Resend email delivery
+- infrastructure operations
 
 Producer Launchpad does not sell customer personal data.
 
@@ -92,11 +92,11 @@ Producer Launchpad retains data only for as long as needed to operate the servic
 
 Current retention targets are:
 
-- agreement proof artifacts and agreement metadata: retained for up to 24 months after purchase, unless a longer retention period is required for support, dispute, or legal handling
-- delivery access records and customer delivery contact data: retained for up to 12 months after purchase, unless a longer retention period is required for active merchant support
+- core order, delivery, and sold-license agreement records: retained while the merchant actively uses Producer Launchpad so the app can provide fulfillment history, support merchants, and preserve sold-license proof
 - delivery event troubleshooting metadata: retained for up to 90 days
 - browser IP, user agent, and similar technical telemetry: retained for up to 90 days
 - fulfilled privacy request records and exports: retained for up to 90 days after fulfillment
+- merchant-uploaded files stored in Producer Launchpad managed storage: deletion is queued immediately after uninstall and completed within 7 days
 
 If Shopify sends a valid `customers/redact` or `shop/redact` webhook, Producer Launchpad deletes or anonymizes covered data in accordance with that request and the app's compliance workflow.
 
@@ -108,7 +108,7 @@ Producer Launchpad supports Shopify privacy compliance webhooks for:
 - `customers/redact`
 - `shop/redact`
 
-When Shopify sends a `customers/data_request` webhook, Producer Launchpad gathers the customer-related data stored by the app and makes it available for operational fulfillment to the merchant/store owner within Shopify's required time frame.
+When Shopify sends a `customers/data_request` webhook, Producer Launchpad automatically records the request, gathers the customer-related data stored by the app, and prepares an export for support-operated fulfillment to the merchant/store owner within Shopify's required time frame.
 
 When Shopify sends a `customers/redact` webhook, Producer Launchpad removes or anonymizes stored customer-related data, including delivery contact data and technical telemetry, while preserving only the minimum agreement-proof records needed for the app's sold-license recordkeeping workflow.
 
@@ -148,8 +148,7 @@ For privacy-related questions or requests about Producer Launchpad, contact:
 
 Before publishing, verify that the public policy accurately reflects:
 
-- the real retention windows you intend to keep
+- the active-store retention rule for core transaction, delivery, and agreement records
 - the service providers you actually use in production
 - whether buyer name and/or buyer email remain embedded in retained agreement artifacts
-- whether support workflows can extend retention beyond the default windows
 - the correct business entity and contact details

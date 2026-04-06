@@ -70,7 +70,7 @@ The merchant remains responsible for:
 
 ## Privacy Requests
 
-Producer Launchpad records Shopify privacy request events and supports operational fulfillment for:
+Producer Launchpad records Shopify privacy request events automatically and fulfills them operationally for the store owner for:
 
 - customer data requests
 - customer redaction

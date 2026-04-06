@@ -75,6 +75,7 @@ model BeatFile {
 
   // Relations
   licenseMappings LicenseFileMapping[]
+  deletionQueueItems ShopDeletionQueueItem[]
 
   @@index([beatId])
   @@index([beatId, filePurpose])
@@ -311,4 +312,47 @@ model LicenseBundleItem {
   @@unique([bundleId, licenseMetaobjectId])
   @@index([bundleId])
   @@index([licenseMetaobjectId])
+}
+
+model ShopDeletionJob {
+  id              String   @id @default(cuid())
+  shop            String
+  trigger         String
+  status          String   @default("pending")
+  deadlineAt      DateTime
+  startedAt       DateTime?
+  completedAt     DateTime?
+  nextAttemptAt   DateTime?
+  attemptCount    Int      @default(0)
+  queuedFileCount Int      @default(0)
+  deletedFileCount Int     @default(0)
+  lastError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items ShopDeletionQueueItem[]
+
+  @@index([shop, createdAt])
+  @@index([status, nextAttemptAt])
+}
+
+model ShopDeletionQueueItem {
+  id           String   @id @default(cuid())
+  jobId        String
+  shop         String
+  beatFileId   String?
+  storageKey   String
+  status       String   @default("pending")
+  attemptCount Int      @default(0)
+  deletedAt    DateTime?
+  lastError    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  job      ShopDeletionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  beatFile BeatFile?       @relation(fields: [beatFileId], references: [id], onDelete: SetNull)
+
+  @@unique([jobId, storageKey])
+  @@index([jobId, status])
+  @@index([shop, status])
 }

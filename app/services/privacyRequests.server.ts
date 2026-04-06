@@ -211,6 +211,11 @@ export async function recordPrivacyDataRequest(
   const exportPayload = {
     schema: "producer_launchpad.privacy_data_request.v1",
     generatedAt: new Date().toISOString(),
+    handling: {
+      deliveryModel: "support_operated",
+      intendedRecipient: "store_owner",
+      note: "Producer Launchpad support uses this export to fulfill the Shopify data request for the store owner.",
+    },
     request: {
       shop: normalizedShop,
       shopifyDataRequestId,

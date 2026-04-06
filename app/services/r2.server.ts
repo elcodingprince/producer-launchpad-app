@@ -253,6 +253,31 @@ export async function downloadR2Object(
   }
 }
 
+export async function deleteR2Object(
+  input: R2DownloadInput,
+  options?: { ignoreMissing?: boolean },
+) {
+  try {
+    await signedR2Request({
+      method: "DELETE",
+      accountId: input.accountId,
+      bucketName: input.bucketName,
+      accessKeyId: input.accessKeyId,
+      secretAccessKey: input.secretAccessKey,
+      key: input.key,
+      payload: "",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (options?.ignoreMissing && message.includes("404")) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
 export function createSignedR2GetUrl(input: R2SignedGetUrlInput) {
   const expiresInSeconds = Math.max(1, Math.min(60 * 60 * 24, Math.floor(input.expiresInSeconds)));
   const host = `${input.accountId}.r2.cloudflarestorage.com`;

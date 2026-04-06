@@ -551,6 +551,13 @@ export default function SettingsPage() {
                   automatically for this shop. Storage allowance comes from the
                   active app plan.
                 </Text>
+                <Text as="p" tone="subdued">
+                  Producer Launchpad uses managed storage for launch. If you
+                  uninstall the app, we queue deletion immediately and
+                  permanently remove uploaded files and other app-controlled
+                  records within 7 days. Download anything you want to keep
+                  before uninstalling.
+                </Text>
                 <InlineStack gap="300">
                   <Button submit loading={isSubmitting}>
                     {storageConfig?.status === "connected"

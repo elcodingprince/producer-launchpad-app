@@ -1,11 +1,14 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import {
-  deleteShopData,
   extractCustomerIdentifiers,
   redactCustomerData,
   runPrivacyMaintenanceForShop,
 } from "~/services/privacyCompliance.server";
 import { recordPrivacyDataRequest } from "~/services/privacyRequests.server";
+import {
+  queueShopDeletionJob,
+  triggerQueuedShopDeletionProcessing,
+} from "~/services/shopDeletionJobs.server";
 import { authenticate } from "~/shopify.server";
 
 function normalizeShopDomain(shop: string) {
@@ -21,8 +24,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   switch (topic) {
     case "APP_UNINSTALLED": {
-      await deleteShopData(normalizedShop);
-      console.log(`Cleaned shop data after uninstall: ${normalizedShop}`);
+      const job = await queueShopDeletionJob(normalizedShop, "app_uninstalled");
+      void triggerQueuedShopDeletionProcessing();
+      console.log(
+        `Queued managed-storage deletion job ${job.id} after uninstall: ${normalizedShop}`,
+      );
       break;
     }
 
@@ -49,8 +55,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     case "SHOP_REDACT": {
-      await deleteShopData(normalizedShop);
-      console.log(`Shop redact processed for ${normalizedShop}`);
+      const job = await queueShopDeletionJob(normalizedShop, "shop_redact");
+      void triggerQueuedShopDeletionProcessing();
+      console.log(
+        `Queued shop redact deletion job ${job.id} for ${normalizedShop}`,
+      );
       break;
     }
 
