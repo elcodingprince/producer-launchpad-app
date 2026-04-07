@@ -411,6 +411,7 @@ export const DEFAULT_GENRES = [
 
 export const MIN_REQUIRED_PRODUCERS = 1;
 export const MIN_REQUIRED_LICENSORS = 1;
+export const MIN_REQUIRED_GENRES = DEFAULT_GENRES.length;
 const LEGACY_DEFAULT_PRODUCER_HANDLE = "default-producer";
 const LEGACY_DEFAULT_PRODUCER_NAME = "Default Producer";
 const DEFAULT_LICENSOR_HANDLE = "default-licensor";
@@ -716,7 +717,7 @@ export class MetafieldSetupService {
         existing: beatLicenses.length,
       },
       genres: {
-        required: DEFAULT_GENRES.length,
+        required: MIN_REQUIRED_GENRES,
         existing: genres.length,
       },
       producers: {
@@ -732,7 +733,7 @@ export class MetafieldSetupService {
         missingVariantMetafields.length === 0 &&
         missingMetaobjectTypes.length === 0 &&
         beatLicenses.length >= DEFAULT_LICENSES.length &&
-        genres.length >= DEFAULT_GENRES.length &&
+        genres.length >= MIN_REQUIRED_GENRES &&
         realProducers.length >= MIN_REQUIRED_PRODUCERS &&
         licensors.length >= MIN_REQUIRED_LICENSORS,
     };
