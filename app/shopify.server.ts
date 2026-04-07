@@ -6,14 +6,9 @@ import {
 import { DeliveryMethod } from "@shopify/shopify-api";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+import { getConfiguredAppOrigin } from "./services/appUrl.server";
 
-const rawHost =
-  process.env.SHOPIFY_APP_URL || process.env.APP_URL || process.env.HOST;
-const appUrl = rawHost
-  ? rawHost.startsWith("http://") || rawHost.startsWith("https://")
-    ? rawHost
-    : `https://${rawHost}`
-  : "http://localhost:5173";
+const appUrl = getConfiguredAppOrigin() || "http://localhost:5173";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY!,

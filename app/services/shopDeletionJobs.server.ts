@@ -1,4 +1,5 @@
 import prisma from "~/db.server";
+import { getConfiguredAppOrigin } from "~/services/appUrl.server";
 import { deleteR2Object } from "~/services/r2.server";
 import { getManagedR2Credentials } from "~/services/storageConfig.server";
 import { deleteShopData } from "~/services/privacyCompliance.server";
@@ -428,7 +429,7 @@ export async function getPendingShopDeletionJobCount() {
 }
 
 export async function triggerQueuedShopDeletionProcessing() {
-  const appUrl = process.env.SHOPIFY_APP_URL?.trim();
+  const appUrl = getConfiguredAppOrigin();
   const internalJobSecret = process.env.INTERNAL_JOB_SECRET?.trim();
 
   if (!appUrl || !internalJobSecret) {

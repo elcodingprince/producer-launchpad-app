@@ -16,6 +16,7 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
   Icon,
   InlineGrid,
   InlineStack,
@@ -35,6 +36,12 @@ import { isResendWebhookTrackingEnabled } from "~/services/email.server";
 import { createMetafieldSetupService } from "~/services/metafieldSetup";
 import { createProductCreatorService } from "~/services/productCreator";
 import { getAppReadiness } from "~/services/appReadiness.server";
+import {
+  acceptMerchantAcknowledgment,
+  hasMerchantAcknowledged,
+  MERCHANT_ACKNOWLEDGMENT_KEYS,
+  normalizeSessionUserId,
+} from "~/services/merchantAcknowledgments.server";
 import { setStorageMode } from "~/services/storageConfig.server";
 
 type ActionData = {
@@ -57,8 +64,7 @@ type RecentDeliveryOverview = {
 
 function getInitialStep(nextStep: "profile" | "catalog" | "storage" | "ready") {
   if (nextStep === "profile") return 1;
-  if (nextStep === "catalog") return 2;
-  if (nextStep === "storage") return 3;
+  if (nextStep === "catalog" || nextStep === "storage") return 2;
   return 1;
 }
 
@@ -294,15 +300,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           defaultLicensor?.fields.find((field) => field.key === "legal_name")
             ?.value || "",
       },
+      hasAcceptedUploadLicensePublishingAcknowledgment:
+        await hasMerchantAcknowledged(
+          session.shop,
+          MERCHANT_ACKNOWLEDGMENT_KEYS.uploadLicensePublishing,
+        ),
       error: null,
     });
   } catch (error) {
+    if (error instanceof Response) {
+      throw error;
+    }
+
     console.error("Dashboard loader error:", error);
     return json(
       {
         readiness: null,
         overview: null,
         setupDefaults: null,
+        hasAcceptedUploadLicensePublishingAcknowledgment: false,
         error:
           error instanceof Error ? error.message : "Failed to load dashboard",
       },
@@ -316,6 +332,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shop = session.shop;
   const setupService = createMetafieldSetupService(session, admin);
   const formData = await request.formData();
+  const sessionUserId = normalizeSessionUserId(
+    (session as { userId?: unknown }).userId,
+  );
+  const sessionEmail =
+    typeof (session as { email?: unknown }).email === "string"
+      ? (session as { email?: string }).email || null
+      : null;
 
   const initialProducerName = String(
     formData.get("initialProducerName") || "",
@@ -323,9 +346,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const initialLicensorName = String(
     formData.get("initialLicensorName") || "",
   ).trim();
+  const acceptedOnboardingAcknowledgment =
+    String(formData.get("acceptOnboardingAcknowledgment") || "") === "true";
+
+  if (!acceptedOnboardingAcknowledgment) {
+    return json<ActionData>(
+      {
+        error:
+          "Review and accept the publishing and legal responsibility acknowledgment before finishing setup.",
+      },
+      { status: 400 },
+    );
+  }
+
   await setStorageMode(shop, "managed");
 
   try {
+    await acceptMerchantAcknowledgment({
+      shop,
+      acknowledgment: MERCHANT_ACKNOWLEDGMENT_KEYS.uploadLicensePublishing,
+      acceptedByUserId: sessionUserId,
+      acceptedByEmail: sessionEmail,
+    });
+
     const setupResult = await setupService.runFullSetup({
       initialProducerName,
       initialLicensorName,
@@ -354,6 +397,7 @@ export default function Dashboard() {
     readiness,
     overview,
     setupDefaults,
+    hasAcceptedUploadLicensePublishingAcknowledgment,
     error: loaderError,
   } = useLoaderData<typeof loader>();
   const actionData = useActionData<ActionData>();
@@ -375,6 +419,8 @@ export default function Dashboard() {
         (setupDefaults.initialProducerName || ""),
     ),
   );
+  const [onboardingAcknowledgmentChecked, setOnboardingAcknowledgmentChecked] =
+    useState(false);
   useEffect(() => {
     if (readiness) {
       setStep(getInitialStep(readiness.nextStep));
@@ -391,8 +437,15 @@ export default function Dashboard() {
             (setupDefaults.initialProducerName || ""),
         ),
       );
+      setOnboardingAcknowledgmentChecked(
+        readiness.isReady && hasAcceptedUploadLicensePublishingAcknowledgment,
+      );
     }
-  }, [readiness, setupDefaults]);
+  }, [
+    hasAcceptedUploadLicensePublishingAcknowledgment,
+    readiness,
+    setupDefaults,
+  ]);
 
   useEffect(() => {
     if (!licensorNameEdited) {
@@ -423,7 +476,7 @@ export default function Dashboard() {
     return (
       <Page
         title="Get started"
-        subtitle="Set up your producer profile, legal identity, catalog presets, and delivery storage so Producer Launchpad can automate licensing end to end."
+        subtitle="Set up your producer profile, legal identity, and launch-ready presets so Producer Launchpad can automate licensing and delivery end to end."
       >
         <Layout>
           {readiness.hasStorageIssue && storageConfig?.lastError && (
@@ -452,7 +505,7 @@ export default function Dashboard() {
                 borderBlockEndWidth="025"
               >
                 <InlineStack align="center" gap="800">
-                  {["Profile", "Presets", "Storage"].map((label, index) => {
+                  {["Profile", "Licenses"].map((label, index) => {
                     const activeStep = index + 1;
                     const isActive = step >= activeStep;
                     return (
@@ -540,11 +593,12 @@ export default function Dashboard() {
                   <BlockStack gap="600">
                     <BlockStack gap="200">
                       <Text variant="headingXl" as="h1">
-                        Catalog presets
+                        Launch-ready licenses
                       </Text>
                       <Text variant="bodyLg" as="p" tone="subdued">
-                        We’ll create the default license templates and genre
-                        structure your storefront depends on.
+                        We’ll set up your starter licenses now. You can review
+                        and personalize the full terms in Licenses before you
+                        start selling.
                       </Text>
                     </BlockStack>
 
@@ -564,8 +618,13 @@ export default function Dashboard() {
                             </Text>
                           </InlineStack>
                           <Text as="p" tone="subdued">
-                            Three proven commercial-use tiers will be ready for
-                            your beat variants.
+                            We've crafted these templates to give you a fair,
+                            practical starting point based on common industry
+                            standards for beat licensing.
+                          </Text>
+                          <Text as="p" tone="subdued">
+                            Use them as your starting point, then personalize
+                            them with confidence.
                           </Text>
                           <BlockStack gap="200">
                             <Badge size="small">Basic License</Badge>
@@ -590,106 +649,64 @@ export default function Dashboard() {
                               <Icon source={ColorIcon} tone="success" />
                             </Box>
                             <Text as="h3" variant="headingMd">
-                              Catalog structure
+                              Publishing acknowledgment
                             </Text>
                           </InlineStack>
                           <Text as="p" tone="subdued">
-                            Popular genres and the data fields your storefront
-                            needs will be wired automatically.
+                            These starter templates are designed to give you a
+                            fair, practical starting point. Before you sell
+                            with them, review and customize the full terms in
+                            Licenses. Producer Launchpad is not a law firm or
+                            legal advisor, so the final terms remain your
+                            responsibility.
                           </Text>
-                          <InlineStack gap="200" wrap>
-                            <Badge size="small">Trap</Badge>
-                            <Badge size="small">Hip Hop</Badge>
-                            <Badge size="small">R&amp;B</Badge>
-                            <Badge size="small">Drill</Badge>
-                            <Badge size="small">Reggaeton</Badge>
-                            <Badge size="small">Afrobeats</Badge>
-                          </InlineStack>
+                          <Checkbox
+                            label="I understand these are starter templates, and I’ll review and customize the full terms in Licenses before selling."
+                            checked={onboardingAcknowledgmentChecked}
+                            onChange={setOnboardingAcknowledgmentChecked}
+                          />
                         </BlockStack>
                       </Card>
                     </InlineGrid>
 
                     <Text as="p" tone="subdued">
-                      You can adjust license details later from Licenses and
-                      manage technical repair from Settings.
+                      We’ll also seed your default genre structure in the
+                      background so your catalog is ready for uploads.
                     </Text>
 
                     <InlineStack align="space-between">
                       <Button size="large" onClick={() => setStep(1)}>
                         Back
                       </Button>
-                      <Button
-                        variant="primary"
-                        size="large"
-                        onClick={() => setStep(3)}
-                      >
-                        Continue
-                      </Button>
+                      <Form method="post">
+                        <input
+                          type="hidden"
+                          name="initialProducerName"
+                          value={initialProducerName}
+                        />
+                        <input
+                          type="hidden"
+                          name="initialLicensorName"
+                          value={initialLicensorName}
+                        />
+                        <input
+                          type="hidden"
+                          name="acceptOnboardingAcknowledgment"
+                          value={onboardingAcknowledgmentChecked ? "true" : ""}
+                        />
+                        <Button
+                          variant="primary"
+                          size="large"
+                          submit
+                          loading={isSubmitting}
+                          disabled={!onboardingAcknowledgmentChecked}
+                        >
+                          Finish setup
+                        </Button>
+                      </Form>
                     </InlineStack>
+
                   </BlockStack>
-                )}
-
-                {step === 3 && (
-                  <Form method="post">
-                    <input
-                      type="hidden"
-                      name="initialProducerName"
-                      value={initialProducerName}
-                    />
-                    <input
-                      type="hidden"
-                      name="initialLicensorName"
-                      value={initialLicensorName}
-                    />
-
-                    <BlockStack gap="600">
-                      <BlockStack gap="200">
-                        <Text variant="headingXl" as="h1">
-                          Delivery storage
-                        </Text>
-                        <Text variant="bodyLg" as="p" tone="subdued">
-                          Upload through Producer Launchpad and your delivery
-                          files will be stored automatically for this shop.
-                        </Text>
-                      </BlockStack>
-
-                      <Card>
-                        <BlockStack gap="300">
-                          <Text as="h2" variant="headingMd">
-                            Included with your app plan
-                          </Text>
-                          <Text as="p" tone="subdued">
-                            There is nothing extra to connect here. Beat files
-                            are uploaded inside the app and prepared for secure
-                            post-purchase delivery automatically.
-                          </Text>
-                          <Text as="p" tone="subdued">
-                            If you uninstall Producer Launchpad, we queue
-                            deletion immediately and permanently remove uploaded
-                            files plus app-controlled records within 7 days.
-                            Download anything you want to keep before
-                            uninstalling.
-                          </Text>
-                        </BlockStack>
-                      </Card>
-
-                      <Box paddingBlockStart="200">
-                        <InlineStack align="space-between">
-                          <Button size="large" onClick={() => setStep(2)}>
-                            Back
-                          </Button>
-                          <Button
-                            variant="primary"
-                            size="large"
-                            submit
-                            loading={isSubmitting}
-                          >
-                            Finish setup
-                          </Button>
-                        </InlineStack>
-                      </Box>
-                    </BlockStack>
-                  </Form>
                 )}
               </Box>
             </Card>

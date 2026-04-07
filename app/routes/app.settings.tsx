@@ -554,9 +554,10 @@ export default function SettingsPage() {
                 <Text as="p" tone="subdued">
                   Producer Launchpad uses managed storage for launch. If you
                   uninstall the app, we queue deletion immediately and
-                  permanently remove uploaded files and other app-controlled
-                  records within 7 days. Download anything you want to keep
-                  before uninstalling.
+                  permanently remove uploaded files and other shop-scoped
+                  app-controlled records, including acknowledgments and delivery
+                  records, within 7 days. If you need copies of your files or
+                  transaction records, save them before uninstalling.
                 </Text>
                 <InlineStack gap="300">
                   <Button submit loading={isSubmitting}>

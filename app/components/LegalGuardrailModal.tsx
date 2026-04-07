@@ -21,7 +21,7 @@ export function LegalGuardrailModal({
       onClose={onClose}
       title="Finalize Your Agreement"
       primaryAction={{
-        content: "I've Reviewed & Accept",
+        content: "I understand, continue",
         onAction: onAccept,
         loading: accepting,
       }}
@@ -45,8 +45,8 @@ export function LegalGuardrailModal({
             and does not provide legal advice.
           </Text>
           <Text as="p" tone="subdued" variant="bodySm">
-            You will not be able to save updates to this Starter Preset until
-            you accept this review step.
+            Before editing this Starter Preset, please acknowledge that you
+            will review and finalize the full terms for your business.
           </Text>
         </BlockStack>
       </Modal.Section>

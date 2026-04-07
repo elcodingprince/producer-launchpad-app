@@ -93,6 +93,10 @@ To keep local development explicit:
 npm run env:use:local
 ```
 
+Leave `SHOPIFY_APP_URL` unset in `.env.local` when using `shopify app dev`. The
+Shopify CLI injects the current tunnel URL automatically, and a placeholder or
+stale value there can break embedded auth redirects.
+
 If you want local dev to share the staging database, use the Neon `staging` branch connection string in `.env.local`.
 
 ### Database Workflow

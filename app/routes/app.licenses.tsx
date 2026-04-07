@@ -3349,10 +3349,10 @@ export default function LicensesPage() {
 
       <AcknowledgmentModal
         open={customTemplateGuardrailOpen}
-        title="You’re customizing the final license terms"
-        primaryActionLabel="I understand"
+        title="Custom license acknowledgment"
+        primaryActionLabel="I understand, continue"
         secondaryActionLabel="Back"
-        checkboxLabel="I understand that custom license terms are my responsibility."
+        checkboxLabel="I understand I’ll review and finalize the full terms before using this license with buyers."
         checkboxChecked={customTemplateGuardrailChecked}
         primaryActionLoading={isAcceptingCustomTemplateGuardrail}
         onCheckboxChange={setCustomTemplateGuardrailChecked}
@@ -3360,9 +3360,10 @@ export default function LicensesPage() {
         onClose={handleCloseCustomTemplateGuardrail}
       >
         <Text as="p" variant="bodyMd">
-          This template includes terms you control. Producer Launchpad can
-          generate and deliver the agreement, but you are responsible for the
-          final language and settings you publish to buyers.
+          You&apos;re creating a custom license template. Before using it with
+          buyers, review and finalize the full terms to fit your business.
+          Producer Launchpad is not a law firm or legal advisor, so the final
+          terms remain your responsibility.
         </Text>
       </AcknowledgmentModal>
     </>

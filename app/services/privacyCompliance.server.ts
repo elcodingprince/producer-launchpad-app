@@ -367,6 +367,10 @@ export async function deleteShopData(shop: string) {
     where: { shop: normalizedShop },
   });
 
+  await prisma.merchantAcknowledgment.deleteMany({
+    where: { shop: normalizedShop },
+  });
+
   await prisma.session.deleteMany({
     where: { shop: normalizedShop },
   });
