@@ -1522,7 +1522,11 @@ export default function NewBeatPage() {
           }
           discardConfirmation
         >
-          <button type="button" disabled={isBusy} onClick={resetFormState}>
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={() => navigate("/app/beats")}
+          >
             Discard
           </button>
           <button

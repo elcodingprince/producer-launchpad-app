@@ -38,6 +38,7 @@ import {
   useSetIndexFiltersMode,
 } from "@shopify/polaris";
 import { CollectionIcon } from "@shopify/polaris-icons";
+import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { AcknowledgmentModal } from "~/components/AcknowledgmentModal";
 import { FileFormatBadge } from "~/components/FileFormatBadge";
 import { LegalGuardrailModal } from "~/components/LegalGuardrailModal";
@@ -1127,11 +1128,13 @@ export default function LicensesPage() {
   const submit = useSubmit();
   const navigate = useNavigate();
   const navigation = useNavigation();
+  const shopify = useAppBridge();
   const [searchParams] = useSearchParams();
   const { mode, setMode } = useSetIndexFiltersMode();
 
   const [licenseForm, setLicenseForm] =
     useState<LicenseFormState>(emptyLicenseForm);
+  const editorFormSnapshotRef = useRef<string>("");
   const [queryValue, setQueryValue] = useState("");
   const [selectedTableView, setSelectedTableView] = useState(0);
   const [sortSelected, setSortSelected] = useState(["updated desc"]);
@@ -1199,7 +1202,9 @@ export default function LicensesPage() {
 
   const editingHandle = searchParams.get("edit");
   const isCreating = searchParams.get("new") === "1";
-  const savedState = searchParams.get("saved");
+  const [savedState, setSavedState] = useState<string | null>(
+    searchParams.get("saved"),
+  );
   const licensesWithGuardrailState = useMemo(
     () =>
       licenses.map((license) => {
@@ -1329,6 +1334,9 @@ export default function LicensesPage() {
       navigation.formMethod?.toLowerCase() === "post" &&
       navigation.formData?.get("intent") === "accept_guardrail");
   const isPreviewLoading = previewState.isLoading;
+  const isFormDirty =
+    editorFormSnapshotRef.current !== "" &&
+    JSON.stringify(licenseForm) !== editorFormSnapshotRef.current;
   const isAcceptingCustomTemplateGuardrail =
     customTemplateGuardrailFetcher.state !== "idle";
   const requiresEditorGuardrail = Boolean(
@@ -1443,13 +1451,17 @@ export default function LicensesPage() {
 
   useEffect(() => {
     if (editorMode === "create") {
-      setLicenseForm(emptyLicenseForm());
+      const fresh = emptyLicenseForm();
+      setLicenseForm(fresh);
+      editorFormSnapshotRef.current = JSON.stringify(fresh);
       setSelectedPreviewTab(0);
       return;
     }
 
     if (editorMode === "update" && editorLicense) {
-      setLicenseForm(buildLicenseForm(editorLicense));
+      const loaded = buildLicenseForm(editorLicense);
+      setLicenseForm(loaded);
+      editorFormSnapshotRef.current = JSON.stringify(loaded);
       setSelectedPreviewTab(0);
     }
   }, [editorMode, editorLicense]);
@@ -1602,11 +1614,19 @@ export default function LicensesPage() {
       actionData?.success &&
       (actionData.intent === "update" || actionData.intent === "create")
     ) {
+      editorFormSnapshotRef.current = "";
       const nextSavedState =
         actionData.intent === "update" ? "updated" : "created";
-      navigate(`/app/licenses?saved=${nextSavedState}`, { replace: true });
+      setSavedState(nextSavedState);
+      navigate("/app/licenses", { replace: true });
     }
   }, [actionData, navigate]);
+
+  useEffect(() => {
+    if (searchParams.has("saved")) {
+      navigate("/app/licenses", { replace: true });
+    }
+  }, []);
 
   useEffect(() => {
     if (!bundleFetcher.data?.success) return;
@@ -1744,7 +1764,25 @@ export default function LicensesPage() {
     [navigate],
   );
 
-  const handleCloseEditor = useCallback(() => {
+  const handleCloseEditor = useCallback(async () => {
+    if (
+      editorFormSnapshotRef.current !== "" &&
+      JSON.stringify(licenseForm) !== editorFormSnapshotRef.current
+    ) {
+      try {
+        await shopify.saveBar.leaveConfirmation();
+      } catch {
+        return;
+      }
+    }
+
+    setGuardrailModalTemplate(null);
+    setPendingEditHandle(null);
+    navigate("/app/licenses");
+  }, [licenseForm, navigate, shopify]);
+
+  const discardAndCloseEditor = useCallback(() => {
+    editorFormSnapshotRef.current = "";
     setGuardrailModalTemplate(null);
     setPendingEditHandle(null);
     navigate("/app/licenses");
@@ -1977,6 +2015,25 @@ export default function LicensesPage() {
 
     return (
       <>
+        <SaveBar id="license-editor-save-bar" open={isFormDirty}>
+          <button type="button" onClick={discardAndCloseEditor}>
+            Discard
+          </button>
+          <button
+            type="button"
+            variant="primary"
+            disabled={
+              !licenseForm.licenseName.trim() ||
+              requiresEditorGuardrail ||
+              requiresCreateGuardrail ||
+              isSaving
+            }
+            loading={isSaving ? "" : undefined}
+            onClick={handleSave}
+          >
+            Save
+          </button>
+        </SaveBar>
         <Page
           fullWidth
           title={
@@ -1986,22 +2043,6 @@ export default function LicensesPage() {
           }
           subtitle="Configure storefront copy, usage limits, delivery packaging, and reusable agreement language for this template."
           backAction={{ content: "Templates", onAction: handleCloseEditor }}
-          primaryAction={{
-            content:
-              editorMode === "create" ? "Create template" : "Save changes",
-            onAction: handleSave,
-            loading: isSaving,
-            disabled:
-              !licenseForm.licenseName.trim() ||
-              requiresEditorGuardrail ||
-              requiresCreateGuardrail,
-          }}
-          secondaryActions={[
-            {
-              content: "Cancel",
-              onAction: handleCloseEditor,
-            },
-          ]}
         >
           <Layout>
             {actionError && (
@@ -2767,6 +2808,7 @@ export default function LicensesPage() {
                     : "Template created"
                 }
                 tone="success"
+                onDismiss={() => setSavedState(null)}
               />
             </Layout.Section>
           )}
@@ -3140,12 +3182,17 @@ export default function LicensesPage() {
                             </IndexTable.Cell>
 
                             <IndexTable.Cell>
-                              <Button
-                                variant="plain"
-                                onClick={() => handleOpenEdit(license)}
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
                               >
-                                Edit
-                              </Button>
+                                <Button
+                                  variant="plain"
+                                  onClick={() => handleOpenEdit(license)}
+                                >
+                                  Edit
+                                </Button>
+                              </div>
                             </IndexTable.Cell>
                           </IndexTable.Row>
                         );

@@ -617,8 +617,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function BeatsList() {
-  const { beats, uploadSuccess, uploadStatus } = useLoaderData<typeof loader>();
+  const { beats, uploadSuccess: loaderUploadSuccess, uploadStatus: loaderUploadStatus } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [uploadSuccess, setUploadSuccess] = useState(loaderUploadSuccess);
+  const [uploadStatus, setUploadStatus] = useState(loaderUploadStatus);
   const shopify = useAppBridge();
   const deleteFetcher = useFetcher<typeof action>();
   const { mode, setMode } = useSetIndexFiltersMode();
@@ -638,6 +640,15 @@ export default function BeatsList() {
     return 0;
   });
   const selectedLicenseId = searchParams.get("license");
+
+  useEffect(() => {
+    if (searchParams.has("success")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("success");
+      next.delete("status");
+      setSearchParams(next, { replace: true, preventScrollReset: true });
+    }
+  }, []);
 
   const statusViews = useMemo(
     () => [
@@ -957,14 +968,7 @@ export default function BeatsList() {
                   : "Beat uploaded successfully"
               }
               tone="success"
-              onDismiss={() => {
-                const next = new URLSearchParams(searchParams);
-                next.delete("success");
-                setSearchParams(next, {
-                  replace: true,
-                  preventScrollReset: true,
-                });
-              }}
+              onDismiss={() => setUploadSuccess(false)}
             >
               <p>
                 {uploadStatus === "draft" ? (
