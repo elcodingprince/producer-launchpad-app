@@ -20,7 +20,6 @@ import {
   Checkbox,
   EmptyState,
   FormLayout,
-  Icon,
   IndexFilters,
   type IndexFiltersProps,
   IndexTable,
@@ -37,7 +36,6 @@ import {
   useIndexResourceState,
   useSetIndexFiltersMode,
 } from "@shopify/polaris";
-import { CollectionIcon } from "@shopify/polaris-icons";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { AcknowledgmentModal } from "~/components/AcknowledgmentModal";
 import { FileFormatBadge } from "~/components/FileFormatBadge";
@@ -178,12 +176,6 @@ const PUBLISHING_SPLIT_MODE_OPTIONS = [
 const STARTER_HANDLES = new Set(
   DEFAULT_LICENSES.map((license) => license.handle),
 );
-const DYNAMIC_TEMPLATE_FIELDS = [
-  "[[license_name]]",
-  "[[customer_name]]",
-  "[[governing_law_region]]",
-  "[[stems_clause]]",
-] as const;
 const AGREEMENT_PREVIEW_TABS = [
   { id: "resolved", content: "With my settings" },
   { id: "starter", content: "Starter template" },
@@ -1994,7 +1986,6 @@ export default function LicensesPage() {
       : "/app/beats";
     const previewFeatures = parseFeatureLines(licenseForm.featuresShort);
     const fileBadges = parseFileFormatBadges(licenseForm.fileFormats);
-    const customTermCount = countCustomTerms(licenseForm.terms);
     const archetypeConfig = getOfferArchetypeConfig(licenseForm.offerArchetype);
     const limitPresetConfig = getOfferLimitPresetConfig(
       licenseForm.offerArchetype,
@@ -2041,7 +2032,6 @@ export default function LicensesPage() {
               ? "New Reusable Template"
               : licenseForm.licenseName || "Edit Template"
           }
-          subtitle="Configure storefront copy, usage limits, delivery packaging, and reusable agreement language for this template."
           backAction={{ content: "Templates", onAction: handleCloseEditor }}
         >
           <Layout>
@@ -2114,16 +2104,9 @@ export default function LicensesPage() {
                 <Card>
                   <BlockStack gap="400">
                     <InlineStack align="space-between" blockAlign="center">
-                      <BlockStack gap="100">
-                        <Text as="h2" variant="headingMd">
-                          Identity
-                        </Text>
-                        <Text as="p" tone="subdued">
-                          Use a clear template name your team will recognize
-                          across storefront offers, checkout records, and
-                          delivery history.
-                        </Text>
-                      </BlockStack>
+                      <Text as="h2" variant="headingMd">
+                        Identity
+                      </Text>
                       {editorMode === "update" ? (
                         isStarter ? (
                           <Badge tone="success">Starter Preset</Badge>
@@ -2143,7 +2126,7 @@ export default function LicensesPage() {
                             buildArchetypeBoundForm(value, current),
                           )
                         }
-                        helpText="Choose the locked offer archetype. This controls the agreement family and base delivery package for the template."
+                        helpText="Controls the agreement family and base delivery package."
                       />
                     ) : (
                       <TextField
@@ -2151,7 +2134,7 @@ export default function LicensesPage() {
                         value={archetypeConfig.label}
                         autoComplete="off"
                         readOnly
-                        helpText="Locked after creation so live storefront offers and delivery packages stay stable across beats already using this template."
+                        helpText="Locked after creation."
                       />
                     )}
 
@@ -2165,22 +2148,16 @@ export default function LicensesPage() {
                         }))
                       }
                       autoComplete="off"
-                      helpText="This name is customer-facing and can be used for storefront marketing. The locked template type still controls the underlying legal rights model."
+                      helpText="Customer-facing name shown on your storefront."
                     />
                   </BlockStack>
                 </Card>
 
                 <Card>
                   <BlockStack gap="400">
-                    <BlockStack gap="100">
-                      <Text as="h2" variant="headingMd">
-                        Rights and limits
-                      </Text>
-                      <Text as="p" tone="subdued">
-                        Choose from curated caps for this template type so
-                        reusable offers stay predictable across beats.
-                      </Text>
-                    </BlockStack>
+                    <Text as="h2" variant="headingMd">
+                      Rights and limits
+                    </Text>
 
                     <FormLayout>
                       <FormLayout.Group>
@@ -2197,7 +2174,6 @@ export default function LicensesPage() {
                               streamLimit: value,
                             }))
                           }
-                          helpText="Curated stream caps for this archetype. Unlimited templates stay locked to unlimited."
                         />
                         <Select
                           label="Copy limit"
@@ -2212,7 +2188,6 @@ export default function LicensesPage() {
                               copyLimit: value,
                             }))
                           }
-                          helpText="Choose the maximum number of copies permitted under this template."
                         />
                       </FormLayout.Group>
 
@@ -2229,7 +2204,6 @@ export default function LicensesPage() {
                             videoViewLimit: value,
                           }))
                         }
-                        helpText="Use a preset so storefront copy and agreement previews stay in sync."
                       />
 
                       <Select
@@ -2245,29 +2219,17 @@ export default function LicensesPage() {
                             termYears: value,
                           }))
                         }
-                        helpText="Perpetual terms are available only where the archetype allows them."
                       />
 
-                      <Text as="p" tone="subdued">
-                        Each template type uses a curated set of caps so
-                        storefront copy, agreement previews, and delivery
-                        expectations stay aligned.
-                      </Text>
                     </FormLayout>
                   </BlockStack>
                 </Card>
 
                 <Card>
                   <BlockStack gap="400">
-                    <BlockStack gap="100">
-                      <Text as="h2" variant="headingMd">
-                        Base package
-                      </Text>
-                      <Text as="p" tone="subdued">
-                        These fields stay fixed so beats already using this
-                        template do not drift after you publish them.
-                      </Text>
-                    </BlockStack>
+                    <Text as="h2" variant="headingMd">
+                      Base package
+                    </Text>
 
                     <FormLayout>
                       <TextField
@@ -2275,7 +2237,7 @@ export default function LicensesPage() {
                         value={licenseForm.fileFormats}
                         autoComplete="off"
                         readOnly
-                        helpText="Locked to the selected template type so storefront messaging matches what buyers will actually receive."
+                        helpText="Locked to template type."
                       />
 
                       <TextField
@@ -2285,7 +2247,7 @@ export default function LicensesPage() {
                         )}
                         autoComplete="off"
                         readOnly
-                        helpText="Locked to the selected template type so the legal rights model stays stable across all products using this template."
+                        helpText="Locked to template type."
                       />
 
                       {licenseForm.offerArchetype === "unlimited" ? (
@@ -2294,7 +2256,6 @@ export default function LicensesPage() {
                           checked={
                             licenseForm.stemsPolicy === "included_by_default"
                           }
-                          helpText="Turn this off if this Unlimited template should sell stems as an optional add-on instead of bundling them into the base package."
                           onChange={(checked) =>
                             setLicenseForm((current) =>
                               buildArchetypeBoundForm(current.offerArchetype, {
@@ -2308,28 +2269,15 @@ export default function LicensesPage() {
                         />
                       ) : null}
 
-                      <Text as="p" tone="subdued">
-                        {templateDerivedFields.stemsBehaviorLabel}.
-                      </Text>
-
-                      <Text as="p" tone="subdued">
-                        {templateDerivedFields.stemsBehaviorHelpText}
-                      </Text>
                     </FormLayout>
                   </BlockStack>
                 </Card>
 
                 <Card>
                   <BlockStack gap="400">
-                    <BlockStack gap="100">
-                      <Text as="h2" variant="headingMd">
-                        Storefront copy
-                      </Text>
-                      <Text as="p" tone="subdued">
-                        Adjust the customer-facing summary buyers read when they
-                        compare offers.
-                      </Text>
-                    </BlockStack>
+                    <Text as="h2" variant="headingMd">
+                      Storefront copy
+                    </Text>
 
                     <FormLayout>
                       <TextField
@@ -2343,7 +2291,7 @@ export default function LicensesPage() {
                         }
                         multiline={3}
                         autoComplete="off"
-                        helpText="Short paragraph used for customer-facing summary copy."
+                        helpText="Shown to buyers when comparing license options."
                       />
 
                       <TextField
@@ -2357,7 +2305,7 @@ export default function LicensesPage() {
                         }
                         multiline={5}
                         autoComplete="off"
-                        helpText="One line per feature. This summary is shown to buyers when they compare options."
+                        helpText="One line per feature."
                       />
                     </FormLayout>
                   </BlockStack>
@@ -2365,16 +2313,9 @@ export default function LicensesPage() {
 
                 <Card>
                   <BlockStack gap="400">
-                    <BlockStack gap="100">
-                      <Text as="h2" variant="headingMd">
-                        Agreement settings
-                      </Text>
-                      <Text as="p" tone="subdued">
-                        Choose the controlled options that change the agreement
-                        language when Producer Launchpad renders the final
-                        document.
-                      </Text>
-                    </BlockStack>
+                    <Text as="h2" variant="headingMd">
+                      Agreement settings
+                    </Text>
 
                     <FormLayout>
                       <Select
@@ -2436,30 +2377,36 @@ export default function LicensesPage() {
                         }
                         multiline={2}
                         autoComplete="off"
-                        helpText="Used when the selected publishing mode renders a summary into the agreement."
                       />
 
-                      <Text as="p" tone="subdued">
-                        Addendum terms below are appended to the starter
-                        agreement. They do not replace the core legal clauses.
-                      </Text>
-
-                      {licenseForm.terms.map((term, index) => (
-                        <TextField
-                          key={`term-${index + 1}`}
-                          label={`Addendum term ${index + 1}`}
-                          value={term}
-                          onChange={(value) =>
-                            setLicenseForm((current) => {
-                              const nextTerms = [...current.terms];
-                              nextTerms[index] = value;
-                              return { ...current, terms: nextTerms };
-                            })
-                          }
-                          multiline={3}
-                          autoComplete="off"
-                        />
-                      ))}
+                      {licenseForm.terms.map((term, index) => {
+                        const filledCount = licenseForm.terms.filter(
+                          (t) => t.trim() !== "",
+                        ).length;
+                        const visibleCount = Math.max(filledCount + 1, 1);
+                        if (index >= visibleCount) return null;
+                        return (
+                          <TextField
+                            key={`term-${index + 1}`}
+                            label={`Addendum term ${index + 1}`}
+                            value={term}
+                            onChange={(value) =>
+                              setLicenseForm((current) => {
+                                const nextTerms = [...current.terms];
+                                nextTerms[index] = value;
+                                return { ...current, terms: nextTerms };
+                              })
+                            }
+                            multiline={3}
+                            autoComplete="off"
+                            helpText={
+                              index === 0
+                                ? "Appended to the agreement. Does not replace core clauses."
+                                : undefined
+                            }
+                          />
+                        );
+                      })}
                     </FormLayout>
                   </BlockStack>
                 </Card>
@@ -2618,71 +2565,6 @@ export default function LicensesPage() {
                         reads at a glance.
                       </Text>
                     )}
-                  </BlockStack>
-                </Card>
-
-                <Card>
-                  <BlockStack gap="300">
-                    <Text as="h2" variant="headingMd">
-                      Fields filled at checkout
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      These variables are filled with store and order data when
-                      the agreement is created.
-                    </Text>
-                    <InlineStack gap="200" wrap>
-                      {DYNAMIC_TEMPLATE_FIELDS.map((field) => (
-                        <Box
-                          key={field}
-                          background="bg-surface-secondary"
-                          borderRadius="200"
-                          padding="200"
-                        >
-                          <Text as="span" variant="bodySm" fontWeight="medium">
-                            {field}
-                          </Text>
-                        </Box>
-                      ))}
-                    </InlineStack>
-                  </BlockStack>
-                </Card>
-
-                <Card>
-                  <BlockStack gap="300">
-                    <InlineStack gap="200" blockAlign="center">
-                      <Icon source={CollectionIcon} />
-                      <Text as="h2" variant="headingMd">
-                        Automation summary
-                      </Text>
-                    </InlineStack>
-
-                    <BlockStack gap="200">
-                      <InlineStack align="space-between">
-                        <Text as="span">Agreement generation</Text>
-                        <Badge tone="success">Automatic</Badge>
-                      </InlineStack>
-                      <InlineStack align="space-between">
-                        <Text as="span">Portal and file delivery</Text>
-                        <Badge tone="success">Automatic</Badge>
-                      </InlineStack>
-                      <InlineStack align="space-between">
-                        <Text as="span">Reusable sections</Text>
-                        <Text as="span">
-                          {customTermCount} section
-                          {customTermCount === 1 ? "" : "s"}
-                        </Text>
-                      </InlineStack>
-                      <InlineStack align="space-between">
-                        <Text as="span">Assigned beats</Text>
-                        <Text as="span">{usage?.beatCount || 0}</Text>
-                      </InlineStack>
-                    </BlockStack>
-
-                    <Text as="p" tone="subdued">
-                      Once a buyer selects this template, Producer Launchpad
-                      prepares the agreement summary, sends the delivery email,
-                      and tracks the order inside Deliveries.
-                    </Text>
                   </BlockStack>
                 </Card>
 
