@@ -24,7 +24,6 @@ import {
 import { validateUploadFile, ALLOWED_FILE_TYPES } from "../services/bunnyCdn";
 import { FileFormatBadge, getFileFormatLabel } from "./FileFormatBadge";
 import {
-  licenseOffersStems,
   stemsAvailableAsAddon,
   stemsIncludedByDefault,
 } from "../services/deliveryPackages";
@@ -529,10 +528,6 @@ export function LicenseFileAssignment({
   const hasSharedStemsFile = uploadedFiles.some(
     (file) => file.purpose === "stems",
   );
-  const licensesThatOfferStems = licenses.filter((license) =>
-    licenseOffersStems(license.stemsPolicy),
-  );
-  const stemsUploadRequired = licensesThatOfferStems.length > 0;
 
   const packageStatusMessage = (
     missingFiles: string[],
@@ -585,15 +580,6 @@ export function LicenseFileAssignment({
       {/* ── Storefront media ── */}
       <Card>
         <BlockStack gap="400">
-          <BlockStack gap="100">
-            <Text variant="headingMd" as="h2">
-              Storefront media
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Add the artwork and preview audio buyers see before purchase.
-            </Text>
-          </BlockStack>
-
           <div
             style={{
               display: "grid",
@@ -789,8 +775,8 @@ export function LicenseFileAssignment({
                 Delivery files
               </Text>
               <Text as="p" variant="bodySm" tone="subdued">
-                Upload each master once. Your license templates automatically
-                build the right customer package below.
+                Upload your master files. Each license tier packages the right
+                formats automatically.
               </Text>
             </BlockStack>
             {uploadedFiles.length > 0 && !uploading && (
@@ -812,16 +798,6 @@ export function LicenseFileAssignment({
               </>
             )}
           </InlineStack>
-
-          {stemsUploadRequired && (
-            <Banner tone={hasSharedStemsFile ? "success" : "warning"}>
-              <p>
-                {hasSharedStemsFile
-                  ? "Stems ZIP uploaded. Orders that include stems or purchase the stems add-on can be fulfilled."
-                  : "At least one license offer includes stems or sells stems as an add-on. Upload one stems ZIP before publishing this beat."}
-              </p>
-            </Banner>
-          )}
 
           {uploadedFiles.length === 0 ? (
             <DropZone
@@ -1093,26 +1069,9 @@ export function LicenseFileAssignment({
 
                             {stemsIncludedByDefault(tier.stemsPolicy) && (
                               <Text as="span" variant="bodyXs" tone="subdued">
-                                Stems are included in this license, so this
-                                package must contain a stems ZIP.
+                                Stems included — upload a stems ZIP.
                               </Text>
                             )}
-
-                            {stemsAvailableAsAddon(tier.stemsPolicy) && (
-                              <Text as="span" variant="bodyXs" tone="subdued">
-                                Buyers can add stems at checkout. The shared
-                                stems ZIP is delivered only when purchased.
-                              </Text>
-                            )}
-
-                            {tier.templateStemsPolicy ===
-                              "available_as_addon" &&
-                              !stemsAddonSelections[tier.id] && (
-                                <Text as="span" variant="bodyXs" tone="subdued">
-                                  Buyers will only see the base package until
-                                  you turn on the stems add-on for this beat.
-                                </Text>
-                              )}
                           </BlockStack>
                         </Box>
                       </td>

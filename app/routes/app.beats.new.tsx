@@ -15,7 +15,6 @@ import {
   Text,
   FormLayout,
   Badge,
-  Box,
   InlineStack,
 } from "@shopify/polaris";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
@@ -1525,7 +1524,10 @@ export default function NewBeatPage() {
           <button
             type="button"
             disabled={isBusy}
-            onClick={() => navigate("/app/beats")}
+            onClick={() => {
+              setSuppressSaveBar(true);
+              navigate("/app/beats");
+            }}
           >
             Discard
           </button>
@@ -1534,7 +1536,7 @@ export default function NewBeatPage() {
             variant="primary"
             disabled={
               isBusy ||
-              (effectiveSaveMode === "draft"
+              (status === "draft"
                 ? !hasDraftMinimumFields()
                 : !isReadyForActive())
             }
@@ -1654,39 +1656,6 @@ export default function NewBeatPage() {
                   </BlockStack>
                 </Card>
 
-                <Card>
-                  <BlockStack gap="400">
-                    <Text variant="headingMd" as="h2">
-                      Organization
-                    </Text>
-
-                    <FormLayout>
-                      <MultiSelectCombobox
-                        label="Producers"
-                        options={producerOptions}
-                        selectedValues={producerGids}
-                        onChange={setProducerGids}
-                        placeholder="Search producers"
-                      />
-
-                      <TextField
-                        label="Producer alias (optional)"
-                        value={producerAlias}
-                        onChange={setProducerAlias}
-                        autoComplete="off"
-                      />
-
-                      <MultiSelectCombobox
-                        label="Genres"
-                        options={genreOptions}
-                        selectedValues={genreGids}
-                        onChange={setGenreGids}
-                        placeholder="Search genres"
-                      />
-                    </FormLayout>
-                  </BlockStack>
-                </Card>
-
                 <LicenseFileAssignment
                   licenses={dynamicLicenseTiers}
                   uploadedFiles={uploadedFiles}
@@ -1739,32 +1708,39 @@ export default function NewBeatPage() {
                     />
 
                     <Text as="p" variant="bodySm" tone="subdued">
-                      Choose whether this beat stays in Producer Launchpad for
-                      later or publishes to Shopify when it is ready to sell.
+                      {status === "draft"
+                        ? "Save as draft to finish later."
+                        : effectiveSaveMode === "draft"
+                          ? "Missing files or pricing — will save as draft for now."
+                          : "Ready to publish to your Shopify store."}
+                    </Text>
+                  </BlockStack>
+                </Card>
+
+                {/* Organization Card */}
+                <Card>
+                  <BlockStack gap="400">
+                    <Text variant="headingMd" as="h2">
+                      Organization
                     </Text>
 
-                    <Box
-                      background="bg-surface-secondary"
-                      borderRadius="300"
-                      padding="300"
-                    >
-                      <BlockStack gap="100">
-                        <Text as="p" variant="bodySm" fontWeight="medium">
-                          {status === "draft"
-                            ? "Stays in Producer Launchpad"
-                            : effectiveSaveMode === "draft"
-                              ? "Will save as a draft for now"
-                              : "Ready to publish to Shopify"}
-                        </Text>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {status === "draft"
-                            ? "You can come back later to finish files, preview audio, and pricing."
-                            : effectiveSaveMode === "draft"
-                              ? "Add the remaining preview, delivery files, and pricing when you are ready to activate it."
-                              : "Saving will create the Shopify product and keep delivery automation ready."}
-                        </Text>
-                      </BlockStack>
-                    </Box>
+                    <FormLayout>
+                      <MultiSelectCombobox
+                        label="Producers"
+                        options={producerOptions}
+                        selectedValues={producerGids}
+                        onChange={setProducerGids}
+                        placeholder="Search producers"
+                      />
+
+                      <MultiSelectCombobox
+                        label="Genres"
+                        options={genreOptions}
+                        selectedValues={genreGids}
+                        onChange={setGenreGids}
+                        placeholder="Search genres"
+                      />
+                    </FormLayout>
                   </BlockStack>
                 </Card>
               </BlockStack>
