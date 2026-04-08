@@ -352,6 +352,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
     const producerAlias = (formData.get("producerAlias") as string) || "";
     const statusValue = (formData.get("status") as string) || "active";
+    const intendedActive = formData.get("intendedActive") === "true";
+    const missing = (formData.get("missing") as string) || "";
     const productStatus = statusValue === "draft" ? "DRAFT" : "ACTIVE";
     const isDraft = productStatus === "DRAFT";
     const draftId = (formData.get("draftId") as string) || null;
@@ -768,7 +770,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       return json({
         success: true,
-        redirectTo: "/app/beats?success=true&status=draft",
+        redirectTo: `/app/beats?success=true&status=draft${intendedActive ? `&intendedActive=true${missing ? `&missing=${encodeURIComponent(missing)}` : ""}` : ""}`,
       } satisfies UploadActionData);
     }
 
@@ -916,7 +918,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     return json({
       success: true,
-      redirectTo: `/app/beats?success=true&status=${statusValue}`,
+      redirectTo: `/app/beats?success=true&status=${statusValue}${intendedActive && isDraft ? `&intendedActive=true${missing ? `&missing=${encodeURIComponent(missing)}` : ""}` : ""}`,
     } satisfies UploadActionData);
   } catch (error) {
     console.error("Upload error:", error);
@@ -1290,6 +1292,26 @@ export default function NewBeatPage() {
     formData.append("producerGids", JSON.stringify(producerGids));
     formData.append("producerAlias", producerAlias);
     formData.append("status", resolvedStatus);
+    if (status === "active" && resolvedStatus === "draft") {
+      formData.append("intendedActive", "true");
+      const missing: string[] = [];
+      if (!bpm) missing.push("BPM");
+      if (!key) missing.push("key");
+      if (genreGids.length === 0) missing.push("genre");
+      if (producerGids.length === 0) missing.push("producer");
+      if (!previewFile) missing.push("preview audio");
+      if (uploadedFiles.length === 0) missing.push("delivery files");
+      if (
+        !hasCompleteLicensePrices(
+          licenses.filter(Boolean).map((l) => ({ id: l!.id })),
+          licensePrices,
+        )
+      )
+        missing.push("pricing");
+      if (missing.length > 0) {
+        formData.append("missing", missing.join(","));
+      }
+    }
     formData.append("licenseFiles", JSON.stringify(licenseFiles));
     formData.append("licensePrices", JSON.stringify(licensePrices));
     formData.append(
@@ -1510,7 +1532,7 @@ export default function NewBeatPage() {
   return (
     <>
       <Page
-        title="Upload beat"
+        title={draft?.id ? title || "Continue draft" : "Upload beat"}
         backAction={{ content: "Beats", onAction: handleBackAction }}
       >
         <SaveBar
@@ -1536,7 +1558,7 @@ export default function NewBeatPage() {
             variant="primary"
             disabled={
               isBusy ||
-              (status === "draft"
+              (effectiveSaveMode === "draft"
                 ? !hasDraftMinimumFields()
                 : !isReadyForActive())
             }
@@ -1600,20 +1622,9 @@ export default function NewBeatPage() {
                 {/* Beat Details */}
                 <Card>
                   <BlockStack gap="400">
-                    <Text variant="headingMd" as="h2">
-                      Beat details
-                    </Text>
-
                     <FormLayout>
                       <TextField
-                        label={
-                          <span>
-                            Beat title{" "}
-                            <Text as="span" tone="subdued">
-                              (required)
-                            </Text>
-                          </span>
-                        }
+                        label="Title"
                         value={title}
                         onChange={setTitle}
                         autoComplete="off"
@@ -1621,14 +1632,7 @@ export default function NewBeatPage() {
 
                       <FormLayout.Group>
                         <TextField
-                          label={
-                            <span>
-                              BPM{" "}
-                              <Text as="span" tone="subdued">
-                                (required)
-                              </Text>
-                            </span>
-                          }
+                          label="BPM"
                           type="number"
                           value={bpm}
                           onChange={setBpm}
@@ -1636,14 +1640,7 @@ export default function NewBeatPage() {
                         />
 
                         <Select
-                          label={
-                            <span>
-                              Key{" "}
-                              <Text as="span" tone="subdued">
-                                (required)
-                              </Text>
-                            </span>
-                          }
+                          label="Key"
                           options={keyOptions.map((k) => ({
                             label: k,
                             value: k,

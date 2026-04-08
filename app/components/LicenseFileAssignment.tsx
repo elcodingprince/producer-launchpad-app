@@ -685,17 +685,12 @@ export function LicenseFileAssignment({
             <BlockStack gap="200">
               <BlockStack gap="200">
                 <BlockStack gap="100">
-                  <InlineStack gap="200" blockAlign="center">
-                    <Text variant="headingSm" as="h3">
-                      Preview audio
-                    </Text>
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      (required)
-                    </Text>
-                  </InlineStack>
+                  <Text variant="headingSm" as="h3">
+                    Preview audio
+                  </Text>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Watermarked MP3 for your storefront player. Never delivered
-                    in a license package.
+                    Watermarked MP3 for your storefront player. Not included
+                    in license packages.
                   </Text>
                 </BlockStack>
 

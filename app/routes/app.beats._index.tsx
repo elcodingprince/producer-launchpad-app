@@ -570,6 +570,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     uploadSuccess: url.searchParams.get("success") === "true",
     uploadStatus:
       url.searchParams.get("status") === "draft" ? "draft" : "active",
+    intendedActive: url.searchParams.get("intendedActive") === "true",
+    missingItems: url.searchParams.get("missing") || "",
   });
 };
 
@@ -617,10 +619,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function BeatsList() {
-  const { beats, uploadSuccess: loaderUploadSuccess, uploadStatus: loaderUploadStatus } = useLoaderData<typeof loader>();
+  const { beats, uploadSuccess: loaderUploadSuccess, uploadStatus: loaderUploadStatus, intendedActive: loaderIntendedActive, missingItems: loaderMissingItems } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [uploadSuccess, setUploadSuccess] = useState(loaderUploadSuccess);
   const [uploadStatus, setUploadStatus] = useState(loaderUploadStatus);
+  const [intendedActive, setIntendedActive] = useState(loaderIntendedActive);
+  const [missingItems] = useState(loaderMissingItems);
   const shopify = useAppBridge();
   const deleteFetcher = useFetcher<typeof action>();
   const { mode, setMode } = useSetIndexFiltersMode();
@@ -646,6 +650,8 @@ export default function BeatsList() {
       const next = new URLSearchParams(searchParams);
       next.delete("success");
       next.delete("status");
+      next.delete("intendedActive");
+      next.delete("missing");
       setSearchParams(next, { replace: true, preventScrollReset: true });
     }
   }, []);
@@ -963,23 +969,30 @@ export default function BeatsList() {
           <Layout.Section>
             <Banner
               title={
-                uploadStatus === "draft"
-                  ? "Draft saved to Producer Launchpad"
-                  : "Beat uploaded successfully"
+                intendedActive
+                  ? "Saved as draft"
+                  : uploadStatus === "draft"
+                    ? "Draft saved to Producer Launchpad"
+                    : "Beat uploaded successfully"
               }
-              tone="success"
-              onDismiss={() => setUploadSuccess(false)}
+              tone={intendedActive ? "warning" : "success"}
+              onDismiss={() => {
+                setUploadSuccess(false);
+                setIntendedActive(false);
+              }}
             >
               <p>
-                {uploadStatus === "draft" ? (
+                {intendedActive ? (
                   <>
-                    <Link to="/app/beats/new">Upload another beat</Link>, or
-                    reopen this draft any time from the Draft tab.
+                    To publish as active, add the missing{" "}
+                    {missingItems
+                      ? missingItems.split(",").join(", ")
+                      : "required fields"}
+                    .
                   </>
                 ) : (
                   <>
-                    <Link to="/app/beats/new">Upload another beat</Link>, or{" "}
-                    <Link to="/app/licenses">view license templates</Link>.
+                    <Link to="/app/beats/new">Upload another beat</Link>
                   </>
                 )}
               </p>
