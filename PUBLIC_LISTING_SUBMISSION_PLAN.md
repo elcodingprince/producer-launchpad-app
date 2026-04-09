@@ -121,6 +121,68 @@ Definition of done:
 
 ## Submission Readiness Tasks
 
+### Listing Copy Draft
+
+Use the following as the starting point for the Shopify Partner Dashboard listing.
+
+#### App name
+
+- `Producer Launchpad`
+
+#### Tagline / short value proposition
+
+- `Generate beat licenses, deliver files securely, and manage post-purchase delivery in Shopify.`
+
+#### Short description
+
+- `Producer Launchpad helps music producers generate license records, send secure delivery links, and manage digital beat fulfillment directly inside Shopify.`
+
+#### Full description
+
+Producer Launchpad helps music producers run digital beat sales inside Shopify with less manual follow-up.
+
+Use Producer Launchpad to:
+
+- generate license records tied to Shopify purchases
+- manage reusable license templates
+- upload beat files and map delivery packages
+- send secure post-purchase delivery links
+- track delivery email status and resend when needed
+- support Shopify privacy-request and redaction handling through the app's compliance workflow
+
+Producer Launchpad is built for producers who want a cleaner licensing and delivery workflow inside Shopify without stitching together multiple tools.
+
+Important notes for review and merchant expectations:
+
+- Producer Launchpad helps generate and deliver license records, but merchants remain responsible for reviewing and finalizing the license terms they use with buyers.
+- Customer privacy requests are captured automatically, and Producer Launchpad support completes fulfillment operationally for the store owner within Shopify's required timeframe.
+- Managed uploads are queued for deletion immediately on uninstall, and app-controlled records are removed through the app's uninstall and privacy-compliance workflows.
+
+#### Feature bullets
+
+- `License templates for common beat licensing tiers`
+- `Secure delivery links for purchased digital files`
+- `Managed beat upload and delivery mapping`
+- `Delivery email tracking and resend support`
+- `Shopify privacy webhook handling for access and deletion workflows`
+
+#### Support contact
+
+- `newradio.sound@gmail.com`
+
+#### Policy URLs
+
+- Privacy policy: use the final published `/privacy` page on the landing site
+- Terms of service: use the final published `/terms` page on the landing site
+
+#### Reviewer notes
+
+- The app is embedded in Shopify Admin.
+- Onboarding sets up producer identity, starter licenses, and required legal acknowledgment.
+- License editing includes starter-template and custom-template guardrails.
+- Customer data request handling is support-operated and not presented as a primary merchant-facing feature.
+- Managed-storage deletion is queued immediately on uninstall and completed through the background deletion workflow.
+
 ### 5. Verify protected customer data access request
 
 **Status: Pending** - Needs verification in the Partner Dashboard directly.

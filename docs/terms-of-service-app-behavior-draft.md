@@ -82,7 +82,7 @@ Producer Launchpad supports Shopify privacy webhooks for:
 - customer redaction
 - shop redaction
 
-Customer data requests are captured automatically and turned into an export payload inside the app. The current workflow requires merchant review and operational fulfillment; it is not fully automatic end-to-end.
+Customer data requests are captured automatically and turned into an export payload inside the app. The current workflow is support-operated and not fully automatic end to end.
 
 Customer and shop redaction requests are handled automatically in code for app-controlled records.
 

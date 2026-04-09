@@ -12,8 +12,9 @@ Focused checklist based only on our completed audits and the current codebase.
 
 - [ ] Implement deletion of uploaded merchant file objects from app-managed Cloudflare R2 during uninstall and `shop/redact`.
   Audit: privacy audit
-  Status: ⏳ Pending verification
+  Status: ✅ Completed
   File/component to modify: [shopDeletionJobs.server.ts](/Users/payan/producer-launchpad-app/app/services/shopDeletionJobs.server.ts), [r2.server.ts](/Users/payan/producer-launchpad-app/app/services/r2.server.ts), [webhooks.tsx](/Users/payan/producer-launchpad-app/app/routes/webhooks.tsx), [privacyCompliance.server.ts](/Users/payan/producer-launchpad-app/app/services/privacyCompliance.server.ts), then confirm hosted behavior and keep [privacy.astro](/Users/payan/producer-launchpad-site/src/pages/privacy.astro) aligned
+  Verification note: Hosted staging verification completed on April 7, 2026. `APP_UNINSTALLED` was received by `producer-launchpad-staging`, the internal deletion processor was triggered successfully with `POST /api/internal/shop-deletion-jobs 200`, and follow-up Prisma checks for `pl-staging.myshopify.com` returned `0` rows for `merchantAcknowledgment`, `templateGuardrailAcceptance`, `privacyDataRequest`, `session`, `beatDraft`, `beatFile`, `deliveryAccess`, and `order`.
 
 - [ ] Decide and implement the real retention rule for customer-related core records that currently persist until a trigger occurs, then update code to match that rule.
   Audit: privacy audit
@@ -28,7 +29,7 @@ Focused checklist based only on our completed audits and the current codebase.
 - [ ] Finish the customer data request flow so it is not just stored for manual review, or narrow the policy language to explicitly say fulfillment is merchant-reviewed and operational.
   Audit: privacy audit
   Status: ⏳ Pending verification
-  File/component to modify: [privacyRequests.server.ts](/Users/payan/producer-launchpad-app/app/services/privacyRequests.server.ts), [app.privacy-requests.tsx](/Users/payan/producer-launchpad-app/app/routes/app.privacy-requests.tsx), [privacy-policy-app-behavior-draft.md](/Users/payan/producer-launchpad-app/docs/privacy-policy-app-behavior-draft.md), then immediately update [privacy.astro](/Users/payan/producer-launchpad-site/src/pages/privacy.astro)
+  File/component to modify: [privacyRequests.server.ts](/Users/payan/producer-launchpad-app/app/services/privacyRequests.server.ts), any internal support-only privacy tooling, [privacy-policy-app-behavior-draft.md](/Users/payan/producer-launchpad-app/docs/privacy-policy-app-behavior-draft.md), then immediately update [privacy.astro](/Users/payan/producer-launchpad-site/src/pages/privacy.astro)
 
 - [ ] Verify hosted delivery of `customers/data_request`, `customers/redact`, and `shop/redact` against the intended production-like environment and capture evidence.
   Audit: privacy audit
@@ -70,7 +71,7 @@ Focused checklist based only on our completed audits and the current codebase.
 - [ ] Capture screenshots for the flows we are actually shipping and want reviewers to understand quickly: onboarding/setup, beat upload, licenses, deliveries, and privacy requests.
   Audit: code review
   Status: ❌ Not Started
-  File/component to modify: reviewer asset set; reference flows in [app._index.tsx](/Users/payan/producer-launchpad-app/app/routes/app._index.tsx), [app.beats.new.tsx](/Users/payan/producer-launchpad-app/app/routes/app.beats.new.tsx), [app.licenses.tsx](/Users/payan/producer-launchpad-app/app/routes/app.licenses.tsx), [app.deliveries.tsx](/Users/payan/producer-launchpad-app/app/routes/app.deliveries.tsx), [app.privacy-requests.tsx](/Users/payan/producer-launchpad-app/app/routes/app.privacy-requests.tsx)
+  File/component to modify: reviewer asset set; reference flows in [app._index.tsx](/Users/payan/producer-launchpad-app/app/routes/app._index.tsx), [app.beats.new.tsx](/Users/payan/producer-launchpad-app/app/routes/app.beats.new.tsx), [app.licenses.tsx](/Users/payan/producer-launchpad-app/app/routes/app.licenses.tsx), [app.deliveries.tsx](/Users/payan/producer-launchpad-app/app/routes/app.deliveries.tsx)
 
 - [ ] Confirm support contact, privacy policy URL, and terms URL in the app listing all point to the final published pages and match the contact shown in the docs.
   Audit: privacy audit + code review
@@ -87,4 +88,4 @@ Focused checklist based only on our completed audits and the current codebase.
 - [ ] Test the reviewer-critical end-to-end flows in the hosted environment: onboarding/setup → upload → license review/guardrail → order delivery → privacy request handling.
   Audit: code review + guardrail audit + privacy audit
   Status: ⏳ Pending
-  File/component to modify: hosted app flows in [app._index.tsx](/Users/payan/producer-launchpad-app/app/routes/app._index.tsx), [app.beats.new.tsx](/Users/payan/producer-launchpad-app/app/routes/app.beats.new.tsx), [app.licenses.tsx](/Users/payan/producer-launchpad-app/app/routes/app.licenses.tsx), [webhooks.orders-create.tsx](/Users/payan/producer-launchpad-app/app/routes/webhooks.orders-create.tsx), [app.privacy-requests.tsx](/Users/payan/producer-launchpad-app/app/routes/app.privacy-requests.tsx)
+  File/component to modify: hosted app flows in [app._index.tsx](/Users/payan/producer-launchpad-app/app/routes/app._index.tsx), [app.beats.new.tsx](/Users/payan/producer-launchpad-app/app/routes/app.beats.new.tsx), [app.licenses.tsx](/Users/payan/producer-launchpad-app/app/routes/app.licenses.tsx), [webhooks.orders-create.tsx](/Users/payan/producer-launchpad-app/app/routes/webhooks.orders-create.tsx), plus internal support-operated privacy request handling verification

@@ -61,12 +61,12 @@ The largest technical/legal risk found in this audit is that uninstall and shop-
 - Customer data request exports are created and stored in [privacyRequests.server.ts](/Users/payan/producer-launchpad-app/app/services/privacyRequests.server.ts#L195).
 - Customer redaction is implemented in [privacyCompliance.server.ts](/Users/payan/producer-launchpad-app/app/services/privacyCompliance.server.ts#L203).
 - Shop redaction and uninstall deletion are implemented in [privacyCompliance.server.ts](/Users/payan/producer-launchpad-app/app/services/privacyCompliance.server.ts#L336).
-- Merchants can review pending privacy requests and mark them fulfilled in [app.privacy-requests.tsx](/Users/payan/producer-launchpad-app/app/routes/app.privacy-requests.tsx#L39).
+- The codebase includes an internal privacy-request route in [app.privacy-requests.tsx](/Users/payan/producer-launchpad-app/app/routes/app.privacy-requests.tsx#L39), but it should be treated as support/internal tooling rather than a marketed merchant-facing feature.
 
 ### Partially implemented
 
 - Access/portability: yes, in the sense that the app generates an export payload for matched data.
-- End-to-end fulfillment: no. The app does not automatically deliver the export to the requesting customer or Shopify; the merchant must review and complete fulfillment manually.
+- End-to-end fulfillment: no. The app does not automatically deliver the export to the requesting customer or Shopify; fulfillment is completed operationally by Producer Launchpad support.
 - Automatic retention enforcement: partial. Only some data categories have 90-day cleanup logic, and it runs when the app or webhook path is hit, not from a scheduled background job.
 
 ### Not verified in code
@@ -100,7 +100,7 @@ The largest technical/legal risk found in this audit is that uninstall and shop-
    - fulfillment is still manual through the app UI
    Evidence:
    - public wording in [privacy.astro](/Users/payan/producer-launchpad-site/src/pages/privacy.astro#L164)
-   - manual fulfillment flow in [app.privacy-requests.tsx](/Users/payan/producer-launchpad-app/app/routes/app.privacy-requests.tsx#L88)
+   - support-operated fulfillment workflow represented in [app.privacy-requests.tsx](/Users/payan/producer-launchpad-app/app/routes/app.privacy-requests.tsx#L88)
 
 5. Public pages mention service providers generically, but the code reveals specific vendors that should be named.
    Evidence:
@@ -139,7 +139,7 @@ For the access/export flow, do not publish "we automatically complete this withi
 
 Recommended current phrasing:
 
-> When Shopify sends a customer data request, we automatically create a matching export inside the app for merchant review and fulfillment.
+> When Shopify sends a customer data request, we automatically create a matching export inside the app for support-operated fulfillment to the store owner.
 
 Recommended current deletion phrasing:
 
