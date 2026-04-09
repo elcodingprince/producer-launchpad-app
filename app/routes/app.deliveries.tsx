@@ -36,6 +36,7 @@ import {
   buildDownloadPortalUrl,
   formatStoreName,
 } from "~/services/appUrl.server";
+import { getDeliveredFormatLabelsForOrder } from "~/services/deliveryPackages";
 import { parseExecutedAgreementLicense } from "~/services/executedAgreements.server";
 import {
   getDeliveryEmailErrorCode,
@@ -454,6 +455,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
+    const emailItems = deliveryAccess.order.items.map((item) => {
+      const resolvedLicense = parseExecutedAgreementLicense(
+        item.executedAgreement?.resolvedLicenseJson,
+      );
+      const deliveryFormats = resolvedLicense
+        ? getDeliveredFormatLabelsForOrder({
+            fileFormats: resolvedLicense.fileFormats,
+            stemsPolicy: resolvedLicense.stemsPolicy,
+            stemsIncludedInOrder: item.executedAgreement?.stemsIncludedInOrder,
+          })
+        : item.stemsIncludedInOrder
+          ? ["MP3", "STEMS"]
+          : ["MP3"];
+
+      return {
+        beatTitle: item.beatTitle,
+        licenseName: getHistoricalLicenseName(item),
+        deliveryFormats,
+      };
+    });
+
     const emailResult = await sendDeliveryEmail({
       to: deliveryAccess.customerEmail,
       portalUrl: buildDownloadPortalUrl(deliveryAccess.downloadToken, request),
@@ -463,6 +485,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       itemSummary: deliveryAccess.order.items
         .map((item) => `${item.beatTitle} - ${getHistoricalLicenseName(item)}`)
         .join(", "),
+      items: emailItems,
     });
 
     await prisma.deliveryAccess.update({
