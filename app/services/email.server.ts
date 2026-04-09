@@ -1,4 +1,7 @@
-import { ResendEmailProvider } from "~/services/emailProviders/resend.server";
+import {
+  DeliveryEmailError,
+  ResendEmailProvider,
+} from "~/services/emailProviders/resend.server";
 import type { DeliveryReadyEmailItem } from "~/emails/DeliveryReadyEmail";
 
 export interface SendDeliveryEmailInput {
@@ -104,3 +107,24 @@ export async function sendDeliveryEmail(
     logoUrl: input.logoUrl,
   });
 }
+
+/**
+ * Extracts a stable error code from a caught email error for DB storage.
+ * Keeps the raw message in server logs but stores only the code.
+ */
+export function getDeliveryEmailErrorCode(error: unknown): string {
+  if (error instanceof DeliveryEmailError) {
+    return error.code;
+  }
+
+  if (error instanceof Error) {
+    if (error.message.includes("is not configured")) {
+      return "missing_config";
+    }
+    return "unknown_error";
+  }
+
+  return "unknown_error";
+}
+
+export { getMerchantEmailErrorMessage } from "~/services/deliveryEmailMessages";

@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { Prisma } from "@prisma/client";
 import type { OrderItem } from "@prisma/client";
 import {
+  getDeliveryEmailErrorCode,
   isResendWebhookTrackingEnabled,
   sendDeliveryEmail,
 } from "~/services/email.server";
@@ -529,17 +530,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       console.log(`[Webhook] Sent delivery email for Order #${orderNumber}`);
     } catch (emailError) {
-      const message =
-        emailError instanceof Error
-          ? emailError.message
-          : "Unknown email delivery error";
+      const errorCode = getDeliveryEmailErrorCode(emailError);
 
       await prisma.deliveryAccess.update({
         where: { orderId: createdOrder.id },
         data: {
           deliveryEmailStatus: "failed",
           deliveryEmailRecipient: customerEmail,
-          deliveryEmailError: message,
+          deliveryEmailError: errorCode,
         },
       });
 

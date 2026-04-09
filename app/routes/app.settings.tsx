@@ -27,7 +27,12 @@ import { getAppReadiness } from "~/services/appReadiness.server";
 import { getBillingSummary } from "~/services/billing.server";
 import { getDeliveryEmailConfigSummary } from "~/services/email.server";
 import { createMetafieldSetupService } from "~/services/metafieldSetup";
-import { setStorageMode } from "~/services/storageConfig.server";
+import {
+  getManagedR2Credentials,
+  markStorageError,
+  setStorageMode,
+} from "~/services/storageConfig.server";
+import { testR2Connection } from "~/services/r2.server";
 
 type ActionData = {
   success?: string;
@@ -95,9 +100,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  if (intent === "enable_managed_storage") {
-    await setStorageMode(shop, "managed");
-    return json<ActionData>({ success: "Managed storage enabled." });
+  if (intent === "check_storage") {
+    const creds = getManagedR2Credentials();
+    if (!creds) {
+      await markStorageError(shop, "Storage is not configured on the backend.", "auth");
+      return json<ActionData>({
+        error: "Storage isn't available right now. Contact support if this persists.",
+      });
+    }
+
+    const result = await testR2Connection(creds);
+    if (result.ok) {
+      await setStorageMode(shop, "managed");
+      return json<ActionData>({ success: "Storage is connected." });
+    }
+
+    await markStorageError(shop, result.error || "Connection test failed", result.errorType || "unknown");
+    return json<ActionData>({
+      error: "Something went wrong connecting to storage. Try again or contact support.",
+    });
   }
 
   if (intent === "ensure_stems_addon_product") {
@@ -244,18 +265,6 @@ export default function SettingsPage() {
       subtitle="Manage legal identity, storage, delivery configuration, and store connection health."
     >
       <BlockStack gap="500">
-        {storageConfig?.status === "connected" && (
-          <Banner title="Storage connected" tone="success">
-            <p>Your private beat files are ready for uploads and delivery.</p>
-          </Banner>
-        )}
-
-        {storageConfig?.status === "error" && storageConfig.lastError && (
-          <Banner title="Storage needs attention" tone="warning">
-            <p>{storageConfig.lastError}</p>
-          </Banner>
-        )}
-
         {readiness.needsProfile && (
           <Banner
             title="Finish setup from Home"
@@ -517,70 +526,51 @@ export default function SettingsPage() {
         <Card>
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="100">
-                <Text as="h2" variant="headingMd">
-                  Storage and delivery
-                </Text>
-                <Text as="p" tone="subdued">
-                  Confirm that this shop is ready for uploads and automated
-                  delivery.
-                </Text>
-              </BlockStack>
+              <Text as="h2" variant="headingMd">
+                Storage and delivery
+              </Text>
               <Badge
                 tone={
                   storageConfig?.status === "connected"
                     ? "success"
-                    : "attention"
+                    : storageConfig?.status === "error"
+                      ? "critical"
+                      : "attention"
                 }
               >
                 {storageConfig?.status === "connected"
                   ? "Connected"
-                  : "Needs setup"}
+                  : storageConfig?.status === "error"
+                    ? "Error"
+                    : "Not connected"}
               </Badge>
             </InlineStack>
 
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="enable_managed_storage"
-              />
-              <BlockStack gap="300">
-                <Text as="p" tone="subdued">
-                  Upload through the app and delivery files are prepared
-                  automatically for this shop. Storage allowance comes from the
-                  active app plan.
-                </Text>
-                <Text as="p" tone="subdued">
-                  Producer Launchpad uses managed storage for launch. If you
-                  uninstall the app, we queue deletion immediately and
-                  permanently remove uploaded files and other shop-scoped
-                  app-controlled records, including acknowledgments and delivery
-                  records, within 7 days. If you need copies of your files or
-                  transaction records, save them before uninstalling.
-                </Text>
-                <InlineStack gap="300">
-                  <Button submit loading={isSubmitting}>
-                    {storageConfig?.status === "connected"
-                      ? "Refresh storage status"
-                      : "Enable storage"}
-                  </Button>
-                </InlineStack>
-              </BlockStack>
-            </Form>
-          </BlockStack>
-        </Card>
+            {storageConfig?.status === "error" && (
+              <Banner tone="critical">
+                <p>
+                  Something went wrong connecting to storage. Try again or
+                  contact support.
+                </p>
+              </Banner>
+            )}
 
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingMd">
-              Included storage
-            </Text>
             <Text as="p" tone="subdued">
-              Merchants upload through Producer Launchpad and files are stored
-              behind the scenes for delivery. Storage allowance depends on the
-              active app plan, so there is nothing extra to configure here.
+              Your files are stored and delivered automatically. Storage is
+              included with your plan.
             </Text>
+
+            <Text as="p" tone="subdued">
+              If you uninstall, uploaded files and delivery records are
+              permanently deleted within 7 days.
+            </Text>
+
+            <Form method="post">
+              <input type="hidden" name="intent" value="check_storage" />
+              <Button submit loading={isSubmitting}>
+                Check connection
+              </Button>
+            </Form>
           </BlockStack>
         </Card>
 
@@ -592,8 +582,8 @@ export default function SettingsPage() {
                   Delivery email
                 </Text>
                 <Text as="p" tone="subdued">
-                  Producer Launchpad sends the secure portal link automatically
-                  after purchase.
+                  Customers receive a download link automatically after
+                  purchase.
                 </Text>
               </BlockStack>
               <Badge
@@ -611,50 +601,27 @@ export default function SettingsPage() {
 
             <BlockStack gap="200">
               <InlineStack align="space-between">
-                <Text as="span">Provider</Text>
-                <Text as="span">Resend</Text>
-              </InlineStack>
-              <InlineStack align="space-between">
-                <Text as="span">From address</Text>
+                <Text as="span">Sender</Text>
                 <Text as="span" tone={deliveryEmail.from ? "base" : "subdued"}>
-                  {deliveryEmail.from || "Not configured"}
+                  {deliveryEmail.from
+                    ? deliveryEmail.from.replace(/^.*<(.+)>$/, "$1")
+                    : "Not configured"}
                 </Text>
               </InlineStack>
               <InlineStack align="space-between">
-                <Text as="span">Reply-to support</Text>
+                <Text as="span">Reply-to</Text>
                 <Text
                   as="span"
                   tone={deliveryEmail.replyTo ? "base" : "subdued"}
                 >
-                  {deliveryEmail.replyTo || "Replies go to sender"}
+                  {deliveryEmail.replyTo || "Same as sender"}
                 </Text>
               </InlineStack>
               <InlineStack align="space-between">
                 <Text as="span">Brand label</Text>
                 <Text as="span">{deliveryEmail.brandName}</Text>
               </InlineStack>
-              <InlineStack align="space-between">
-                <Text as="span">Delivery tracking</Text>
-                <Badge
-                  tone={deliveryEmail.trackingEnabled ? "success" : "info"}
-                >
-                  {deliveryEmail.trackingEnabled
-                    ? "Confirmed delivery events"
-                    : "Send status only"}
-                </Badge>
-              </InlineStack>
             </BlockStack>
-
-            <Text as="p" tone="subdued">
-              The current email includes a secure portal button, order details,
-              and support fallback instructions. These values are configured at
-              the app level today and apply across deliveries for this shop.
-            </Text>
-
-            <InlineStack gap="300">
-              <Button url="/app/deliveries">Review deliveries</Button>
-              <Button url="/app">View overview</Button>
-            </InlineStack>
           </BlockStack>
         </Card>
 

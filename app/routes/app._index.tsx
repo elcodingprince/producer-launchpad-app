@@ -784,12 +784,13 @@ export default function Dashboard() {
         }
       : deliveriesNeedingAttention > 0
         ? {
-            title: "Delivery needs attention",
+            title: "A delivery email couldn't be sent",
             tone: "warning",
-            message: `${deliveriesNeedingAttention} recent deliver${
-              deliveriesNeedingAttention === 1 ? "y needs" : "ies need"
-            } review.`,
-            actionLabel: "Open deliveries",
+            message:
+              deliveriesNeedingAttention === 1
+                ? "1 customer hasn't received their download email yet. You can try resending it, or contact support if it keeps failing."
+                : `${deliveriesNeedingAttention} customers haven't received their download emails yet. You can try resending them, or contact support if they keep failing.`,
+            actionLabel: "Review in deliveries",
             actionUrl: "/app/deliveries",
           }
         : isTrueInitialState

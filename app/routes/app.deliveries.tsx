@@ -38,9 +38,11 @@ import {
 } from "~/services/appUrl.server";
 import { parseExecutedAgreementLicense } from "~/services/executedAgreements.server";
 import {
+  getDeliveryEmailErrorCode,
   isResendWebhookTrackingEnabled,
   sendDeliveryEmail,
 } from "~/services/email.server";
+import { getMerchantEmailErrorMessage } from "~/services/deliveryEmailMessages";
 
 interface DeliverySummary {
   id: string;
@@ -112,9 +114,6 @@ function formatDate(value: Date | string) {
   });
 }
 
-function formatOptionalDate(value: string | null) {
-  return value ? formatDate(value) : "Not available";
-}
 
 function getDeliveryEmailBadgeTone(
   status: string,
@@ -187,14 +186,6 @@ function getDeliveryEmailFilterLabel(status: DeliveryEmailFilter) {
   return "Bounced";
 }
 
-function formatWebhookEventLabel(value: string | null) {
-  if (!value) return "No event yet";
-
-  const normalized = value.startsWith("email.") ? value.slice(6) : value;
-  return normalized
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
 
 function normalizeShopifyResourceId(id: string) {
   const match = id.match(/\/(\d+)$/);
@@ -499,23 +490,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       orderNumber: deliveryAccess.order.orderNumber,
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown email resend error";
+    const errorCode = getDeliveryEmailErrorCode(error);
 
     await prisma.deliveryAccess.update({
       where: { id: deliveryAccess.id },
       data: {
         deliveryEmailStatus: "failed",
         deliveryEmailRecipient: deliveryAccess.customerEmail,
-        deliveryEmailError: message,
+        deliveryEmailError: errorCode,
       },
     });
+
+    console.error(
+      `[Deliveries] Failed to resend delivery email for order ${orderId}:`,
+      error,
+    );
 
     return json(
       {
         success: false,
         intent: "resend_email",
-        error: message,
+        error:
+          getMerchantEmailErrorMessage(errorCode) ||
+          "Something went wrong sending this email. Try again, or contact support.",
       },
       { status: 500 },
     );
@@ -1180,44 +1177,30 @@ export default function DeliveriesPage() {
                                     delivery.customerEmail ||
                                     "Not available"}
                                 </Text>
-                                <Text as="p" tone="subdued">
-                                  Sent:{" "}
-                                  {formatOptionalDate(
-                                    delivery.deliveryEmailSentAt,
-                                  )}
-                                </Text>
-                                <Text as="p" tone="subdued">
-                                  Last Resend event:{" "}
-                                  {formatWebhookEventLabel(
-                                    delivery.deliveryEmailLastEvent,
-                                  )}
-                                  {delivery.deliveryEmailLastEventAt
-                                    ? ` • ${formatDate(delivery.deliveryEmailLastEventAt)}`
-                                    : ""}
-                                </Text>
+                                {delivery.deliveryEmailSentAt ? (
+                                  <Text as="p" tone="subdued">
+                                    Sent:{" "}
+                                    {formatDate(delivery.deliveryEmailSentAt)}
+                                  </Text>
+                                ) : null}
                                 {displayedDeliveryEmailStatus === "delivered" &&
                                 delivery.deliveryEmailConfirmedAt ? (
                                   <Text as="p" tone="subdued">
-                                    Confirmed delivered:{" "}
+                                    Delivered:{" "}
                                     {formatDate(
                                       delivery.deliveryEmailConfirmedAt,
                                     )}
                                   </Text>
                                 ) : null}
-                                {delivery.deliveryEmailConfirmedError ||
-                                delivery.deliveryEmailError ? (
+                                {(delivery.deliveryEmailError ||
+                                  delivery.deliveryEmailConfirmedError) && (
                                   <Text as="p" tone="critical">
-                                    Error:{" "}
-                                    {delivery.deliveryEmailConfirmedError ||
-                                      delivery.deliveryEmailError}
+                                    {getMerchantEmailErrorMessage(
+                                      delivery.deliveryEmailConfirmedError ||
+                                        delivery.deliveryEmailError,
+                                    )}
                                   </Text>
-                                ) : null}
-                                {!emailConfirmationEnabled ? (
-                                  <Text as="p" tone="subdued">
-                                    Resend webhook tracking is not enabled for
-                                    this store.
-                                  </Text>
-                                ) : null}
+                                )}
                               </BlockStack>
                             </div>
                           </Popover>

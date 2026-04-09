@@ -16,6 +16,18 @@ export interface DeliveryEmailSendResult {
   messageId: string | null;
 }
 
+export class DeliveryEmailError extends Error {
+  readonly code: string;
+  readonly statusCode: number | null;
+
+  constructor(message: string, code: string, statusCode: number | null) {
+    super(message);
+    this.name = "DeliveryEmailError";
+    this.code = code;
+    this.statusCode = statusCode;
+  }
+}
+
 export class ResendEmailProvider {
   private client: Resend;
 
@@ -41,7 +53,11 @@ export class ResendEmailProvider {
     });
 
     if (response.error) {
-      throw new Error(response.error.message);
+      throw new DeliveryEmailError(
+        response.error.message,
+        response.error.name,
+        response.error.statusCode ?? null,
+      );
     }
 
     return {
