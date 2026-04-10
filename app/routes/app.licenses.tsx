@@ -224,6 +224,21 @@ function buildArchetypeBoundForm(
     return presetValues[0] || "";
   };
 
+  const generatedStorefrontCopy = buildGeneratedStorefrontCopy({
+    offerArchetype: derivedFields.offerArchetype,
+    streamLimit: resolvePresetValue(
+      presetConfig.streamLimit,
+      overrides.streamLimit,
+    ),
+    copyLimit: resolvePresetValue(presetConfig.copyLimit, overrides.copyLimit),
+    videoViewLimit: resolvePresetValue(
+      presetConfig.videoViewLimit,
+      overrides.videoViewLimit,
+    ),
+    termYears: resolvePresetValue(presetConfig.termYears, overrides.termYears),
+    stemsPolicy: derivedFields.stemsPolicy,
+  });
+
   return {
     handle: overrides.handle || "",
     offerArchetype: derivedFields.offerArchetype,
@@ -241,8 +256,10 @@ function buildArchetypeBoundForm(
     termYears: resolvePresetValue(presetConfig.termYears, overrides.termYears),
     fileFormats: derivedFields.fileFormats,
     stemsPolicy: derivedFields.stemsPolicy,
-    storefrontSummary: overrides.storefrontSummary || "",
-    featuresShort: overrides.featuresShort || "",
+    storefrontSummary:
+      overrides.storefrontSummary || generatedStorefrontCopy.summary,
+    featuresShort:
+      overrides.featuresShort || generatedStorefrontCopy.featuresShort,
     contentIdPolicy: overrides.contentIdPolicy || "not_allowed",
     syncPolicy: overrides.syncPolicy || "not_included",
     creditRequirement: overrides.creditRequirement || "required",
@@ -274,6 +291,14 @@ function appendLicenseFormFields(
   formData: FormData,
   licenseForm: LicenseFormState,
 ) {
+  const generatedStorefrontCopy = buildGeneratedStorefrontCopy({
+    offerArchetype: licenseForm.offerArchetype,
+    streamLimit: licenseForm.streamLimit,
+    copyLimit: licenseForm.copyLimit,
+    videoViewLimit: licenseForm.videoViewLimit,
+    termYears: licenseForm.termYears,
+    stemsPolicy: licenseForm.stemsPolicy,
+  });
   if (licenseForm.id) formData.append("id", licenseForm.id);
   if (licenseForm.handle) formData.append("handle", licenseForm.handle);
   formData.append("offerArchetype", licenseForm.offerArchetype);
@@ -285,8 +310,11 @@ function appendLicenseFormFields(
   formData.append("termYears", licenseForm.termYears);
   formData.append("fileFormats", licenseForm.fileFormats);
   formData.append("stemsPolicy", licenseForm.stemsPolicy);
-  formData.append("storefrontSummary", licenseForm.storefrontSummary);
-  formData.append("featuresShort", licenseForm.featuresShort);
+  formData.append(
+    "storefrontSummary",
+    licenseForm.storefrontSummary.trim() || generatedStorefrontCopy.summary,
+  );
+  formData.append("featuresShort", generatedStorefrontCopy.featuresShort);
   formData.append("contentIdPolicy", licenseForm.contentIdPolicy);
   formData.append("syncPolicy", licenseForm.syncPolicy);
   formData.append("creditRequirement", licenseForm.creditRequirement);
@@ -395,6 +423,85 @@ function parseFileFormatBadges(value: string) {
     .split(",")
     .map((format) => format.trim())
     .filter(Boolean);
+}
+
+function formatCompactLimit(value: string) {
+  if (!value || value === "0") return "Unlimited";
+  const numeric = Number(value);
+  if (Number.isNaN(numeric)) return value;
+  if (numeric >= 1000000) {
+    const millions = numeric / 1000000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+  }
+  if (numeric >= 1000) {
+    const thousands = numeric / 1000;
+    return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(1)}K`;
+  }
+  return numeric.toLocaleString();
+}
+
+function buildGeneratedStorefrontCopy(input: {
+  offerArchetype: string;
+  streamLimit: string;
+  copyLimit: string;
+  videoViewLimit: string;
+  termYears: string;
+  stemsPolicy: string;
+}) {
+  const summaryByArchetype: Record<string, string> = {
+    basic: "Perfect for first releases.",
+    premium: "Built for growing traction.",
+    unlimited: "For full commercial flexibility.",
+  };
+
+  const streamBullet =
+    !input.streamLimit || input.streamLimit === "0"
+      ? "Monetize unlimited streams"
+      : `Monetize up to ${formatCompactLimit(input.streamLimit)} streams`;
+
+  const videoBullet =
+    !input.videoViewLimit
+      ? ""
+      : input.videoViewLimit === "0"
+        ? "Unlimited video usage"
+        : `Use in videos up to ${formatCompactLimit(input.videoViewLimit)} views`;
+
+  const copiesBullet =
+    !input.copyLimit
+      ? ""
+      : input.copyLimit === "0"
+        ? "Unlimited copies and sales"
+        : `Release up to ${formatCompactLimit(input.copyLimit)} copies and sales`;
+
+  const stemsOrTermBullet =
+    input.stemsPolicy === "included_by_default"
+      ? "Includes separated track stems"
+      : input.stemsPolicy === "available_as_addon"
+        ? "Optional stems add-on available"
+        : !input.termYears
+          ? ""
+          : input.termYears === "0"
+            ? "Perpetual license term"
+            : input.termYears === "1"
+              ? "1 year license term"
+              : `${input.termYears} year license term`;
+
+  const bullets = [
+    streamBullet,
+    videoBullet,
+    copiesBullet,
+    stemsOrTermBullet,
+  ]
+    .filter(Boolean)
+    .slice(0, 3);
+
+  return {
+    summary:
+      summaryByArchetype[input.offerArchetype] ||
+      "Prepared for your storefront.",
+    bullets,
+    featuresShort: bullets.join("\n"),
+  };
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`) {
@@ -913,6 +1020,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const derivedFields = buildDerivedLicenseFields(normalizedOfferArchetype, {
     stemsPolicy: String(formData.get("stemsPolicy") || "").trim(),
   });
+  const storefrontSummaryInput = String(
+    formData.get("storefrontSummary") || "",
+  ).trim();
+  const generatedStorefrontCopy = buildGeneratedStorefrontCopy({
+    offerArchetype: derivedFields.offerArchetype,
+    streamLimit: coerceOptionalNumber(formData.get("streamLimit")),
+    copyLimit: coerceOptionalNumber(formData.get("copyLimit")),
+    videoViewLimit: coerceOptionalNumber(formData.get("videoViewLimit")),
+    termYears: coerceOptionalNumber(formData.get("termYears")),
+    stemsPolicy: derivedFields.stemsPolicy,
+  });
 
   const fields = [
     { key: "offer_archetype", value: derivedFields.offerArchetype },
@@ -944,11 +1062,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
     {
       key: "storefront_summary",
-      value: String(formData.get("storefrontSummary") || "").trim(),
+      value: storefrontSummaryInput || generatedStorefrontCopy.summary,
     },
     {
       key: "features_short",
-      value: String(formData.get("featuresShort") || "").trim(),
+      value: generatedStorefrontCopy.featuresShort,
     },
     {
       key: "content_id_policy",
@@ -1189,6 +1307,7 @@ export default function LicensesPage() {
   const [bundleSearchValue, setBundleSearchValue] = useState("");
   const [bundleShowSelectedOnly, setBundleShowSelectedOnly] = useState(false);
   const previewRequestSequence = useRef(0);
+  const previousGeneratedStorefrontSummaryRef = useRef("");
   const customTemplateGuardrailFetcher = useFetcher<ActionDataShape>();
   const bundleFetcher = useFetcher<ActionDataShape>();
 
@@ -1283,6 +1402,27 @@ export default function LicensesPage() {
       : null;
   const isEditorOpen = editorMode !== null;
   const previewMode = selectedPreviewTab === 0 ? "resolved" : "starter";
+  const generatedStorefrontCopy = useMemo(
+    () =>
+      buildGeneratedStorefrontCopy({
+        offerArchetype: licenseForm.offerArchetype,
+        streamLimit: licenseForm.streamLimit,
+        copyLimit: licenseForm.copyLimit,
+        videoViewLimit: licenseForm.videoViewLimit,
+        termYears: licenseForm.termYears,
+        stemsPolicy: buildDerivedLicenseFields(licenseForm.offerArchetype, {
+          stemsPolicy: licenseForm.stemsPolicy,
+        }).stemsPolicy,
+      }),
+    [
+      licenseForm.copyLimit,
+      licenseForm.offerArchetype,
+      licenseForm.stemsPolicy,
+      licenseForm.streamLimit,
+      licenseForm.termYears,
+      licenseForm.videoViewLimit,
+    ],
+  );
   const previewRequestPayload = useMemo(
     () =>
       JSON.stringify({
@@ -1445,6 +1585,7 @@ export default function LicensesPage() {
     if (editorMode === "create") {
       const fresh = emptyLicenseForm();
       setLicenseForm(fresh);
+      previousGeneratedStorefrontSummaryRef.current = fresh.storefrontSummary;
       editorFormSnapshotRef.current = JSON.stringify(fresh);
       setSelectedPreviewTab(0);
       return;
@@ -1453,10 +1594,49 @@ export default function LicensesPage() {
     if (editorMode === "update" && editorLicense) {
       const loaded = buildLicenseForm(editorLicense);
       setLicenseForm(loaded);
+      previousGeneratedStorefrontSummaryRef.current = buildGeneratedStorefrontCopy(
+        {
+          offerArchetype: loaded.offerArchetype,
+          streamLimit: loaded.streamLimit,
+          copyLimit: loaded.copyLimit,
+          videoViewLimit: loaded.videoViewLimit,
+          termYears: loaded.termYears,
+          stemsPolicy: loaded.stemsPolicy,
+        },
+      ).summary;
       editorFormSnapshotRef.current = JSON.stringify(loaded);
       setSelectedPreviewTab(0);
     }
   }, [editorMode, editorLicense]);
+
+  useEffect(() => {
+    if (!isEditorOpen) {
+      previousGeneratedStorefrontSummaryRef.current = generatedStorefrontCopy.summary;
+      return;
+    }
+
+    setLicenseForm((current) => {
+      const previousGenerated = previousGeneratedStorefrontSummaryRef.current;
+      const currentSummary = current.storefrontSummary.trim();
+      const shouldSync =
+        currentSummary.length === 0 || currentSummary === previousGenerated;
+
+      previousGeneratedStorefrontSummaryRef.current =
+        generatedStorefrontCopy.summary;
+
+      if (
+        !shouldSync ||
+        current.storefrontSummary === generatedStorefrontCopy.summary
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        storefrontSummary: generatedStorefrontCopy.summary,
+      };
+    });
+  }, [generatedStorefrontCopy.summary, isEditorOpen]);
 
   useEffect(() => {
     if (!isEditorOpen) {
@@ -1984,7 +2164,6 @@ export default function LicensesPage() {
     const usageBeatsUrl = editorLicense
       ? `/app/beats?license=${encodeURIComponent(editorLicense.id)}`
       : "/app/beats";
-    const previewFeatures = parseFeatureLines(licenseForm.featuresShort);
     const fileBadges = parseFileFormatBadges(licenseForm.fileFormats);
     const archetypeConfig = getOfferArchetypeConfig(licenseForm.offerArchetype);
     const limitPresetConfig = getOfferLimitPresetConfig(
@@ -2279,7 +2458,14 @@ export default function LicensesPage() {
                       Storefront copy
                     </Text>
 
-                    <FormLayout>
+                    <Text as="p" tone="subdued">
+                      Start with the prepared summary, then refine the wording
+                      to match how you want this offer to feel on the
+                      storefront. Feature bullets stay aligned automatically as
+                      limits change.
+                    </Text>
+
+                    <BlockStack gap="300">
                       <TextField
                         label="Storefront summary"
                         value={licenseForm.storefrontSummary}
@@ -2289,25 +2475,30 @@ export default function LicensesPage() {
                             storefrontSummary: value,
                           }))
                         }
-                        multiline={3}
                         autoComplete="off"
-                        helpText="Shown to buyers when comparing license options."
+                        placeholder={generatedStorefrontCopy.summary}
+                        helpText={`Prepared default: ${generatedStorefrontCopy.summary} Leave this blank any time you want to use the prepared line.`}
                       />
 
-                      <TextField
-                        label="Feature bullets"
-                        value={licenseForm.featuresShort}
-                        onChange={(value) =>
-                          setLicenseForm((current) => ({
-                            ...current,
-                            featuresShort: value,
-                          }))
-                        }
-                        multiline={5}
-                        autoComplete="off"
-                        helpText="One line per feature."
-                      />
-                    </FormLayout>
+                      <Box
+                        background="bg-surface-secondary"
+                        borderColor="border"
+                        borderRadius="300"
+                        borderWidth="025"
+                        padding="300"
+                      >
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            Feature bullets
+                          </Text>
+                          <List type="bullet">
+                            {generatedStorefrontCopy.bullets.map((bullet) => (
+                              <List.Item key={bullet}>{bullet}</List.Item>
+                            ))}
+                          </List>
+                        </BlockStack>
+                      </Box>
+                    </BlockStack>
                   </BlockStack>
                 </Card>
 
@@ -2547,22 +2738,24 @@ export default function LicensesPage() {
                       </InlineStack>
                     ) : null}
 
-                    {licenseForm.storefrontSummary ? (
+                    {(licenseForm.storefrontSummary.trim() ||
+                      generatedStorefrontCopy.summary) ? (
                       <Text as="p" tone="subdued">
-                        {licenseForm.storefrontSummary}
+                        {licenseForm.storefrontSummary.trim() ||
+                          generatedStorefrontCopy.summary}
                       </Text>
                     ) : null}
 
-                    {previewFeatures.length > 0 ? (
+                    {generatedStorefrontCopy.bullets.length > 0 ? (
                       <List type="bullet">
-                        {previewFeatures.slice(0, 4).map((feature) => (
+                        {generatedStorefrontCopy.bullets.map((feature) => (
                           <List.Item key={feature}>{feature}</List.Item>
                         ))}
                       </List>
                     ) : (
                       <Text as="p" tone="subdued">
-                        Add storefront summary lines to preview how the offer
-                        reads at a glance.
+                        Storefront copy will appear here automatically as you
+                        adjust the license terms.
                       </Text>
                     )}
                   </BlockStack>
