@@ -3,25 +3,30 @@ import { json } from "@remix-run/node";
 import {
   Form,
   useActionData,
+  useFetcher,
   useLoaderData,
   useNavigation,
 } from "@remix-run/react";
-import { useEffect, useState } from "react";
+import { useAppBridge } from "@shopify/app-bridge-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Banner,
   Badge,
   BlockStack,
+  Box,
   Button,
   Card,
   Collapsible,
   DescriptionList,
   FormLayout,
+  Icon,
   InlineStack,
+  Modal,
   Page,
   Text,
   TextField,
 } from "@shopify/polaris";
-import { RefreshIcon } from "@shopify/polaris-icons";
+import { ChevronRightIcon, RefreshIcon } from "@shopify/polaris-icons";
 import { authenticate } from "~/shopify.server";
 import { getAppReadiness } from "~/services/appReadiness.server";
 import { getBillingSummary } from "~/services/billing.server";
@@ -37,6 +42,8 @@ import { testR2Connection } from "~/services/r2.server";
 type ActionData = {
   success?: string;
   error?: string;
+  completedIntent?: string;
+  stemsAddonInstalled?: boolean;
   repairResult?: { success: boolean; errors: string[] };
 };
 
@@ -50,6 +57,75 @@ function getMetaobjectFieldValue(
   key: string,
 ) {
   return metaobject?.fields?.find((field) => field.key === key)?.value || "";
+}
+
+function SettingsClickableRow({
+  title,
+  description,
+  badge,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  badge?: { content: string; tone: "success" | "attention" | "critical" | "info" };
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
+      onBlur={() => setHovered(false)}
+      style={{
+        cursor: "pointer",
+        padding: "var(--p-space-400)",
+        borderRadius: "var(--p-border-radius-200)",
+        transition: "background-color 150ms ease",
+        backgroundColor: hovered
+          ? "var(--p-color-bg-surface-secondary-hover)"
+          : "transparent",
+      }}
+    >
+      <InlineStack align="space-between" blockAlign="center" wrap={false}>
+        <BlockStack gap="100">
+          <Text as="p" variant="bodyMd" fontWeight="semibold">
+            {title}
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {description}
+          </Text>
+        </BlockStack>
+        <InlineStack gap="200" blockAlign="center">
+          {badge && <Badge tone={badge.tone}>{badge.content}</Badge>}
+          <div
+            aria-hidden="true"
+            style={{
+              width: "20px",
+              height: "20px",
+              minWidth: "20px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+            }}
+          >
+            <Icon source={ChevronRightIcon} tone="subdued" />
+          </div>
+        </InlineStack>
+      </InlineStack>
+    </div>
+  );
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -88,6 +164,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         success: result.success
           ? "Catalog setup repaired."
           : "Repair finished with issues.",
+        completedIntent: "repair",
         repairResult: result,
       });
     } catch (error) {
@@ -112,7 +189,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const result = await testR2Connection(creds);
     if (result.ok) {
       await setStorageMode(shop, "managed");
-      return json<ActionData>({ success: "Storage is connected." });
+      return json<ActionData>({
+        success: "Storage is connected.",
+        completedIntent: "check_storage",
+      });
     }
 
     await markStorageError(shop, result.error || "Connection test failed", result.errorType || "unknown");
@@ -126,8 +206,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json<ActionData>({
       success:
         createdHandles.length > 0
-          ? "Stems add-on product created."
-          : "Stems add-on product is already connected.",
+          ? "Stems add-on installed successfully."
+          : "Stems add-on is already installed.",
+      completedIntent: "ensure_stems_addon_product",
+      stemsAddonInstalled: createdHandles.length > 0,
     });
   }
 
@@ -143,19 +225,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     await setupService.upsertDefaultLicensor({
       legalName,
-      businessEntityType: String(
-        formData.get("businessEntityType") || "",
-      ).trim(),
-      dbaName: String(formData.get("dbaName") || "").trim(),
       noticeEmail: String(formData.get("noticeEmail") || "").trim(),
       governingLawRegion: String(
         formData.get("governingLawRegion") || "",
       ).trim(),
-      disputeForum: String(formData.get("disputeForum") || "").trim(),
-      signatureLabel: String(formData.get("signatureLabel") || "").trim(),
     });
 
-    return json<ActionData>({ success: "Legal identity saved." });
+    return json<ActionData>({
+      success: "Legal identity saved.",
+      completedIntent: "save_legal_identity",
+    });
   }
 
   return json<ActionData>({ error: "Unknown action." }, { status: 400 });
@@ -165,20 +244,28 @@ export default function SettingsPage() {
   const { readiness, billingSummary, deliveryEmail, licensor, stemsAddonProduct } =
     useLoaderData<typeof loader>();
   const actionData = useActionData<ActionData>();
+  const shopify = useAppBridge();
   const navigation = useNavigation();
+  const storageFetcher = useFetcher<ActionData>();
+  const stemsAddonFetcher = useFetcher<ActionData>();
   const [showTechnical, setShowTechnical] = useState(false);
+  const [legalIdentityModalOpen, setLegalIdentityModalOpen] = useState(false);
+  const [stemsAddonModalOpen, setStemsAddonModalOpen] = useState(false);
+  const [settingsPageMounted, setSettingsPageMounted] = useState(false);
+  const [lastSubmittedIntent, setLastSubmittedIntent] = useState<string | null>(null);
+  const legalFormRef = useRef<HTMLFormElement>(null);
+  const stemsAddonFormRef = useRef<HTMLFormElement>(null);
 
-  const isSubmitting = navigation.state === "submitting";
+  const submittingIntent =
+    navigation.state === "submitting"
+      ? (navigation.formData?.get("intent") as string | null)
+      : null;
+  const isCheckingStorage = storageFetcher.state !== "idle";
+  const isInstallingStemsAddon = stemsAddonFetcher.state !== "idle";
   const storageConfig = readiness.storageConfig;
   const setupStatus = readiness.setupStatus;
   const [legalName, setLegalName] = useState(
     getMetaobjectFieldValue(licensor, "legal_name"),
-  );
-  const [dbaName, setDbaName] = useState(
-    getMetaobjectFieldValue(licensor, "dba_name"),
-  );
-  const [businessEntityType, setBusinessEntityType] = useState(
-    getMetaobjectFieldValue(licensor, "business_entity_type"),
   );
   const [noticeEmail, setNoticeEmail] = useState(
     getMetaobjectFieldValue(licensor, "notice_email"),
@@ -186,24 +273,67 @@ export default function SettingsPage() {
   const [governingLawRegion, setGoverningLawRegion] = useState(
     getMetaobjectFieldValue(licensor, "governing_law_region"),
   );
-  const [disputeForum, setDisputeForum] = useState(
-    getMetaobjectFieldValue(licensor, "dispute_forum"),
-  );
-  const [signatureLabel, setSignatureLabel] = useState(
-    getMetaobjectFieldValue(licensor, "signature_label"),
-  );
   useEffect(() => {
     setLegalName(getMetaobjectFieldValue(licensor, "legal_name"));
-    setDbaName(getMetaobjectFieldValue(licensor, "dba_name"));
-    setBusinessEntityType(
-      getMetaobjectFieldValue(licensor, "business_entity_type"),
-    );
     setNoticeEmail(getMetaobjectFieldValue(licensor, "notice_email"));
     setGoverningLawRegion(
       getMetaobjectFieldValue(licensor, "governing_law_region"),
     );
-    setDisputeForum(getMetaobjectFieldValue(licensor, "dispute_forum"));
-    setSignatureLabel(getMetaobjectFieldValue(licensor, "signature_label"));
+  }, [licensor]);
+
+  useEffect(() => {
+    setSettingsPageMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (
+      navigation.state === "idle" &&
+      actionData?.completedIntent === "save_legal_identity" &&
+      lastSubmittedIntent === "save_legal_identity"
+    ) {
+      setLegalIdentityModalOpen(false);
+      setLastSubmittedIntent(null);
+    }
+  }, [navigation.state, actionData, lastSubmittedIntent]);
+
+  useEffect(() => {
+    if (
+      stemsAddonFetcher.state === "idle" &&
+      stemsAddonFetcher.data?.completedIntent === "ensure_stems_addon_product" &&
+      lastSubmittedIntent === "ensure_stems_addon_product"
+    ) {
+      setStemsAddonModalOpen(false);
+      setLastSubmittedIntent(null);
+    }
+  }, [stemsAddonFetcher.state, stemsAddonFetcher.data, lastSubmittedIntent]);
+
+  useEffect(() => {
+    if (
+      stemsAddonFetcher.state === "idle" &&
+      stemsAddonFetcher.data?.completedIntent === "ensure_stems_addon_product" &&
+      stemsAddonFetcher.data.stemsAddonInstalled
+    ) {
+      shopify.toast.show("Stems add-on installed successfully");
+    }
+  }, [stemsAddonFetcher.state, stemsAddonFetcher.data, shopify]);
+
+  useEffect(() => {
+    if (
+      storageFetcher.state === "idle" &&
+      storageFetcher.data?.completedIntent === "check_storage" &&
+      storageFetcher.data.success
+    ) {
+      shopify.toast.show("Storage connection verified");
+    }
+  }, [storageFetcher.state, storageFetcher.data, shopify]);
+
+  const handleLegalModalClose = useCallback(() => {
+    setLegalIdentityModalOpen(false);
+    setLegalName(getMetaobjectFieldValue(licensor, "legal_name"));
+    setNoticeEmail(getMetaobjectFieldValue(licensor, "notice_email"));
+    setGoverningLawRegion(
+      getMetaobjectFieldValue(licensor, "governing_law_region"),
+    );
   }, [licensor]);
 
   const technicalItems = [
@@ -246,10 +376,6 @@ export default function SettingsPage() {
     },
   ];
 
-  const catalogHealthLabel =
-    readiness.needsProfile || readiness.needsCoreSetup
-      ? "Needs attention"
-      : "Ready";
   const catalogHealthTone =
     readiness.needsProfile || readiness.needsCoreSetup
       ? "attention"
@@ -258,16 +384,46 @@ export default function SettingsPage() {
     stemsAddonProduct?.stemsAddonProductId &&
     stemsAddonProduct?.stemsAddonVariantId,
   );
+  const stemsAddonBadge = stemsAddonReady
+    ? { content: "Ready", tone: "success" as const }
+    : { content: "Needs setup", tone: "attention" as const };
+  const stemsAddonSummary = stemsAddonReady
+    ? "Customers can add stems when a beat and license allow it."
+    : "Optional stems purchases won’t appear until this is set up.";
+  const stemsAddonTitle = stemsAddonProduct?.stemsAddonTitle || "Stems Add-On";
+  const stemsAddonHandle = stemsAddonProduct?.stemsAddonHandle || "stems-add-on";
+  const stemsAddonPrice =
+    typeof stemsAddonProduct?.stemsAddonPrice === "string" &&
+    stemsAddonProduct.stemsAddonPrice.trim().length > 0
+      ? `$${Number(stemsAddonProduct.stemsAddonPrice).toFixed(2)}`
+      : "No price found";
+
+  const allHealthy =
+    catalogHealthTone === "success" &&
+    storageConfig?.status === "connected" &&
+    stemsAddonReady;
+
+  const legalSummary = legalName
+    ? [
+        legalName,
+        noticeEmail || "No notice email",
+        governingLawRegion || "No region",
+      ].join(" \u00b7 ")
+    : "Not configured yet";
+
+  const legalNeedsSetup =
+    setupStatus.licensors.existing < setupStatus.licensors.required;
+
+  if (!settingsPageMounted) {
+    return <div aria-hidden="true" style={{ minHeight: "100vh" }} />;
+  }
 
   return (
-    <Page
-      title="Settings"
-      subtitle="Manage legal identity, storage, delivery configuration, and store connection health."
-    >
+    <Page title="Settings">
       <BlockStack gap="500">
         {readiness.needsProfile && (
           <Banner
-            title="Finish setup from Home"
+            title="Finish setting up your store"
             tone="warning"
             action={{
               content: "Continue setup",
@@ -275,21 +431,35 @@ export default function SettingsPage() {
             }}
           >
             <p>
-              Your producer profile or legal identity still needs attention
-              before the app is fully ready.
+              Your producer profile or legal identity needs attention before
+              you can start selling.
             </p>
           </Banner>
         )}
 
-        {actionData?.success && (
+        {actionData?.success &&
+          actionData.completedIntent !== "ensure_stems_addon_product" &&
+          actionData.completedIntent !== "check_storage" && (
           <Banner title="Saved" tone="success">
             <p>{actionData.success}</p>
           </Banner>
         )}
 
         {actionData?.error && (
-          <Banner title="Unable to save" tone="critical">
+          <Banner title="Something went wrong" tone="critical">
             <p>{actionData.error}</p>
+          </Banner>
+        )}
+
+        {storageFetcher.data?.error && (
+          <Banner title="Something went wrong" tone="critical">
+            <p>{storageFetcher.data.error}</p>
+          </Banner>
+        )}
+
+        {stemsAddonFetcher.data?.error && (
+          <Banner title="Something went wrong" tone="critical">
+            <p>{stemsAddonFetcher.data.error}</p>
           </Banner>
         )}
 
@@ -306,431 +476,427 @@ export default function SettingsPage() {
 
         <Card>
           <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="100">
-                <Text as="h2" variant="headingMd">
-                  Billing
-                </Text>
-                <Text as="p" tone="subdued">
-                  Your app subscription controls access to uploads, delivery,
-                  and fulfillment tools for this store.
-                </Text>
-              </BlockStack>
-              <Badge
-                tone={
-                  billingSummary.status === "active"
-                    ? "success"
-                    : billingSummary.status === "error"
-                      ? "critical"
-                      : billingSummary.status === "inactive"
-                        ? "attention"
-                        : "info"
-                }
-              >
-                {billingSummary.status === "active"
-                  ? "Active"
-                  : billingSummary.status === "inactive"
-                    ? "Needs subscription"
-                    : billingSummary.status === "error"
-                      ? "Needs attention"
-                      : "Pre-launch"}
-              </Badge>
-            </InlineStack>
-
-            <Text as="p" tone="subdued">
-              {billingSummary.message}
+            <Text as="h2" variant="headingMd">
+              Subscription
             </Text>
-
-            <InlineStack gap="300">
-              {billingSummary.pricingUrl ? (
-                <Button url={billingSummary.pricingUrl} target="_top">
-                  Open pricing page
-                </Button>
-              ) : null}
-            </InlineStack>
-          </BlockStack>
-        </Card>
-
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
+            <InlineStack align="space-between" blockAlign="center" wrap={false}>
               <BlockStack gap="100">
-                <Text as="h2" variant="headingMd">
-                  Legal identity
-                </Text>
                 <Text as="p" tone="subdued">
-                  This shop-level licensor profile appears on your starter
-                  agreements and powers the launch-ready defaults for future
-                  previews and PDFs.
+                  {billingSummary.message}
                 </Text>
               </BlockStack>
-              <Badge
-                tone={
-                  getMetaobjectFieldValue(licensor, "legal_name")
-                    ? "success"
-                    : "attention"
-                }
-              >
-                {getMetaobjectFieldValue(licensor, "legal_name")
-                  ? "Configured"
-                  : "Needs setup"}
-              </Badge>
-            </InlineStack>
-
-            <Form method="post">
-              <input type="hidden" name="intent" value="save_legal_identity" />
-              <FormLayout>
-                <TextField
-                  label="Legal / business name"
-                  name="legalName"
-                  autoComplete="off"
-                  value={legalName}
-                  onChange={setLegalName}
-                  requiredIndicator
-                  helpText="This is the legal contracting party named as the licensor in your agreements."
-                />
-                <TextField
-                  label="DBA / brand name"
-                  name="dbaName"
-                  autoComplete="off"
-                  value={dbaName}
-                  onChange={setDbaName}
-                  helpText="Optional. Use this if you want agreements to reference a trading or brand name in addition to the legal name."
-                />
-                <TextField
-                  label="Business entity type"
-                  name="businessEntityType"
-                  autoComplete="off"
-                  value={businessEntityType}
-                  onChange={setBusinessEntityType}
-                  placeholder="Example: Sole proprietor, LLC, corporation"
-                />
-                <TextField
-                  label="Notice email"
-                  name="noticeEmail"
-                  autoComplete="off"
-                  type="email"
-                  value={noticeEmail}
-                  onChange={setNoticeEmail}
-                  helpText="Optional for now. This will become the default contact shown in the agreement notices section."
-                />
-                <TextField
-                  label="Governing law / region"
-                  name="governingLawRegion"
-                  autoComplete="off"
-                  value={governingLawRegion}
-                  onChange={setGoverningLawRegion}
-                  placeholder="Example: England and Wales, California, New South Wales"
-                />
-                <TextField
-                  label="Dispute forum"
-                  name="disputeForum"
-                  autoComplete="off"
-                  multiline={3}
-                  value={disputeForum}
-                  onChange={setDisputeForum}
-                  helpText="Optional. Use this later if you want your starter agreements to name a court, arbitration venue, or forum."
-                />
-                <TextField
-                  label="Signature label / title"
-                  name="signatureLabel"
-                  autoComplete="off"
-                  value={signatureLabel}
-                  onChange={setSignatureLabel}
-                  placeholder="Example: Owner, Licensor, Authorized Representative"
-                />
-                <Text as="p" tone="subdued">
-                  Signature image upload is reserved in the schema and can be
-                  added when the full agreement renderer is wired. For launch,
-                  typed licensor identity plus electronic acceptance is the
-                  cleaner low-friction default.
-                </Text>
-
-                <InlineStack gap="300">
-                  <Button variant="primary" submit loading={isSubmitting}>
-                    Save legal identity
+              <InlineStack gap="200" blockAlign="center">
+                {billingSummary.status !== "active" && (
+                  <Badge
+                    tone={
+                      billingSummary.status === "error"
+                        ? "critical"
+                        : billingSummary.status === "inactive"
+                          ? "attention"
+                          : "info"
+                    }
+                  >
+                    {billingSummary.status === "inactive"
+                      ? "Needs subscription"
+                      : billingSummary.status === "error"
+                        ? "Needs attention"
+                        : "Pre-launch"}
+                  </Badge>
+                )}
+                {billingSummary.pricingUrl && (
+                  <Button url={billingSummary.pricingUrl} target="_top">
+                    View plan
                   </Button>
-                </InlineStack>
-              </FormLayout>
-            </Form>
+                )}
+              </InlineStack>
+            </InlineStack>
           </BlockStack>
         </Card>
 
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="100">
-                <Text as="h2" variant="headingMd">
-                  Stems add-on product
-                </Text>
-                <Text as="p" tone="subdued">
-                  Producer Launchpad can seed the Shopify product used by the
-                  license selector modal when a merchant sells stems as an
-                  add-on.
-                </Text>
-              </BlockStack>
-              <Badge tone={stemsAddonReady ? "success" : "attention"}>
-                {stemsAddonReady ? "Connected" : "Needs setup"}
-              </Badge>
-            </InlineStack>
-
-            <DescriptionList
-              items={[
-                {
-                  term: "Product title",
-                  description:
-                    stemsAddonProduct?.stemsAddonTitle || "Not created yet",
-                },
-                {
-                  term: "Handle",
-                  description:
-                    stemsAddonProduct?.stemsAddonHandle || "stems-add-on",
-                },
-                {
-                  term: "Variant ID",
-                  description:
-                    stemsAddonProduct?.stemsAddonVariantId || "Not created yet",
-                },
-                {
-                  term: "Starter price",
-                  description: stemsAddonProduct?.stemsAddonPrice
-                    ? `$${stemsAddonProduct.stemsAddonPrice}`
-                    : "$15.00 default when seeded",
-                },
-              ]}
-            />
-
-            <Text as="p" tone="subdued">
-              This product is seeded automatically during setup when possible.
-              The theme upsell flow points at the seeded variant instead of a
-              hardcoded demo value.
+        <Card padding="0">
+          <Box padding="400" paddingBlockEnd="200">
+            <Text as="h2" variant="headingMd">
+              Legal identity
             </Text>
-
-            <Form method="post">
-              <input
-                type="hidden"
-                name="intent"
-                value="ensure_stems_addon_product"
-              />
-              <InlineStack gap="300">
-                <Button variant="primary" submit loading={isSubmitting}>
-                  {stemsAddonReady
-                    ? "Repair / recheck product"
-                    : "Create product"}
-                </Button>
-              </InlineStack>
-            </Form>
-          </BlockStack>
+          </Box>
+          <SettingsClickableRow
+            title="License agreement details"
+            description={legalSummary}
+            badge={
+              legalNeedsSetup
+                ? { content: "Needs setup", tone: "attention" }
+                : undefined
+            }
+            onClick={() => setLegalIdentityModalOpen(true)}
+          />
         </Card>
 
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">
-                Storage and delivery
-              </Text>
-              <Badge
-                tone={
-                  storageConfig?.status === "connected"
-                    ? "success"
-                    : storageConfig?.status === "error"
-                      ? "critical"
-                      : "attention"
-                }
-              >
-                {storageConfig?.status === "connected"
-                  ? "Connected"
-                  : storageConfig?.status === "error"
-                    ? "Error"
-                    : "Not connected"}
-              </Badge>
-            </InlineStack>
-
-            {storageConfig?.status === "error" && (
-              <Banner tone="critical">
-                <p>
-                  Something went wrong connecting to storage. Try again or
-                  contact support.
-                </p>
-              </Banner>
-            )}
-
-            <Text as="p" tone="subdued">
-              Your files are stored and delivered automatically. Storage is
-              included with your plan.
-            </Text>
-
-            <Text as="p" tone="subdued">
-              If you uninstall, uploaded files and delivery records are
-              permanently deleted within 7 days.
-            </Text>
-
-            <Form method="post">
-              <input type="hidden" name="intent" value="check_storage" />
-              <Button submit loading={isSubmitting}>
-                Check connection
-              </Button>
-            </Form>
-          </BlockStack>
-        </Card>
-
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="100">
-                <Text as="h2" variant="headingMd">
-                  Delivery email
-                </Text>
+        {legalIdentityModalOpen ? (
+          <Modal
+            open
+            onClose={handleLegalModalClose}
+            title="Legal identity"
+            primaryAction={{
+              content: "Save",
+              loading: submittingIntent === "save_legal_identity",
+              onAction: () => {
+                setLastSubmittedIntent("save_legal_identity");
+                legalFormRef.current?.requestSubmit();
+              },
+            }}
+            secondaryActions={[
+              {
+                content: "Cancel",
+                onAction: handleLegalModalClose,
+              },
+            ]}
+          >
+            <Modal.Section>
+              <BlockStack gap="200">
                 <Text as="p" tone="subdued">
-                  Customers receive a download link automatically after
-                  purchase.
+                  These details appear on every license agreement your customers
+                  receive.
                 </Text>
-              </BlockStack>
-              <Badge
-                tone={
-                  deliveryEmail.status === "configured"
-                    ? "success"
-                    : "attention"
-                }
-              >
-                {deliveryEmail.status === "configured"
-                  ? "Configured"
-                  : "Needs setup"}
-              </Badge>
-            </InlineStack>
-
-            <BlockStack gap="200">
-              <InlineStack align="space-between">
-                <Text as="span">Sender</Text>
-                <Text as="span" tone={deliveryEmail.from ? "base" : "subdued"}>
-                  {deliveryEmail.from
-                    ? deliveryEmail.from.replace(/^.*<(.+)>$/, "$1")
-                    : "Not configured"}
-                </Text>
-              </InlineStack>
-              <InlineStack align="space-between">
-                <Text as="span">Reply-to</Text>
-                <Text
-                  as="span"
-                  tone={deliveryEmail.replyTo ? "base" : "subdued"}
-                >
-                  {deliveryEmail.replyTo || "Same as sender"}
-                </Text>
-              </InlineStack>
-              <InlineStack align="space-between">
-                <Text as="span">Brand label</Text>
-                <Text as="span">{deliveryEmail.brandName}</Text>
-              </InlineStack>
-            </BlockStack>
-          </BlockStack>
-        </Card>
-
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="100">
-                <Text as="h2" variant="headingMd">
-                  Catalog setup health
-                </Text>
-                <Text as="p" tone="subdued">
-                  We keep your product data fields, templates, and delivery
-                  connections healthy behind the scenes.
-                </Text>
-              </BlockStack>
-              <Badge tone={catalogHealthTone}>{catalogHealthLabel}</Badge>
-            </InlineStack>
-
-            <BlockStack gap="200">
-              <InlineStack align="space-between">
-                <Text as="span">Product data fields</Text>
-                <Badge
-                  tone={
-                    setupStatus.productMetafields.missing.length === 0
-                      ? "success"
-                      : "attention"
-                  }
-                >
-                  {setupStatus.productMetafields.missing.length === 0
-                    ? "Ready"
-                    : "Needs repair"}
-                </Badge>
-              </InlineStack>
-              <InlineStack align="space-between">
-                <Text as="span">License templates</Text>
-                <Badge
-                  tone={
-                    setupStatus.beatLicenses.existing >=
-                    setupStatus.beatLicenses.required
-                      ? "success"
-                      : "attention"
-                  }
-                >
-                  {setupStatus.beatLicenses.existing >=
-                  setupStatus.beatLicenses.required
-                    ? "Ready"
-                    : "Needs repair"}
-                </Badge>
-              </InlineStack>
-              <InlineStack align="space-between">
-                <Text as="span">Producer profile</Text>
-                <Badge tone={readiness.needsProfile ? "attention" : "success"}>
-                  {readiness.needsProfile ? "Needs setup" : "Ready"}
-                </Badge>
-              </InlineStack>
-              <InlineStack align="space-between">
-                <Text as="span">Legal identity</Text>
-                <Badge
-                  tone={
-                    setupStatus.licensors.existing >=
-                    setupStatus.licensors.required
-                      ? "success"
-                      : "attention"
-                  }
-                >
-                  {setupStatus.licensors.existing >=
-                  setupStatus.licensors.required
-                    ? "Ready"
-                    : "Needs setup"}
-                </Badge>
-              </InlineStack>
-            </BlockStack>
-
-            <InlineStack gap="300">
-              {readiness.needsProfile ? (
-                <Button url={readiness.onboardingRoute}>Continue setup</Button>
-              ) : (
-                <Form method="post">
-                  <input type="hidden" name="intent" value="repair" />
-                  <Button submit loading={isSubmitting} icon={RefreshIcon}>
-                    Run repair
-                  </Button>
+                <Form method="post" ref={legalFormRef as React.RefObject<HTMLFormElement>}>
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="save_legal_identity"
+                  />
+                  <FormLayout>
+                    <TextField
+                      label="Legal / business name"
+                      name="legalName"
+                      autoComplete="off"
+                      value={legalName}
+                      onChange={setLegalName}
+                      requiredIndicator
+                      helpText="The name shown as the licensor on your agreements."
+                    />
+                    <TextField
+                      label="Notice email"
+                      name="noticeEmail"
+                      autoComplete="off"
+                      type="email"
+                      value={noticeEmail}
+                      onChange={setNoticeEmail}
+                      helpText="Where customers send formal notices. Shown on every agreement."
+                    />
+                    <TextField
+                      label="Governing law region"
+                      name="governingLawRegion"
+                      autoComplete="off"
+                      value={governingLawRegion}
+                      onChange={setGoverningLawRegion}
+                      placeholder="e.g. California, England and Wales"
+                      helpText="The jurisdiction that governs your agreements."
+                    />
+                  </FormLayout>
                 </Form>
-              )}
+              </BlockStack>
+            </Modal.Section>
+          </Modal>
+        ) : null}
+
+        <Card padding="0">
+          <Box padding="400" paddingBlockEnd="0">
+            <Text as="h2" variant="headingMd">
+              Services
+            </Text>
+          </Box>
+
+          <Box
+            padding="400"
+            borderColor="border"
+            borderBlockEndWidth="025"
+          >
+            <InlineStack align="space-between" blockAlign="start" wrap={false}>
+              <BlockStack gap="200">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="p" fontWeight="semibold">
+                    Delivery email
+                  </Text>
+                  {deliveryEmail.status !== "configured" && (
+                    <Badge tone="attention">Needs setup</Badge>
+                  )}
+                </InlineStack>
+                <BlockStack gap="100">
+                  <Text as="p" tone="subdued">
+                    {deliveryEmail.from
+                      ? deliveryEmail.from.replace(/^.*<(.+)>$/, "$1")
+                      : "Not set"}
+                    {deliveryEmail.replyTo
+                      ? ` \u00b7 Reply-to: ${deliveryEmail.replyTo}`
+                      : ""}
+                    {deliveryEmail.brandName
+                      ? ` \u00b7 ${deliveryEmail.brandName}`
+                      : ""}
+                  </Text>
+                </BlockStack>
+              </BlockStack>
             </InlineStack>
-          </BlockStack>
+          </Box>
+
+          <Box
+            padding="400"
+            borderColor="border"
+            borderBlockEndWidth="025"
+          >
+            <InlineStack align="space-between" blockAlign="center" wrap={false}>
+              <BlockStack gap="100">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="p" fontWeight="semibold">
+                    File storage
+                  </Text>
+                  {storageConfig?.status === "error" ? (
+                    <Badge tone="critical">Error</Badge>
+                  ) : storageConfig?.status !== "connected" ? (
+                    <Badge tone="attention">Not connected</Badge>
+                  ) : null}
+                </InlineStack>
+                <Text as="p" tone={storageConfig?.status === "error" ? "critical" : "subdued"}>
+                  {storageConfig?.status === "error"
+                    ? "Storage isn't responding"
+                    : storageConfig?.status === "connected"
+                      ? "Connected and delivering files"
+                      : "Not configured"}
+                </Text>
+              </BlockStack>
+              <storageFetcher.Form method="post">
+                <input type="hidden" name="intent" value="check_storage" />
+                <Button submit loading={isCheckingStorage}>
+                  Test connection
+                </Button>
+              </storageFetcher.Form>
+            </InlineStack>
+          </Box>
+
         </Card>
+
+        <Card padding="0">
+          <Box padding="400" paddingBlockEnd="200">
+            <Text as="h2" variant="headingMd">
+              Storefront add-ons
+            </Text>
+          </Box>
+          <SettingsClickableRow
+            title="Stems add-on"
+            description={stemsAddonSummary}
+            badge={stemsAddonBadge}
+            onClick={() => setStemsAddonModalOpen(true)}
+          />
+        </Card>
+
+        {stemsAddonModalOpen ? (
+          <Modal
+            open
+            onClose={() => setStemsAddonModalOpen(false)}
+            title="Stems add-on"
+            primaryAction={{
+              content: stemsAddonReady
+                ? "Already installed"
+                : "Install stems add-on",
+              loading: isInstallingStemsAddon,
+              disabled: stemsAddonReady,
+              onAction: () => {
+                setLastSubmittedIntent("ensure_stems_addon_product");
+                stemsAddonFormRef.current?.requestSubmit();
+              },
+            }}
+            secondaryActions={[
+              {
+                content: "Close",
+                onAction: () => setStemsAddonModalOpen(false),
+              },
+            ]}
+          >
+            <Modal.Section>
+              <BlockStack gap="400">
+                <BlockStack gap="100">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      Current status
+                    </Text>
+                    <Badge tone={stemsAddonBadge.tone}>
+                      {stemsAddonBadge.content}
+                    </Badge>
+                  </InlineStack>
+                  <Text as="p" tone="subdued">
+                    {stemsAddonSummary}
+                  </Text>
+                </BlockStack>
+
+                <Text as="p" tone="subdued">
+                  This add-on is used when a license offers stems as an optional
+                  upgrade. It powers the stems option on the product page and in
+                  the license selector, then adds the stems purchase to the order.
+                </Text>
+
+                <DescriptionList
+                  items={[
+                    {
+                      term: "Product",
+                      description: stemsAddonTitle,
+                    },
+                    {
+                      term: "Price",
+                      description: stemsAddonPrice,
+                    },
+                    {
+                      term: "Handle",
+                      description: stemsAddonHandle,
+                    },
+                  ]}
+                />
+
+                {!stemsAddonReady && (
+                  <Banner title="Setup needed" tone="warning">
+                    <p>
+                      Beats and licenses can still sell without this, but the
+                      optional stems upsell will stay hidden until the stems
+                      add-on product is connected.
+                    </p>
+                  </Banner>
+                )}
+
+                <stemsAddonFetcher.Form
+                  method="post"
+                  ref={stemsAddonFormRef}
+                >
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="ensure_stems_addon_product"
+                  />
+                </stemsAddonFetcher.Form>
+              </BlockStack>
+            </Modal.Section>
+          </Modal>
+        ) : null}
 
         <Card>
           <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">
-                Advanced diagnostics
-              </Text>
-              <Button
-                onClick={() => setShowTechnical((current) => !current)}
-                variant="plain"
-              >
-                {showTechnical ? "Hide details" : "View details"}
-              </Button>
-            </InlineStack>
+            <Text as="h2" variant="headingMd">
+              System health
+            </Text>
 
-            <Collapsible
-              open={showTechnical}
-              id="advanced-diagnostics"
-              transition={{ duration: "150ms", timingFunction: "ease-in-out" }}
+            {allHealthy ? (
+              <Text as="p" tone="subdued">
+                Everything is connected and working. Licenses, storage, and
+                delivery are ready for orders.
+              </Text>
+            ) : (
+              <BlockStack gap="200">
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">
+                    Data fields
+                  </Text>
+                  <Text
+                    as="span"
+                    tone={
+                      setupStatus.productMetafields.missing.length === 0
+                        ? "subdued"
+                        : "critical"
+                    }
+                  >
+                    {setupStatus.productMetafields.missing.length === 0
+                      ? "Ready"
+                      : "Needs repair"}
+                  </Text>
+                </InlineStack>
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">
+                    Licenses
+                  </Text>
+                  <Text
+                    as="span"
+                    tone={
+                      setupStatus.beatLicenses.existing >=
+                      setupStatus.beatLicenses.required
+                        ? "subdued"
+                        : "critical"
+                    }
+                  >
+                    {setupStatus.beatLicenses.existing >=
+                    setupStatus.beatLicenses.required
+                      ? "Ready"
+                      : "Needs repair"}
+                  </Text>
+                </InlineStack>
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">
+                    Producer
+                  </Text>
+                  <Text
+                    as="span"
+                    tone={readiness.needsProfile ? "critical" : "subdued"}
+                  >
+                    {readiness.needsProfile ? "Needs setup" : "Ready"}
+                  </Text>
+                </InlineStack>
+                <InlineStack align="space-between">
+                  <Text as="span" tone="subdued">
+                    Legal identity
+                  </Text>
+                  <Text
+                    as="span"
+                    tone={
+                      setupStatus.licensors.existing >=
+                      setupStatus.licensors.required
+                        ? "subdued"
+                        : "critical"
+                    }
+                  >
+                    {setupStatus.licensors.existing >=
+                    setupStatus.licensors.required
+                      ? "Ready"
+                      : "Needs setup"}
+                  </Text>
+                </InlineStack>
+              </BlockStack>
+            )}
+
+            {readiness.needsProfile ? (
+              <Button url={readiness.onboardingRoute}>Continue setup</Button>
+            ) : (
+              <Form method="post">
+                <input type="hidden" name="intent" value="repair" />
+                <Button submit loading={submittingIntent === "repair"} icon={RefreshIcon}>
+                  Run repair
+                </Button>
+              </Form>
+            )}
+
+            <Box
+              borderBlockStartWidth="025"
+              borderColor="border"
+              paddingBlockStart="300"
             >
-              <DescriptionList items={technicalItems} />
-            </Collapsible>
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="span" tone="subdued">
+                  Diagnostics
+                </Text>
+                <Button
+                  onClick={() => setShowTechnical((current) => !current)}
+                  variant="plain"
+                >
+                  {showTechnical ? "Hide" : "Show"}
+                </Button>
+              </InlineStack>
+            </Box>
+
+            {showTechnical ? (
+              <Collapsible
+                open
+                id="advanced-diagnostics"
+                transition={{
+                  duration: "150ms",
+                  timingFunction: "ease-in-out",
+                }}
+              >
+                <DescriptionList items={technicalItems} />
+              </Collapsible>
+            ) : null}
           </BlockStack>
         </Card>
       </BlockStack>

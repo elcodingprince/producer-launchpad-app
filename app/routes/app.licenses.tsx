@@ -82,6 +82,8 @@ type LicenseTemplate = {
   creditRequirement: string;
   publishingSplitMode: string;
   publishingSplitSummary: string;
+  publishingSplitLicensorPercent: string;
+  publishingSplitLicenseePercent: string;
   terms: string[];
   isStarter: boolean;
   starterVersion: string | null;
@@ -168,17 +170,96 @@ const CREDIT_REQUIREMENT_OPTIONS = [
   { label: "Not required", value: "not_required" },
 ];
 const PUBLISHING_SPLIT_MODE_OPTIONS = [
-  { label: "Fixed split", value: "fixed_split" },
-  { label: "Custom split summary", value: "custom_split_summary" },
-  { label: "Left to the parties", value: "left_to_parties" },
+  { label: "50 / 50 split", value: "fixed_split" },
+  { label: "Custom split", value: "custom_split" },
+  { label: "Handled outside this agreement", value: "left_to_parties" },
 ];
+
+/** Map the legacy "custom_split_summary" value to the new "custom_split" key. */
+function normalizePublishingSplitMode(mode: string): string {
+  if (mode === "custom_split_summary") return "custom_split";
+  return mode;
+}
+
+/** Generate the summary string from mode + percentages. */
+function generatePublishingSplitSummary(
+  mode: string,
+  licensorPercent?: string,
+  licenseePercent?: string,
+): string {
+  if (mode === "fixed_split") return "50% Licensor / 50% Licensee";
+  if (mode === "custom_split") {
+    const l = (licensorPercent || "50").trim() || "50";
+    const r = (licenseePercent || "50").trim() || "50";
+    return `${l}% Licensor / ${r}% Licensee`;
+  }
+  return "";
+}
+
+/** Parse percentages from existing summary or explicit overrides. */
+function parsePublishingSplitPercents(
+  mode: string,
+  summary: string,
+  licensorOverride?: string,
+  licenseeOverride?: string,
+): {
+  publishingSplitLicensorPercent: string;
+  publishingSplitLicenseePercent: string;
+} {
+  if (mode === "fixed_split") {
+    return {
+      publishingSplitLicensorPercent: "50",
+      publishingSplitLicenseePercent: "50",
+    };
+  }
+
+  if (licensorOverride && licenseeOverride) {
+    return {
+      publishingSplitLicensorPercent: licensorOverride,
+      publishingSplitLicenseePercent: licenseeOverride,
+    };
+  }
+
+  // Try to parse from existing summary like "60% Licensor / 40% Licensee"
+  const match = summary.match(/(\d+)%\s*Licensor\s*\/\s*(\d+)%\s*Licensee/i);
+  if (match) {
+    return {
+      publishingSplitLicensorPercent: match[1],
+      publishingSplitLicenseePercent: match[2],
+    };
+  }
+
+  return {
+    publishingSplitLicensorPercent: "50",
+    publishingSplitLicenseePercent: "50",
+  };
+}
+
+/** Validate that split percentages total 100. */
+function validatePublishingSplit(
+  licensorPercent: string,
+  licenseePercent: string,
+): string | undefined {
+  const l = Number(licensorPercent);
+  const r = Number(licenseePercent);
+  if (Number.isNaN(l) || Number.isNaN(r)) {
+    return "Enter valid whole percentages.";
+  }
+  if (l < 0 || l > 100 || r < 0 || r > 100) {
+    return "Each share must be between 0 and 100.";
+  }
+  if (l + r !== 100) {
+    return "Split percentages need to add up to 100.";
+  }
+  return undefined;
+}
 
 const STARTER_HANDLES = new Set(
   DEFAULT_LICENSES.map((license) => license.handle),
 );
 const AGREEMENT_PREVIEW_TABS = [
-  { id: "resolved", content: "With my settings" },
-  { id: "starter", content: "Starter template" },
+  { id: "resolved", content: "Preview" },
+  { id: "starter", content: "Template" },
 ];
 const LICENSE_TABLE_TABS = [
   { id: "all-licenses", content: "All licenses" },
@@ -186,6 +267,11 @@ const LICENSE_TABLE_TABS = [
 ];
 const STARTER_BUNDLE_ID = "starter-preset-bundle";
 const STARTER_BUNDLE_NAME = "Starter Preset";
+const DEFAULT_LICENSE_NAMES: Record<string, string> = {
+  basic: "Starter License",
+  premium: "Expanded License",
+  unlimited: "Unlimited License",
+};
 
 function buildArchetypeBoundForm(
   offerArchetype: string,
@@ -242,7 +328,10 @@ function buildArchetypeBoundForm(
   return {
     handle: overrides.handle || "",
     offerArchetype: derivedFields.offerArchetype,
-    licenseName: overrides.licenseName || "",
+    licenseName:
+      overrides.licenseName ||
+      DEFAULT_LICENSE_NAMES[derivedFields.offerArchetype] ||
+      "",
     legalTemplateFamily: derivedFields.legalTemplateFamily,
     streamLimit: resolvePresetValue(
       presetConfig.streamLimit,
@@ -263,9 +352,19 @@ function buildArchetypeBoundForm(
     contentIdPolicy: overrides.contentIdPolicy || "not_allowed",
     syncPolicy: overrides.syncPolicy || "not_included",
     creditRequirement: overrides.creditRequirement || "required",
-    publishingSplitMode: overrides.publishingSplitMode || "fixed_split",
+    publishingSplitMode: normalizePublishingSplitMode(
+      overrides.publishingSplitMode || "fixed_split",
+    ),
     publishingSplitSummary:
       overrides.publishingSplitSummary || "50% Licensor / 50% Licensee",
+    ...parsePublishingSplitPercents(
+      normalizePublishingSplitMode(
+        overrides.publishingSplitMode || "fixed_split",
+      ),
+      overrides.publishingSplitSummary || "50% Licensor / 50% Licensee",
+      overrides.publishingSplitLicensorPercent,
+      overrides.publishingSplitLicenseePercent,
+    ),
     terms: [...(overrides.terms || []), "", "", "", "", "", ""].slice(0, 6),
     ...(overrides.id ? { id: overrides.id } : {}),
   };
@@ -319,7 +418,14 @@ function appendLicenseFormFields(
   formData.append("syncPolicy", licenseForm.syncPolicy);
   formData.append("creditRequirement", licenseForm.creditRequirement);
   formData.append("publishingSplitMode", licenseForm.publishingSplitMode);
-  formData.append("publishingSplitSummary", licenseForm.publishingSplitSummary);
+  formData.append(
+    "publishingSplitSummary",
+    generatePublishingSplitSummary(
+      licenseForm.publishingSplitMode,
+      licenseForm.publishingSplitLicensorPercent,
+      licenseForm.publishingSplitLicenseePercent,
+    ),
+  );
   licenseForm.terms.forEach((term, index) => {
     formData.append(`term${index + 1}`, term);
   });
@@ -348,7 +454,9 @@ function buildLicenseForm(license?: LicenseTemplate): LicenseFormState {
     contentIdPolicy: license.contentIdPolicy || "not_allowed",
     syncPolicy: license.syncPolicy || "not_included",
     creditRequirement: license.creditRequirement || "required",
-    publishingSplitMode: license.publishingSplitMode || "fixed_split",
+    publishingSplitMode: normalizePublishingSplitMode(
+      license.publishingSplitMode || "fixed_split",
+    ),
     publishingSplitSummary:
       license.publishingSplitSummary || "50% Licensor / 50% Licensee",
     terms: license.terms,
@@ -1444,6 +1552,10 @@ export default function LicensesPage() {
         creditRequirement: licenseForm.creditRequirement,
         publishingSplitMode: licenseForm.publishingSplitMode,
         publishingSplitSummary: licenseForm.publishingSplitSummary,
+        publishingSplitLicensorPercent:
+          licenseForm.publishingSplitLicensorPercent,
+        publishingSplitLicenseePercent:
+          licenseForm.publishingSplitLicenseePercent,
         terms: licenseForm.terms,
       }),
     [licenseForm, previewMode],
@@ -1466,6 +1578,13 @@ export default function LicensesPage() {
       navigation.formMethod?.toLowerCase() === "post" &&
       navigation.formData?.get("intent") === "accept_guardrail");
   const isPreviewLoading = previewState.isLoading;
+  const publishingSplitError =
+    licenseForm.publishingSplitMode === "custom_split"
+      ? validatePublishingSplit(
+          licenseForm.publishingSplitLicensorPercent,
+          licenseForm.publishingSplitLicenseePercent,
+        )
+      : undefined;
   const isFormDirty =
     editorFormSnapshotRef.current !== "" &&
     JSON.stringify(licenseForm) !== editorFormSnapshotRef.current;
@@ -1667,6 +1786,8 @@ export default function LicensesPage() {
       creditRequirement: string;
       publishingSplitMode: string;
       publishingSplitSummary: string;
+      publishingSplitLicensorPercent?: string;
+      publishingSplitLicenseePercent?: string;
       terms: string[];
     };
 
@@ -1690,6 +1811,10 @@ export default function LicensesPage() {
       creditRequirement: previewPayload.creditRequirement,
       publishingSplitMode: previewPayload.publishingSplitMode,
       publishingSplitSummary: previewPayload.publishingSplitSummary,
+      publishingSplitLicensorPercent:
+        previewPayload.publishingSplitLicensorPercent,
+      publishingSplitLicenseePercent:
+        previewPayload.publishingSplitLicenseePercent,
       terms: previewPayload.terms,
     });
 
@@ -2143,6 +2268,13 @@ export default function LicensesPage() {
       return;
     }
 
+    if (
+      licenseForm.publishingSplitMode === "custom_split" &&
+      publishingSplitError
+    ) {
+      return;
+    }
+
     const formData = new FormData();
     formData.append("intent", editorMode || "create");
     appendLicenseFormFields(formData, licenseForm);
@@ -2153,6 +2285,7 @@ export default function LicensesPage() {
     editorMode,
     hasAcceptedCustomTemplateGuardrail,
     licenseForm,
+    publishingSplitError,
     requiresEditorGuardrail,
     submit,
   ]);
@@ -2194,6 +2327,7 @@ export default function LicensesPage() {
             variant="primary"
             disabled={
               !licenseForm.licenseName.trim() ||
+              Boolean(publishingSplitError) ||
               requiresEditorGuardrail ||
               requiresCreateGuardrail ||
               isSaving
@@ -2284,7 +2418,7 @@ export default function LicensesPage() {
                   <BlockStack gap="400">
                     <InlineStack align="space-between" blockAlign="center">
                       <Text as="h2" variant="headingMd">
-                        Identity
+                        License setup
                       </Text>
                       {editorMode === "update" ? (
                         isStarter ? (
@@ -2297,7 +2431,7 @@ export default function LicensesPage() {
 
                     {editorMode === "create" ? (
                       <Select
-                        label="Template type"
+                        label="License type"
                         options={OFFER_ARCHETYPE_OPTIONS}
                         value={licenseForm.offerArchetype}
                         onChange={(value) =>
@@ -2305,20 +2439,19 @@ export default function LicensesPage() {
                             buildArchetypeBoundForm(value, current),
                           )
                         }
-                        helpText="Controls the agreement family and base delivery package."
+                        helpText="We’ll set up the agreement and delivery package to match."
                       />
                     ) : (
-                      <TextField
-                        label="Template type"
-                        value={archetypeConfig.label}
-                        autoComplete="off"
-                        readOnly
-                        helpText="Locked after creation."
-                      />
+                      <InlineStack gap="200" blockAlign="center">
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">
+                          {archetypeConfig.label}
+                        </Text>
+                        <Badge tone="info">Locked</Badge>
+                      </InlineStack>
                     )}
 
                     <TextField
-                      label="Template name"
+                      label="License name"
                       value={licenseForm.licenseName}
                       onChange={(value) =>
                         setLicenseForm((current) => ({
@@ -2327,8 +2460,28 @@ export default function LicensesPage() {
                         }))
                       }
                       autoComplete="off"
-                      helpText="Customer-facing name shown on your storefront."
+                      helpText="This is the name buyers see when choosing a license."
                     />
+
+                    {licenseForm.offerArchetype === "unlimited" ? (
+                      <Checkbox
+                        label="Include stems in base package"
+                        checked={
+                          licenseForm.stemsPolicy === "included_by_default"
+                        }
+                        onChange={(checked) =>
+                          setLicenseForm((current) =>
+                            buildArchetypeBoundForm(current.offerArchetype, {
+                              ...current,
+                              stemsPolicy: checked
+                                ? "included_by_default"
+                                : "available_as_addon",
+                            }),
+                          )
+                        }
+                        helpText="Choose whether stems are included automatically or offered as an add-on."
+                      />
+                    ) : null}
                   </BlockStack>
                 </Card>
 
@@ -2370,83 +2523,37 @@ export default function LicensesPage() {
                         />
                       </FormLayout.Group>
 
-                      <Select
-                        label="Video view limit"
-                        options={buildPresetOptions(
-                          "videoViewLimit",
-                          limitPresetConfig.videoViewLimit,
-                        )}
-                        value={licenseForm.videoViewLimit}
-                        onChange={(value) =>
-                          setLicenseForm((current) => ({
-                            ...current,
-                            videoViewLimit: value,
-                          }))
-                        }
-                      />
-
-                      <Select
-                        label="Term (years)"
-                        options={buildPresetOptions(
-                          "termYears",
-                          limitPresetConfig.termYears,
-                        )}
-                        value={licenseForm.termYears}
-                        onChange={(value) =>
-                          setLicenseForm((current) => ({
-                            ...current,
-                            termYears: value,
-                          }))
-                        }
-                      />
-
-                    </FormLayout>
-                  </BlockStack>
-                </Card>
-
-                <Card>
-                  <BlockStack gap="400">
-                    <Text as="h2" variant="headingMd">
-                      Base package
-                    </Text>
-
-                    <FormLayout>
-                      <TextField
-                        label="File formats"
-                        value={licenseForm.fileFormats}
-                        autoComplete="off"
-                        readOnly
-                        helpText="Locked to template type."
-                      />
-
-                      <TextField
-                        label="Agreement family"
-                        value={formatTemplateFamilyLabel(
-                          licenseForm.legalTemplateFamily,
-                        )}
-                        autoComplete="off"
-                        readOnly
-                        helpText="Locked to template type."
-                      />
-
-                      {licenseForm.offerArchetype === "unlimited" ? (
-                        <Checkbox
-                          label="Include stems in base package"
-                          checked={
-                            licenseForm.stemsPolicy === "included_by_default"
-                          }
-                          onChange={(checked) =>
-                            setLicenseForm((current) =>
-                              buildArchetypeBoundForm(current.offerArchetype, {
-                                ...current,
-                                stemsPolicy: checked
-                                  ? "included_by_default"
-                                  : "available_as_addon",
-                              }),
-                            )
+                      <FormLayout.Group>
+                        <Select
+                          label="Video view limit"
+                          options={buildPresetOptions(
+                            "videoViewLimit",
+                            limitPresetConfig.videoViewLimit,
+                          )}
+                          value={licenseForm.videoViewLimit}
+                          onChange={(value) =>
+                            setLicenseForm((current) => ({
+                              ...current,
+                              videoViewLimit: value,
+                            }))
                           }
                         />
-                      ) : null}
+
+                        <Select
+                          label="License term"
+                          options={buildPresetOptions(
+                            "termYears",
+                            limitPresetConfig.termYears,
+                          )}
+                          value={licenseForm.termYears}
+                          onChange={(value) =>
+                            setLicenseForm((current) => ({
+                              ...current,
+                              termYears: value,
+                            }))
+                          }
+                        />
+                      </FormLayout.Group>
 
                     </FormLayout>
                   </BlockStack>
@@ -2458,54 +2565,26 @@ export default function LicensesPage() {
                       Storefront copy
                     </Text>
 
-                    <Text as="p" tone="subdued">
-                      Start with the prepared summary, then refine the wording
-                      to match how you want this offer to feel on the
-                      storefront. Feature bullets stay aligned automatically as
-                      limits change.
-                    </Text>
-
-                    <BlockStack gap="300">
-                      <TextField
-                        label="Storefront summary"
-                        value={licenseForm.storefrontSummary}
-                        onChange={(value) =>
-                          setLicenseForm((current) => ({
-                            ...current,
-                            storefrontSummary: value,
-                          }))
-                        }
-                        autoComplete="off"
-                        placeholder={generatedStorefrontCopy.summary}
-                        helpText={`Prepared default: ${generatedStorefrontCopy.summary} Leave this blank any time you want to use the prepared line.`}
-                      />
-
-                      <Box
-                        background="bg-surface-secondary"
-                        borderColor="border"
-                        borderRadius="300"
-                        borderWidth="025"
-                        padding="300"
-                      >
-                        <BlockStack gap="200">
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            Feature bullets
-                          </Text>
-                          <List type="bullet">
-                            {generatedStorefrontCopy.bullets.map((bullet) => (
-                              <List.Item key={bullet}>{bullet}</List.Item>
-                            ))}
-                          </List>
-                        </BlockStack>
-                      </Box>
-                    </BlockStack>
+                    <TextField
+                      label="Storefront summary"
+                      value={licenseForm.storefrontSummary}
+                      onChange={(value) =>
+                        setLicenseForm((current) => ({
+                          ...current,
+                          storefrontSummary: value,
+                        }))
+                      }
+                      autoComplete="off"
+                      placeholder={generatedStorefrontCopy.summary}
+                      helpText="Leave blank to use the auto-generated summary. Refine it to match the way you talk about your offers."
+                    />
                   </BlockStack>
                 </Card>
 
                 <Card>
                   <BlockStack gap="400">
                     <Text as="h2" variant="headingMd">
-                      Agreement settings
+                      Agreement details
                     </Text>
 
                     <FormLayout>
@@ -2546,29 +2625,131 @@ export default function LicensesPage() {
                       />
 
                       <Select
-                        label="Publishing split mode"
+                        label="Publishing split"
+                        helpText="Choose how publishing ownership should be described in this agreement."
                         options={PUBLISHING_SPLIT_MODE_OPTIONS}
                         value={licenseForm.publishingSplitMode}
                         onChange={(value) =>
-                          setLicenseForm((current) => ({
-                            ...current,
-                            publishingSplitMode: value,
-                          }))
+                          setLicenseForm((current) => {
+                            const next = {
+                              ...current,
+                              publishingSplitMode: value,
+                            };
+                            if (value === "fixed_split") {
+                              next.publishingSplitLicensorPercent = "50";
+                              next.publishingSplitLicenseePercent = "50";
+                              next.publishingSplitSummary =
+                                "50% Licensor / 50% Licensee";
+                            } else if (value === "custom_split") {
+                              next.publishingSplitSummary =
+                                generatePublishingSplitSummary(
+                                  value,
+                                  next.publishingSplitLicensorPercent,
+                                  next.publishingSplitLicenseePercent,
+                                );
+                            } else {
+                              next.publishingSplitSummary = "";
+                            }
+                            return next;
+                          })
                         }
                       />
 
-                      <TextField
-                        label="Publishing split summary"
-                        value={licenseForm.publishingSplitSummary}
-                        onChange={(value) =>
-                          setLicenseForm((current) => ({
-                            ...current,
-                            publishingSplitSummary: value,
-                          }))
-                        }
-                        multiline={2}
-                        autoComplete="off"
-                      />
+                      {licenseForm.publishingSplitMode === "fixed_split" && (
+                        <BlockStack gap="200">
+                          <InlineStack gap="200">
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              Licensor: 50%
+                            </Text>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              Licensee: 50%
+                            </Text>
+                          </InlineStack>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            Agreement summary: 50% Licensor / 50% Licensee
+                          </Text>
+                        </BlockStack>
+                      )}
+
+                      {licenseForm.publishingSplitMode === "custom_split" && (
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            Enter percentages that total 100.
+                          </Text>
+                          <FormLayout.Group condensed>
+                            <TextField
+                              label="Licensor share"
+                              helpText="The producer or rights holder share."
+                              type="number"
+                              value={
+                                licenseForm.publishingSplitLicensorPercent
+                              }
+                              onChange={(value) =>
+                                setLicenseForm((current) => {
+                                  const next = {
+                                    ...current,
+                                    publishingSplitLicensorPercent: value,
+                                  };
+                                  next.publishingSplitSummary =
+                                    generatePublishingSplitSummary(
+                                      "custom_split",
+                                      value,
+                                      next.publishingSplitLicenseePercent,
+                                    );
+                                  return next;
+                                })
+                              }
+                              suffix="%"
+                              autoComplete="off"
+                              min={0}
+                              max={100}
+                              error={publishingSplitError}
+                            />
+                            <TextField
+                              label="Licensee share"
+                              helpText="The buyer or artist share."
+                              type="number"
+                              value={
+                                licenseForm.publishingSplitLicenseePercent
+                              }
+                              onChange={(value) =>
+                                setLicenseForm((current) => {
+                                  const next = {
+                                    ...current,
+                                    publishingSplitLicenseePercent: value,
+                                  };
+                                  next.publishingSplitSummary =
+                                    generatePublishingSplitSummary(
+                                      "custom_split",
+                                      next.publishingSplitLicensorPercent,
+                                      value,
+                                    );
+                                  return next;
+                                })
+                              }
+                              suffix="%"
+                              autoComplete="off"
+                              min={0}
+                              max={100}
+                              error={publishingSplitError}
+                            />
+                          </FormLayout.Group>
+                          {!publishingSplitError && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              Agreement summary:{" "}
+                              {licenseForm.publishingSplitSummary}
+                            </Text>
+                          )}
+                        </BlockStack>
+                      )}
+
+                      {licenseForm.publishingSplitMode ===
+                        "left_to_parties" && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Publishing split will not be defined in this
+                          template.
+                        </Text>
+                      )}
 
                       {licenseForm.terms.map((term, index) => {
                         const filledCount = licenseForm.terms.filter(
@@ -2579,7 +2760,7 @@ export default function LicensesPage() {
                         return (
                           <TextField
                             key={`term-${index + 1}`}
-                            label={`Addendum term ${index + 1}`}
+                            label={`Additional term ${index + 1}`}
                             value={term}
                             onChange={(value) =>
                               setLicenseForm((current) => {
@@ -2592,7 +2773,7 @@ export default function LicensesPage() {
                             autoComplete="off"
                             helpText={
                               index === 0
-                                ? "Appended to the agreement. Does not replace core clauses."
+                                ? "Added at the end of the agreement. Core clauses are not affected."
                                 : undefined
                             }
                           />
@@ -2624,28 +2805,6 @@ export default function LicensesPage() {
                       fitted
                     >
                       <BlockStack gap="300">
-                        <Text as="p" tone="subdued">
-                          {previewMode === "resolved"
-                            ? "Preview how this agreement reads with your current settings, legal identity, and sample buyer data."
-                            : "Review the starter agreement language with placeholders still visible so you can inspect the raw template structure."}
-                        </Text>
-
-                        <InlineStack gap="200">
-                          <Badge>
-                            {previewMode === "resolved"
-                              ? "Resolved preview"
-                              : "Starter template"}
-                          </Badge>
-                          <Badge>
-                            {formatTemplateFamilyLabel(
-                              licenseForm.legalTemplateFamily,
-                            )}
-                          </Badge>
-                          {isPreviewLoading ? (
-                            <Badge tone="attention">Updating</Badge>
-                          ) : null}
-                        </InlineStack>
-
                         {previewError ? (
                           <Banner
                             title="Unable to render preview"
@@ -2695,7 +2854,7 @@ export default function LicensesPage() {
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="center">
                       <Text as="h2" variant="headingMd">
-                        Offer summary
+                        Summary
                       </Text>
                       <Badge
                         tone={getTemplateStemsBadgeTone(
@@ -2711,21 +2870,13 @@ export default function LicensesPage() {
                         {licenseForm.licenseName || "Untitled template"}
                       </Text>
                       <Text as="p" tone="subdued">
-                        {formatTemplateFamilyLabel(
-                          licenseForm.legalTemplateFamily,
-                        )}{" "}
-                        legal family
-                      </Text>
-                      <Text as="p" tone="subdued">
                         {formatLimit(licenseForm.streamLimit, "streams")}
-                      </Text>
-                      <Text as="p" tone="subdued">
+                        {" · "}
                         {formatLimit(licenseForm.copyLimit, "copies")}
                       </Text>
                       <Text as="p" tone="subdued">
                         {formatLimit(licenseForm.videoViewLimit, "video views")}
-                      </Text>
-                      <Text as="p" tone="subdued">
+                        {" · "}
                         {formatTermLength(licenseForm.termYears)}
                       </Text>
                     </BlockStack>
@@ -2738,55 +2889,40 @@ export default function LicensesPage() {
                       </InlineStack>
                     ) : null}
 
-                    {(licenseForm.storefrontSummary.trim() ||
-                      generatedStorefrontCopy.summary) ? (
-                      <Text as="p" tone="subdued">
-                        {licenseForm.storefrontSummary.trim() ||
-                          generatedStorefrontCopy.summary}
-                      </Text>
-                    ) : null}
+                    <Box
+                      borderBlockStartWidth="025"
+                      borderColor="border"
+                      paddingBlockStart="300"
+                    >
+                      <BlockStack gap="200">
+                        <InlineStack
+                          align="space-between"
+                          blockAlign="center"
+                        >
+                          <Text as="p" variant="bodySm" fontWeight="semibold">
+                            Used by beats
+                          </Text>
+                          <Badge>{String(usage?.beatCount || 0)}</Badge>
+                        </InlineStack>
 
-                    {generatedStorefrontCopy.bullets.length > 0 ? (
-                      <List type="bullet">
-                        {generatedStorefrontCopy.bullets.map((feature) => (
-                          <List.Item key={feature}>{feature}</List.Item>
-                        ))}
-                      </List>
-                    ) : (
-                      <Text as="p" tone="subdued">
-                        Storefront copy will appear here automatically as you
-                        adjust the license terms.
-                      </Text>
-                    )}
-                  </BlockStack>
-                </Card>
+                        {usage?.beatTitles.length ? (
+                          <List type="bullet">
+                            {usage.beatTitles.slice(0, 6).map((title) => (
+                              <List.Item key={title}>{title}</List.Item>
+                            ))}
+                          </List>
+                        ) : (
+                          <Text as="p" tone="subdued">
+                            This template hasn't been assigned to any beats
+                            yet.
+                          </Text>
+                        )}
 
-                <Card>
-                  <BlockStack gap="300">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text as="h2" variant="headingMd">
-                        Used by beats
-                      </Text>
-                      <Badge>{String(usage?.beatCount || 0)}</Badge>
-                    </InlineStack>
-
-                    {usage?.beatTitles.length ? (
-                      <List type="bullet">
-                        {usage.beatTitles.slice(0, 6).map((title) => (
-                          <List.Item key={title}>{title}</List.Item>
-                        ))}
-                      </List>
-                    ) : (
-                      <Text as="p" tone="subdued">
-                        Assign this template from the beat upload flow or a
-                        future beat editing flow.
-                      </Text>
-                    )}
-
-                    <InlineStack gap="300">
-                      <Button url={usageBeatsUrl}>View matching beats</Button>
-                      <Button url="/app/deliveries">Open deliveries</Button>
-                    </InlineStack>
+                        <Button url={usageBeatsUrl} size="slim">
+                          View matching beats
+                        </Button>
+                      </BlockStack>
+                    </Box>
                   </BlockStack>
                 </Card>
               </BlockStack>

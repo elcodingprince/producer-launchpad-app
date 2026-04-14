@@ -260,6 +260,8 @@ function buildPublishingClause(
     return "<p>Publishing splits, writer shares, and collection administration for the New Song must be agreed separately by the parties and, if needed, reflected in their applicable PRO or publishing registrations.</p>";
   }
 
+  // fixed_split, custom_split, and legacy custom_split_summary all render
+  // with the pre-generated summary string.
   const publishingSummary =
     mode === "starter"
       ? "[[publishing_split_summary]]"
@@ -354,13 +356,13 @@ export async function renderAgreementPreview(options: {
   const resolvedLicensorDisplay = buildLicensorDisplay(options.licensor);
   const resolvedNoticeEmail =
     options.licensor.noticeEmail?.trim() ||
-    "the notice email selected by the Licensor in settings";
+    "the Licensor's contact email on file";
   const resolvedGoverningLawRegion =
     options.licensor.governingLawRegion?.trim() ||
-    "the governing law region selected by the Licensor in settings";
+    "the jurisdiction of the Licensor's principal place of business";
   const resolvedDisputeForum =
     options.licensor.disputeForum?.trim() ||
-    "the dispute forum selected by the Licensor in settings";
+    `the courts located in ${resolvedGoverningLawRegion}`;
   const stemsIncludedInOrder = options.context.stemsIncludedInOrder;
   const resolvedProducerAliases =
     options.context.producerAliases?.trim() ||

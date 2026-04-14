@@ -42,7 +42,7 @@ export type NormalizedTemplateFields = NormalizedTemplateLimitFields & {
 const OFFER_ARCHETYPE_CONFIG: Record<OfferArchetype, OfferArchetypeConfig> = {
   basic: {
     value: "basic",
-    label: "Basic",
+    label: "Starter",
     legalTemplateFamily: "basic",
     fileFormats: "MP3",
     stemsPolicy: "available_as_addon",
@@ -53,7 +53,7 @@ const OFFER_ARCHETYPE_CONFIG: Record<OfferArchetype, OfferArchetypeConfig> = {
   },
   premium: {
     value: "premium",
-    label: "Premium",
+    label: "Expanded",
     legalTemplateFamily: "premium",
     fileFormats: "MP3, WAV",
     stemsPolicy: "available_as_addon",

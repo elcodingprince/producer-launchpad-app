@@ -11,6 +11,7 @@ import {
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 export const links: LinksFunction = () => [
+  { rel: "preload", href: polarisStyles, as: "style" },
   { rel: "stylesheet", href: polarisStyles },
 ];
 
@@ -27,9 +28,12 @@ export default function App() {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <meta name="shopify-api-key" content={apiKey} />
-        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
         <Meta />
         <Links />
+        <script
+          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+          defer
+        />
       </head>
       <body>
         <Outlet />

@@ -27,7 +27,6 @@ import {
   TextField,
 } from "@shopify/polaris";
 import {
-  CheckCircleIcon,
   CollectionIcon,
   ColorIcon,
   PlusIcon,
@@ -206,6 +205,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       publishedBeatCount: number;
       draftBeatCount: number;
       deliveriesNeedingAttention: number;
+      totalDeliveries: number;
       emailTrackingEnabled: boolean;
       recentDeliveries: RecentDeliveryOverview[];
     } | null = null;
@@ -217,6 +217,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         draftBeatCount,
         deliveriesNeedingAttention,
         recentDeliveries,
+        totalDeliveries,
       ] = await Promise.all([
         productService.getLicenseMetaobjects().catch(() => []),
         getPublishedBeatCount(admin).catch(() => 0),
@@ -253,6 +254,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             },
           },
         }),
+        prisma.deliveryAccess
+          .count({ where: { shop: session.shop } })
+          .catch(() => 0),
       ]);
 
       overview = {
@@ -260,10 +264,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         licenseNames: licenses
           .map((license) => license.licenseName)
           .filter(Boolean)
-          .slice(0, 3),
+          .slice(0, 5),
         publishedBeatCount,
         draftBeatCount,
         deliveriesNeedingAttention,
+        totalDeliveries,
         emailTrackingEnabled: isResendWebhookTrackingEnabled(),
         recentDeliveries: recentDeliveries.map(
           (delivery: {
@@ -758,6 +763,7 @@ export default function Dashboard() {
   }
 
   const deliveriesNeedingAttention = overview?.deliveriesNeedingAttention || 0;
+  const totalDeliveries = overview?.totalDeliveries || 0;
   const publishedBeatCount = overview?.publishedBeatCount || 0;
   const draftBeatCount = overview?.draftBeatCount || 0;
   const recentDeliveries = overview?.recentDeliveries || [];
@@ -766,59 +772,9 @@ export default function Dashboard() {
   const isTrueInitialState = publishedBeatCount === 0 && draftBeatCount === 0;
   const hasDraftsOnly = publishedBeatCount === 0 && draftBeatCount > 0;
 
-  const statusBanner: {
-    title: string;
-    tone: "success" | "info" | "warning";
-    message: string;
-    actionLabel?: string;
-    actionUrl?: string;
-  } =
-    readiness.hasStorageIssue && storageConfig?.lastError
-      ? {
-          title: "Storage needs attention",
-          tone: "warning",
-          message:
-            "Uploads and post-purchase delivery may fail until storage is fixed.",
-          actionLabel: "Open settings",
-          actionUrl: "/app/settings",
-        }
-      : deliveriesNeedingAttention > 0
-        ? {
-            title: "A delivery email couldn't be sent",
-            tone: "warning",
-            message:
-              deliveriesNeedingAttention === 1
-                ? "1 customer hasn't received their download email yet. You can try resending it, or contact support if it keeps failing."
-                : `${deliveriesNeedingAttention} customers haven't received their download emails yet. You can try resending them, or contact support if they keep failing.`,
-            actionLabel: "Review in deliveries",
-            actionUrl: "/app/deliveries",
-          }
-        : isTrueInitialState
-          ? {
-              title: "Upload your first beat",
-              tone: "info",
-              message:
-                "Your licenses and delivery system are ready. Add a beat to start selling and delivering files automatically.",
-            }
-          : hasDraftsOnly
-            ? {
-                title: "Finish your first beat",
-                tone: "info",
-                message: `You have ${draftBeatCount} draft${
-                  draftBeatCount === 1 ? "" : "s"
-                } saved in Producer Launchpad. Publish one to start accepting orders.`,
-              }
-            : {
-                title: "System status: Healthy",
-                tone: "success",
-                message:
-                  "Licenses, storage, and delivery are ready for new orders.",
-              };
-
   return (
     <Page
       title="Home"
-      subtitle="See what needs attention, publish beats, and monitor recent deliveries."
       primaryAction={{
         content: isTrueInitialState ? "Upload first beat" : "Upload beat",
         icon: PlusIcon,
@@ -826,61 +782,156 @@ export default function Dashboard() {
       }}
     >
       <Layout>
-        <Layout.Section>
-          <Banner
-            title={statusBanner.title}
-            tone={statusBanner.tone}
-            action={
-              statusBanner.actionLabel && statusBanner.actionUrl
-                ? {
-                    content: statusBanner.actionLabel,
-                    url: statusBanner.actionUrl,
-                  }
-                : undefined
-            }
-          >
-            <p>{statusBanner.message}</p>
-          </Banner>
-        </Layout.Section>
-
-        {publishedBeatCount === 0 && (
+        {readiness.hasStorageIssue && storageConfig?.lastError && (
           <Layout.Section>
-            <Card>
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center">
+            <Banner
+              title="Storage needs attention"
+              tone="warning"
+              action={{
+                content: "Open settings",
+                url: "/app/settings",
+              }}
+            >
+              <p>
+                Uploads and delivery may fail until storage is fixed.
+              </p>
+            </Banner>
+          </Layout.Section>
+        )}
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              {deliveriesNeedingAttention > 0 ? (
+                <>
                   <BlockStack gap="100">
-                    <Text as="h2" variant="headingMd">
-                      {hasDraftsOnly
-                        ? "Finish your first beat"
-                        : "Your catalog is empty"}
+                    <Text as="h2" variant="headingLg">
+                      {deliveriesNeedingAttention === 1
+                        ? "1 delivery needs attention"
+                        : `${deliveriesNeedingAttention} deliveries need attention`}
                     </Text>
                     <Text as="p" tone="subdued">
-                      {hasDraftsOnly
-                        ? "Complete a saved draft or upload a new beat to make your storefront sellable."
-                        : "Setup is complete. Upload your first beat to create the first licensable product in your catalog."}
+                      {deliveriesNeedingAttention === 1
+                        ? "A customer hasn't received their download email. You can resend it or check the details."
+                        : "Some customers haven't received their download emails. Review and resend where needed."}
                     </Text>
                   </BlockStack>
-                  {hasDraftsOnly ? (
+                  <InlineStack gap="300">
+                    <Button variant="primary" url="/app/deliveries">
+                      Review deliveries
+                    </Button>
+                  </InlineStack>
+                </>
+              ) : isTrueInitialState ? (
+                <>
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingLg">
+                      Upload your first beat
+                    </Text>
+                    <Text as="p" tone="subdued">
+                      Your licenses and delivery system are ready. Add a beat to
+                      create your first licensable product.
+                    </Text>
+                  </BlockStack>
+                  <Button url="/app/licenses">Manage licenses</Button>
+                </>
+              ) : hasDraftsOnly ? (
+                <>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingLg">
+                        Finish your first beat
+                      </Text>
+                      <Text as="p" tone="subdued">
+                        Complete a saved draft or upload a new beat to start
+                        selling.
+                      </Text>
+                    </BlockStack>
                     <Badge tone="attention">
                       {`${draftBeatCount} draft${draftBeatCount === 1 ? "" : "s"}`}
                     </Badge>
-                  ) : null}
-                </InlineStack>
+                  </InlineStack>
+                  <Button variant="primary" url="/app/beats?status=draft">
+                    Review drafts
+                  </Button>
+                </>
+              ) : draftBeatCount > 0 ? (
+                <>
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingLg">
+                      {`${draftBeatCount} draft${draftBeatCount === 1 ? "" : "s"} ready for review`}
+                    </Text>
+                    <Text as="p" tone="subdued">
+                      Pick up where you left off or publish something new.
+                    </Text>
+                  </BlockStack>
+                  <Button variant="primary" url="/app/beats?status=draft">
+                    Review drafts
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingLg">
+                      Ready for your next release?
+                    </Text>
+                    <Text as="p" tone="subdued">
+                      Upload a beat, choose the license setup, and publish when
+                      you're ready.
+                    </Text>
+                  </BlockStack>
+                  <Button url="/app/licenses">Manage licenses</Button>
+                </>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
 
-                <InlineStack gap="300">
-                  {hasDraftsOnly ? (
-                    <Button variant="primary" url="/app/beats?status=draft">
-                      Review drafts
-                    </Button>
-                  ) : (
-                    <Button variant="primary" url="/app/beats/new">
-                      Upload your first beat
-                    </Button>
-                  )}
-                  <Button url="/app/licenses">Review licenses</Button>
-                </InlineStack>
-              </BlockStack>
-            </Card>
+        {!isTrueInitialState && (
+          <Layout.Section>
+            <InlineGrid columns={{ xs: 1, md: 3 }} gap="400">
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="p" variant="headingXl">
+                    {publishedBeatCount}
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    Published beats
+                  </Text>
+                  <Button variant="plain" url="/app/beats">
+                    View catalog
+                  </Button>
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="p" variant="headingXl">
+                    {overview?.licenseCount || 0}
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    Active licenses
+                  </Text>
+                  <Button variant="plain" url="/app/licenses">
+                    Manage
+                  </Button>
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="p" variant="headingXl">
+                    {totalDeliveries}
+                  </Text>
+                  <Text as="p" tone="subdued">
+                    Total deliveries
+                  </Text>
+                  <Button variant="plain" url="/app/deliveries">
+                    View all
+                  </Button>
+                </BlockStack>
+              </Card>
+            </InlineGrid>
           </Layout.Section>
         )}
 
@@ -892,33 +943,36 @@ export default function Dashboard() {
                   <Text as="h2" variant="headingMd">
                     Recent deliveries
                   </Text>
-                  {recentDeliveries.length > 0 ? (
-                    <Button icon={CheckCircleIcon} url="/app/deliveries">
+                  {recentDeliveries.length > 0 && (
+                    <Button variant="plain" url="/app/deliveries">
                       View all
                     </Button>
-                  ) : null}
+                  )}
                 </InlineStack>
 
                 {recentDeliveries.length > 0 ? (
                   <BlockStack gap="0">
                     {recentDeliveries.map((delivery, index) => {
-                      const displayedDeliveryEmailStatus =
-                        getDisplayedDeliveryEmailStatus(
-                          delivery.deliveryEmailStatus,
-                          delivery.deliveryEmailConfirmedStatus,
-                          emailTrackingEnabled,
-                        );
+                      const displayedStatus = getDisplayedDeliveryEmailStatus(
+                        delivery.deliveryEmailStatus,
+                        delivery.deliveryEmailConfirmedStatus,
+                        emailTrackingEnabled,
+                      );
 
                       return (
                         <Box
                           key={delivery.id}
                           paddingBlockStart={index === 0 ? "0" : "300"}
                           paddingBlockEnd={
-                            index === recentDeliveries.length - 1 ? "0" : "300"
+                            index === recentDeliveries.length - 1
+                              ? "0"
+                              : "300"
                           }
                           borderColor="border"
                           borderBlockEndWidth={
-                            index === recentDeliveries.length - 1 ? "0" : "025"
+                            index === recentDeliveries.length - 1
+                              ? "0"
+                              : "025"
                           }
                         >
                           <InlineStack
@@ -935,7 +989,7 @@ export default function Dashboard() {
                                 Order #{delivery.orderNumber}
                               </Text>
                               <Text as="p" tone="subdued">
-                                {delivery.customerEmail || "No customer email"}
+                                {delivery.customerEmail || "No email"}
                               </Text>
                               <Text as="p" tone="subdued">
                                 {delivery.itemSummary}
@@ -948,12 +1002,10 @@ export default function Dashboard() {
                               </Text>
                               <Badge
                                 tone={getDeliveryEmailBadgeTone(
-                                  displayedDeliveryEmailStatus,
+                                  displayedStatus,
                                 )}
                               >
-                                {getDeliveryEmailBadgeLabel(
-                                  displayedDeliveryEmailStatus,
-                                )}
+                                {getDeliveryEmailBadgeLabel(displayedStatus)}
                               </Badge>
                             </BlockStack>
                           </InlineStack>
@@ -962,16 +1014,9 @@ export default function Dashboard() {
                     })}
                   </BlockStack>
                 ) : (
-                  <BlockStack gap="200">
-                    <Text as="p" variant="headingSm">
-                      No orders yet
-                    </Text>
-                    <Text as="p" tone="subdued">
-                      {publishedBeatCount === 0
-                        ? "Recent deliveries will appear here after you publish your first beat and make a sale."
-                        : "Recent deliveries will appear here after the first customer purchase."}
-                    </Text>
-                  </BlockStack>
+                  <Text as="p" tone="subdued">
+                    Deliveries will appear here after your first sale.
+                  </Text>
                 )}
               </BlockStack>
             </Card>
@@ -981,10 +1026,6 @@ export default function Dashboard() {
                 <Text as="h2" variant="headingMd">
                   License templates
                 </Text>
-                <Text as="p" tone="subdued">
-                  Used for storefront offers, variant mapping, and agreement
-                  generation.
-                </Text>
                 {licenseNames.length > 0 ? (
                   <List>
                     {licenseNames.map((licenseName) => (
@@ -993,11 +1034,10 @@ export default function Dashboard() {
                   </List>
                 ) : (
                   <Text as="p" tone="subdued">
-                    License templates will appear here after setup runs
-                    successfully.
+                    License templates will appear after setup.
                   </Text>
                 )}
-                <Button icon={CollectionIcon} url="/app/licenses">
+                <Button variant="plain" url="/app/licenses">
                   Manage licenses
                 </Button>
               </BlockStack>
