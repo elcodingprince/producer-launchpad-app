@@ -529,6 +529,12 @@ async function getDraftBeats(shop: string): Promise<BeatListItem[]> {
   const drafts = await prisma.beatDraft.findMany({
     where: { shop },
     orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      title: true,
+      coverArtFileJson: true,
+      updatedAt: true,
+    },
   });
 
   return drafts.map((draft: (typeof drafts)[number]) => ({
@@ -766,20 +772,20 @@ export default function BeatsList() {
   const sortOptions = useMemo<IndexFiltersProps["sortOptions"]>(
     () => [
       {
-        label: "Newest first",
-        value: "updatedAt desc",
-        directionLabel: "Newest first",
-      },
-      {
-        label: "Oldest first",
+        label: "Updated",
         value: "updatedAt asc",
         directionLabel: "Oldest first",
       },
-      { label: "Title (A-Z)", value: "title asc", directionLabel: "Ascending" },
       {
-        label: "Title (Z-A)",
+        label: "Updated",
+        value: "updatedAt desc",
+        directionLabel: "Newest first",
+      },
+      { label: "Title", value: "title asc", directionLabel: "A-Z" },
+      {
+        label: "Title",
         value: "title desc",
-        directionLabel: "Descending",
+        directionLabel: "Z-A",
       },
     ],
     [],

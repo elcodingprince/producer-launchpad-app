@@ -32,6 +32,7 @@ interface SelectableListModalProps {
   items: SelectableListItem[];
   selectedIds: string[];
   hasUnsavedChanges?: boolean;
+  closeGuardBehavior?: "all" | "outside-only";
   primaryActionLabel: string;
   primaryActionLoading?: boolean;
   primaryActionDisabled?: boolean;
@@ -57,6 +58,7 @@ export function SelectableListModal({
   items,
   selectedIds,
   hasUnsavedChanges = false,
+  closeGuardBehavior = "all",
   primaryActionLabel,
   primaryActionLoading = false,
   primaryActionDisabled = false,
@@ -72,6 +74,7 @@ export function SelectableListModal({
   children,
 }: SelectableListModalProps) {
   const modalContentRef = useRef<HTMLDivElement | null>(null);
+  const lastPointerDownLocationRef = useRef<"inside" | "outside" | null>(null);
   const [selectionActionsOpen, setSelectionActionsOpen] = useState(false);
   const [blockedCloseAttemptCount, setBlockedCloseAttemptCount] = useState(0);
   const selectedCount = selectedIds.length;
@@ -106,19 +109,52 @@ export function SelectableListModal({
   }, [allVisibleSelected, onClearAllSelected, onSelectAllVisible]);
 
   const handleRequestClose = useCallback(() => {
-    if (hasUnsavedChanges) {
+    const shouldBlockClose =
+      hasUnsavedChanges &&
+      (closeGuardBehavior === "all" ||
+        lastPointerDownLocationRef.current === "outside");
+
+    lastPointerDownLocationRef.current = null;
+
+    if (shouldBlockClose) {
       setBlockedCloseAttemptCount((count) => count + 1);
       return;
     }
 
     onClose();
-  }, [hasUnsavedChanges, onClose]);
+  }, [closeGuardBehavior, hasUnsavedChanges, onClose]);
 
   useEffect(() => {
     if (!open || !hasUnsavedChanges) {
       setBlockedCloseAttemptCount(0);
     }
   }, [hasUnsavedChanges, open]);
+
+  useEffect(() => {
+    if (!open) {
+      lastPointerDownLocationRef.current = null;
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const dialog = modalContentRef.current?.closest('[role="dialog"]');
+      if (!(dialog instanceof HTMLElement)) {
+        lastPointerDownLocationRef.current = null;
+        return;
+      }
+
+      const target = event.target;
+      lastPointerDownLocationRef.current =
+        target instanceof Node && dialog.contains(target) ? "inside" : "outside";
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      lastPointerDownLocationRef.current = null;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (blockedCloseAttemptCount === 0) return;
@@ -190,7 +226,7 @@ export function SelectableListModal({
       secondaryActions={[
         {
           content: "Cancel",
-          onAction: onClose,
+          onAction: handleRequestClose,
           disabled: primaryActionLoading,
         },
       ]}
@@ -288,7 +324,12 @@ export function SelectableListModal({
                       )
                     }
                   >
-                    <ActionList items={selectionActionItems} />
+                    <div
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <ActionList items={selectionActionItems} />
+                    </div>
                   </Popover>
                 </InlineStack>
 

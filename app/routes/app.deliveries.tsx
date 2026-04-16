@@ -455,7 +455,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   try {
-    const emailItems = deliveryAccess.order.items.map((item) => {
+    const emailItems = deliveryAccess.order.items.map(
+      (item: (typeof deliveryAccess.order.items)[number]) => {
       const resolvedLicense = parseExecutedAgreementLicense(
         item.executedAgreement?.resolvedLicenseJson,
       );
@@ -474,7 +475,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         licenseName: getHistoricalLicenseName(item),
         deliveryFormats,
       };
-    });
+      },
+    );
 
     const emailResult = await sendDeliveryEmail({
       to: deliveryAccess.customerEmail,
@@ -483,7 +485,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       customerName: deliveryAccess.customerName,
       orderNumber: deliveryAccess.order.orderNumber,
       itemSummary: deliveryAccess.order.items
-        .map((item) => `${item.beatTitle} - ${getHistoricalLicenseName(item)}`)
+        .map(
+          (item: (typeof deliveryAccess.order.items)[number]) =>
+            `${item.beatTitle} - ${getHistoricalLicenseName(item)}`,
+        )
         .join(", "),
       items: emailItems,
     });
@@ -578,34 +583,34 @@ export default function DeliveriesPage() {
   const sortOptions = useMemo<IndexFiltersProps["sortOptions"]>(
     () => [
       {
-        label: "Newest first",
-        value: "createdAt desc",
-        directionLabel: "Newest first",
-      },
-      {
-        label: "Oldest first",
+        label: "Created",
         value: "createdAt asc",
         directionLabel: "Oldest first",
       },
       {
-        label: "Order number (A-Z)",
+        label: "Created",
+        value: "createdAt desc",
+        directionLabel: "Newest first",
+      },
+      {
+        label: "Order number",
         value: "orderNumber asc",
-        directionLabel: "Ascending",
+        directionLabel: "A-Z",
       },
       {
-        label: "Order number (Z-A)",
+        label: "Order number",
         value: "orderNumber desc",
-        directionLabel: "Descending",
+        directionLabel: "Z-A",
       },
       {
-        label: "Customer email (A-Z)",
+        label: "Customer email",
         value: "customerEmail asc",
-        directionLabel: "Ascending",
+        directionLabel: "A-Z",
       },
       {
-        label: "Customer email (Z-A)",
+        label: "Customer email",
         value: "customerEmail desc",
-        directionLabel: "Descending",
+        directionLabel: "Z-A",
       },
     ],
     [],

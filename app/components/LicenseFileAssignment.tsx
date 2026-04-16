@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import {
+  Badge,
   Card,
   Button,
   Checkbox,
@@ -71,6 +72,13 @@ export interface StemsAddonSelections {
 
 export interface LicenseFileAssignmentProps {
   licenses: LicenseTier[];
+  selectedBundleNames?: string[];
+  bundleWarnings?: string[];
+  selectedIndividualLicenseNames?: string[];
+  selectedLicenseNames?: string[];
+  onChooseOffers?: () => void;
+  onUseLastUsedOffers?: () => void;
+  hasLastUsedOfferSelection?: boolean;
   uploadedFiles?: UploadedFile[];
   licenseFiles?: LicenseFiles;
   licensePrices?: Record<string, string>;
@@ -132,6 +140,13 @@ const getTierMeta = (tier: LicenseTier) => {
 
 export function LicenseFileAssignment({
   licenses,
+  selectedBundleNames = [],
+  bundleWarnings = [],
+  selectedIndividualLicenseNames = [],
+  selectedLicenseNames = [],
+  onChooseOffers,
+  onUseLastUsedOffers,
+  hasLastUsedOfferSelection = false,
   uploadedFiles: externalFiles,
   licenseFiles: externalLicenseFiles,
   licensePrices: externalLicensePrices,
@@ -148,10 +163,10 @@ export function LicenseFileAssignment({
 
   const [internalFiles, setInternalFiles] = useState<UploadedFile[]>([]);
   const [internalLicenseFiles, setInternalLicenseFiles] =
-    useState<LicenseFiles>({ basic: [], premium: [], unlimited: [] });
+    useState<LicenseFiles>({});
   const [internalLicensePrices, setInternalLicensePrices] = useState<
     Record<string, string>
-  >({ basic: "29.99", premium: "49.99", unlimited: "99.99" });
+  >({});
   const [internalStemsAddonSelections, setInternalStemsAddonSelections] =
     useState<StemsAddonSelections>({});
   const [internalPreviewFile, setInternalPreviewFile] =
@@ -187,7 +202,7 @@ export function LicenseFileAssignment({
         }
       }
 
-      const nextLicenseFiles: LicenseFiles = {};
+      const nextLicenseFiles: LicenseFiles = { ...licenseFiles };
 
       licenses.forEach((tier) => {
         const requiredFormats = getTierMeta(tier).recommendedFiles;
@@ -198,7 +213,7 @@ export function LicenseFileAssignment({
 
       return nextLicenseFiles;
     },
-    [licenses],
+    [licenseFiles, licenses],
   );
 
   const updateState = useCallback(
@@ -869,213 +884,307 @@ export function LicenseFileAssignment({
           borderBlockEndWidth="025"
           borderColor="border"
         >
-          <BlockStack gap="100">
-            <Text variant="headingMd" as="h2">
-              License offers
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Set the price for each offer and review what the buyer will
-              receive.
-            </Text>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="start">
+              <BlockStack gap="100">
+                <Text variant="headingMd" as="h2">
+                  License offers
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Set the price for each offer and review what the buyer will
+                  receive.
+                </Text>
+              </BlockStack>
+
+              <InlineStack gap="200">
+                {licenses.length === 0 &&
+                hasLastUsedOfferSelection &&
+                onUseLastUsedOffers ? (
+                  <Button onClick={onUseLastUsedOffers}>Use last used</Button>
+                ) : null}
+                {onChooseOffers ? (
+                  <Button
+                    variant={licenses.length > 0 ? "secondary" : "primary"}
+                    onClick={onChooseOffers}
+                  >
+                    {licenses.length > 0 ? "Edit offers" : "Choose offers"}
+                  </Button>
+                ) : null}
+              </InlineStack>
+            </InlineStack>
+
+            <InlineStack gap="200" blockAlign="center">
+              <Badge tone={licenses.length > 0 ? "success" : "attention"}>
+                {`${licenses.length} selected`}
+              </Badge>
+              {licenses.length === 0 ? (
+                <Text as="span" variant="bodySm" tone="subdued">
+                  Choose bundles or individual licenses for this beat.
+                </Text>
+              ) : null}
+            </InlineStack>
+
+            {selectedBundleNames.length > 0 ? (
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm" fontWeight="medium">
+                  Bundles
+                </Text>
+                <InlineStack gap="150" wrap>
+                  {selectedBundleNames.map((bundleName) => (
+                    <Badge key={bundleName}>{bundleName}</Badge>
+                  ))}
+                </InlineStack>
+              </BlockStack>
+            ) : null}
+
+            {bundleWarnings.length > 0 ? (
+              <BlockStack gap="100">
+                {bundleWarnings.map((warning) => (
+                  <Text key={warning} as="p" variant="bodySm" tone="critical">
+                    {warning}
+                  </Text>
+                ))}
+              </BlockStack>
+            ) : null}
+
+            {selectedIndividualLicenseNames.length > 0 ? (
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm" fontWeight="medium">
+                  Individual licenses
+                </Text>
+                <InlineStack gap="150" wrap>
+                  {selectedIndividualLicenseNames.map((licenseName) => (
+                    <Badge key={licenseName}>{licenseName}</Badge>
+                  ))}
+                </InlineStack>
+              </BlockStack>
+            ) : null}
+
+            {selectedLicenseNames.length > 0 ? (
+              <BlockStack gap="100">
+                <Text as="p" variant="bodySm" fontWeight="medium">
+                  Final offers for this beat
+                </Text>
+                <InlineStack gap="150" wrap>
+                  {selectedLicenseNames.map((licenseName) => (
+                    <Badge key={licenseName}>{licenseName}</Badge>
+                  ))}
+                </InlineStack>
+              </BlockStack>
+            ) : null}
           </BlockStack>
         </Box>
 
         <Box padding="0">
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                textAlign: "left",
-              }}
-            >
-              <thead>
-                <tr
-                  style={{
-                    backgroundColor: "var(--p-color-bg-surface-secondary)",
-                    borderBottom: "1px solid var(--p-color-border)",
-                  }}
-                >
-                  <th
+          {licenses.length === 0 ? (
+            <Box padding="400">
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  No license offers selected yet.
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Choose offers to set pricing and review the delivery package
+                  for this beat.
+                </Text>
+              </BlockStack>
+            </Box>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table
+                style={{
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  textAlign: "left",
+                }}
+              >
+                <thead>
+                  <tr
                     style={{
-                      padding: "8px 16px",
-                      fontWeight: 500,
-                      fontSize: "13px",
-                      color: "var(--p-color-text-subdued)",
-                      width: "25%",
+                      backgroundColor: "var(--p-color-bg-surface-secondary)",
+                      borderBottom: "1px solid var(--p-color-border)",
                     }}
                   >
-                    License
-                  </th>
-                  <th
-                    style={{
-                      padding: "8px 16px",
-                      fontWeight: 500,
-                      fontSize: "13px",
-                      color: "var(--p-color-text-subdued)",
-                      width: "25%",
-                    }}
-                  >
-                    Price
-                  </th>
-                  <th
-                    style={{
-                      padding: "8px 16px",
-                      fontWeight: 500,
-                      fontSize: "13px",
-                      color: "var(--p-color-text-subdued)",
-                      width: "50%",
-                    }}
-                  >
-                    Delivered package
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {licenses.map((tier, index) => {
-                  const meta = getTierMeta(tier);
-                  const isNotLast = index < licenses.length - 1;
-                  const tierFiles = licenseFiles[tier.id] || [];
-                  const assignedFiles = tierFiles
-                    .map((fileId) => getFile(fileId))
-                    .filter(Boolean) as UploadedFile[];
-                  const missingFiles = meta.recommendedFiles.filter(
-                    (format) =>
-                      !assignedFiles.some((file) => file.purpose === format),
-                  );
-
-                  return (
-                    <tr
-                      key={tier.id}
+                    <th
                       style={{
-                        borderBottom: isNotLast
-                          ? "1px solid var(--p-color-border)"
-                          : "none",
+                        padding: "8px 16px",
+                        fontWeight: 500,
+                        fontSize: "13px",
+                        color: "var(--p-color-text-subdued)",
+                        width: "25%",
                       }}
                     >
-                      <td
-                        style={{ padding: "12px 16px", verticalAlign: "top" }}
+                      License
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 16px",
+                        fontWeight: 500,
+                        fontSize: "13px",
+                        color: "var(--p-color-text-subdued)",
+                        width: "25%",
+                      }}
+                    >
+                      Price
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 16px",
+                        fontWeight: 500,
+                        fontSize: "13px",
+                        color: "var(--p-color-text-subdued)",
+                        width: "50%",
+                      }}
+                    >
+                      Delivered package
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {licenses.map((tier, index) => {
+                    const meta = getTierMeta(tier);
+                    const isNotLast = index < licenses.length - 1;
+                    const tierFiles = licenseFiles[tier.id] || [];
+                    const assignedFiles = tierFiles
+                      .map((fileId) => getFile(fileId))
+                      .filter(Boolean) as UploadedFile[];
+                    const missingFiles = meta.recommendedFiles.filter(
+                      (format) =>
+                        !assignedFiles.some((file) => file.purpose === format),
+                    );
+
+                    return (
+                      <tr
+                        key={tier.id}
+                        style={{
+                          borderBottom: isNotLast
+                            ? "1px solid var(--p-color-border)"
+                            : "none",
+                        }}
                       >
-                        <InlineStack gap="300" blockAlign="center" wrap={false}>
-                          <div>
-                            <Box
-                              background="bg-surface"
-                              borderWidth="025"
-                              borderColor="border"
-                              borderRadius="200"
-                              padding="100"
-                            >
-                              <Icon source={meta.icon} tone={meta.tint} />
-                            </Box>
-                          </div>
-                          <Text variant="bodyMd" as="span" fontWeight="medium">
-                            {tier.name}
-                          </Text>
-                        </InlineStack>
-                      </td>
-                      <td
-                        style={{ padding: "12px 16px", verticalAlign: "top" }}
-                      >
-                        <div style={{ maxWidth: "140px" }}>
-                          <TextField
-                            label="Price"
-                            labelHidden
-                            autoComplete="off"
-                            prefix="$"
-                            value={licensePrices[tier.id] || ""}
-                            onChange={(val) => {
-                              const updated = {
-                                ...licensePrices,
-                                [tier.id]: val,
-                              };
-                              updateState(
-                                uploadedFiles,
-                                previewFile,
-                                coverArtFile,
-                                updated,
-                                stemsAddonSelections,
-                              );
-                            }}
-                          />
-                        </div>
-                      </td>
-                      <td
-                        style={{ padding: "12px 16px", verticalAlign: "top" }}
-                      >
-                        <Box
-                          padding="200"
-                          borderWidth="025"
-                          borderColor="border"
-                          borderRadius="200"
-                          background={
-                            uploadedFiles.length === 0
-                              ? "bg-surface-disabled"
-                              : "bg-surface"
-                          }
+                        <td
+                          style={{ padding: "12px 16px", verticalAlign: "top" }}
                         >
-                          <BlockStack gap="200">
-                            {assignedFiles.length > 0 ? (
-                              <InlineStack gap="200" wrap>
-                                {assignedFiles.map((file) => (
-                                  <FileFormatBadge
-                                    key={file.id}
-                                    format={file.purpose || file.type}
-                                  />
-                                ))}
-                              </InlineStack>
-                            ) : null}
-
-                            <Text
-                              as="span"
-                              variant="bodySm"
-                              tone={
-                                uploadedFiles.length === 0
-                                  ? "disabled"
-                                  : "subdued"
-                              }
-                            >
-                              {packageStatusMessage(
-                                missingFiles,
-                                assignedFiles.length > 0,
-                                tier,
-                              )}
+                          <InlineStack gap="300" blockAlign="center" wrap={false}>
+                            <div>
+                              <Box
+                                background="bg-surface"
+                                borderWidth="025"
+                                borderColor="border"
+                                borderRadius="200"
+                                padding="100"
+                              >
+                                <Icon source={meta.icon} tone={meta.tint} />
+                              </Box>
+                            </div>
+                            <Text variant="bodyMd" as="span" fontWeight="medium">
+                              {tier.name}
                             </Text>
+                          </InlineStack>
+                        </td>
+                        <td
+                          style={{ padding: "12px 16px", verticalAlign: "top" }}
+                        >
+                          <div style={{ maxWidth: "140px" }}>
+                            <TextField
+                              label="Price"
+                              labelHidden
+                              autoComplete="off"
+                              prefix="$"
+                              value={licensePrices[tier.id] || ""}
+                              onChange={(val) => {
+                                const updated = {
+                                  ...licensePrices,
+                                  [tier.id]: val,
+                                };
+                                updateState(
+                                  uploadedFiles,
+                                  previewFile,
+                                  coverArtFile,
+                                  updated,
+                                  stemsAddonSelections,
+                                );
+                              }}
+                            />
+                          </div>
+                        </td>
+                        <td
+                          style={{ padding: "12px 16px", verticalAlign: "top" }}
+                        >
+                          <Box
+                            padding="200"
+                            borderWidth="025"
+                            borderColor="border"
+                            borderRadius="200"
+                            background={
+                              uploadedFiles.length === 0
+                                ? "bg-surface-disabled"
+                                : "bg-surface"
+                            }
+                          >
+                            <BlockStack gap="200">
+                              {assignedFiles.length > 0 ? (
+                                <InlineStack gap="200" wrap>
+                                  {assignedFiles.map((file) => (
+                                    <FileFormatBadge
+                                      key={file.id}
+                                      format={file.purpose || file.type}
+                                    />
+                                  ))}
+                                </InlineStack>
+                              ) : null}
 
-                            {tier.templateStemsPolicy ===
-                              "available_as_addon" && (
-                              <Checkbox
-                                label="Offer stems add-on for this beat"
-                                checked={Boolean(stemsAddonSelections[tier.id])}
-                                onChange={(checked) => {
-                                  const nextSelections = {
-                                    ...stemsAddonSelections,
-                                    [tier.id]: checked,
-                                  };
-                                  updateState(
-                                    uploadedFiles,
-                                    previewFile,
-                                    coverArtFile,
-                                    licensePrices,
-                                    nextSelections,
-                                  );
-                                }}
-                              />
-                            )}
-
-                            {stemsIncludedByDefault(tier.stemsPolicy) && (
-                              <Text as="span" variant="bodyXs" tone="subdued">
-                                Stems included — upload a stems ZIP.
+                              <Text
+                                as="span"
+                                variant="bodySm"
+                                tone={
+                                  uploadedFiles.length === 0
+                                    ? "disabled"
+                                    : "subdued"
+                                }
+                              >
+                                {packageStatusMessage(
+                                  missingFiles,
+                                  assignedFiles.length > 0,
+                                  tier,
+                                )}
                               </Text>
-                            )}
-                          </BlockStack>
-                        </Box>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+
+                              {tier.templateStemsPolicy ===
+                                "available_as_addon" && (
+                                <Checkbox
+                                  label="Offer stems add-on for this beat"
+                                  checked={Boolean(stemsAddonSelections[tier.id])}
+                                  onChange={(checked) => {
+                                    const nextSelections = {
+                                      ...stemsAddonSelections,
+                                      [tier.id]: checked,
+                                    };
+                                    updateState(
+                                      uploadedFiles,
+                                      previewFile,
+                                      coverArtFile,
+                                      licensePrices,
+                                      nextSelections,
+                                    );
+                                  }}
+                                />
+                              )}
+
+                              {stemsIncludedByDefault(tier.stemsPolicy) && (
+                                <Text as="span" variant="bodyXs" tone="subdued">
+                                  Stems included — upload a stems ZIP.
+                                </Text>
+                              )}
+                            </BlockStack>
+                          </Box>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Box>
       </Card>
     </BlockStack>

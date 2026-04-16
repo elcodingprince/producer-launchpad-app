@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import {
@@ -10,13 +10,20 @@ import {
   Banner,
   Card,
   BlockStack,
+  Button,
+  Box,
+  Checkbox,
   TextField,
   Select,
   Text,
+  Icon,
   FormLayout,
   Badge,
   InlineStack,
+  Modal,
+  Scrollable,
 } from "@shopify/polaris";
+import { AlertCircleIcon } from "@shopify/polaris-icons";
 import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { AcknowledgmentModal } from "~/components/AcknowledgmentModal";
 import { createProductCreatorService } from "../services/productCreator";
@@ -52,6 +59,58 @@ import {
   type StemsAddonSelections,
 } from "../components/LicenseFileAssignment";
 import { MultiSelectCombobox } from "../components/MultiSelectCombobox";
+
+type UploadLicense = {
+  id: string;
+  handle: string;
+  offerArchetype: string;
+  licenseName: string;
+  displayName: string;
+  legalTemplateFamily: string;
+  streamLimit: string;
+  copyLimit: string;
+  videoViewLimit: string;
+  termYears: string;
+  fileFormats: string;
+  stemsPolicy: string;
+  storefrontSummary: string;
+  featuresShort: string;
+  contentIdPolicy: string;
+  syncPolicy: string;
+  creditRequirement: string;
+  publishingSplitMode: string;
+  publishingSplitSummary: string;
+  terms: string[];
+  isStarter: boolean;
+};
+
+type UploadLicenseBundle = {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  isStarterBundle: boolean;
+  licenseMetaobjectIds: string[];
+  licenseHandles: string[];
+  resolvedLicenseMetaobjectIds: string[];
+  licenseNames: string[];
+  missingLicenseCount: number;
+  missingLicenseHandles: string[];
+  updatedAt: string;
+};
+
+type LicenseSelectionState = {
+  selectedBundleIds: string[];
+  selectedLicenseIds: string[];
+};
+
+const STARTER_BUNDLE_ID = "starter-preset-bundle";
+const STARTER_BUNDLE_NAME = "Starter Preset";
+const STARTER_LICENSE_HANDLES = [
+  "basic-license",
+  "premium-license",
+  "unlimited-license",
+] as const;
+const STARTER_LICENSE_HANDLE_SET = new Set<string>(STARTER_LICENSE_HANDLES);
 
 const keyOptions = [
   "C major",
@@ -172,6 +231,224 @@ function hasSharedStemsSourceFile(
   );
 }
 
+function arraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function dedupeIds(ids: string[]) {
+  return Array.from(new Set(ids.filter(Boolean)));
+}
+
+function orderLicensesByIds<T extends { id: string }>(
+  licenses: T[],
+  orderedIds: string[],
+): T[] {
+  const licensesById = new Map(licenses.map((license) => [license.id, license]));
+  return orderedIds
+    .map((id) => licensesById.get(id))
+    .filter((license): license is T => Boolean(license));
+}
+
+function buildStarterBundle(licenses: UploadLicense[]): UploadLicenseBundle {
+  const licensesByHandle = new Map(
+    licenses.map((license) => [license.handle, license]),
+  );
+  const starterLicenses = STARTER_LICENSE_HANDLES.map((handle) =>
+    licensesByHandle.get(handle),
+  ).filter((license): license is UploadLicense => Boolean(license));
+
+  return {
+    id: STARTER_BUNDLE_ID,
+    name: STARTER_BUNDLE_NAME,
+    isDefault: true,
+    isStarterBundle: true,
+    licenseMetaobjectIds: starterLicenses.map((license) => license.id),
+    licenseHandles: starterLicenses.map((license) => license.handle),
+    resolvedLicenseMetaobjectIds: starterLicenses.map((license) => license.id),
+    licenseNames: starterLicenses.map((license) => license.licenseName),
+    missingLicenseCount: 0,
+    missingLicenseHandles: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function buildDefaultSelectionState(): LicenseSelectionState {
+  return {
+    selectedBundleIds: [],
+    selectedLicenseIds: [],
+  };
+}
+
+function sanitizeLicenseSelectionState(
+  selectionState: LicenseSelectionState | null | undefined,
+  bundles: UploadLicenseBundle[],
+  licenses: UploadLicense[],
+): LicenseSelectionState {
+  const defaultState = buildDefaultSelectionState();
+  const availableBundleIds = new Set(bundles.map((bundle) => bundle.id));
+  const availableLicenseIds = new Set(licenses.map((license) => license.id));
+  const normalizedSelectedBundleIds = dedupeIds(
+    selectionState?.selectedBundleIds || [],
+  ).filter((id) => availableBundleIds.has(id));
+  const normalizedSelectedLicenseIds = dedupeIds(
+    selectionState?.selectedLicenseIds || [],
+  ).filter((id) => availableLicenseIds.has(id));
+
+  if (
+    normalizedSelectedBundleIds.length === 0 &&
+    normalizedSelectedLicenseIds.length === 0
+  ) {
+    return defaultState;
+  }
+
+  return {
+    selectedBundleIds: normalizedSelectedBundleIds,
+    selectedLicenseIds: normalizedSelectedLicenseIds,
+  };
+}
+
+async function persistLastUsedOfferSelection(
+  shop: string,
+  selectionState: LicenseSelectionState,
+) {
+  const delegate = (prisma as unknown as {
+    shopUploadPreference?: {
+      upsert: (args: {
+        where: { shop: string };
+        update: { lastUsedOfferSelectionJson: string };
+        create: { shop: string; lastUsedOfferSelectionJson: string };
+      }) => Promise<unknown>;
+    };
+  }).shopUploadPreference;
+
+  if (!delegate?.upsert) {
+    return;
+  }
+
+  try {
+    await delegate.upsert({
+      where: { shop },
+      update: {
+        lastUsedOfferSelectionJson: JSON.stringify({
+          selectedBundleIds: dedupeIds(selectionState.selectedBundleIds || []),
+          selectedLicenseIds: dedupeIds(selectionState.selectedLicenseIds || []),
+        } satisfies LicenseSelectionState),
+      },
+      create: {
+        shop,
+        lastUsedOfferSelectionJson: JSON.stringify({
+          selectedBundleIds: dedupeIds(selectionState.selectedBundleIds || []),
+          selectedLicenseIds: dedupeIds(selectionState.selectedLicenseIds || []),
+        } satisfies LicenseSelectionState),
+      },
+    });
+  } catch (error) {
+    if (!isSchemaMismatchError(error)) throw error;
+  }
+}
+
+function resolveSelectedLicenses(
+  selectionState: LicenseSelectionState,
+  bundles: UploadLicenseBundle[],
+  licenses: UploadLicense[],
+): UploadLicense[] {
+  const orderedIds: string[] = [];
+  const selectedBundleSet = new Set(selectionState.selectedBundleIds);
+  const licensesById = new Map(licenses.map((license) => [license.id, license]));
+  const licensesByHandle = new Map(
+    licenses.map((license) => [license.handle, license]),
+  );
+
+  bundles.forEach((bundle) => {
+    if (!selectedBundleSet.has(bundle.id)) return;
+    const resolvedBundleLicenseIds = bundle.resolvedLicenseMetaobjectIds
+      .map((licenseId) => licensesById.get(licenseId)?.id || null)
+      .filter((licenseId): licenseId is string => Boolean(licenseId));
+
+    if (resolvedBundleLicenseIds.length > 0) {
+      resolvedBundleLicenseIds.forEach((licenseId) => {
+        if (!orderedIds.includes(licenseId)) {
+          orderedIds.push(licenseId);
+        }
+      });
+      return;
+    }
+
+    bundle.licenseHandles
+      .map((licenseHandle) => licensesByHandle.get(licenseHandle)?.id || null)
+      .filter((licenseId): licenseId is string => Boolean(licenseId))
+      .forEach((licenseId) => {
+        if (!orderedIds.includes(licenseId)) {
+          orderedIds.push(licenseId);
+        }
+      });
+  });
+
+  licenses.forEach((license) => {
+    if (
+      selectionState.selectedLicenseIds.includes(license.id) &&
+      !orderedIds.includes(license.id)
+    ) {
+      orderedIds.push(license.id);
+    }
+  });
+
+  return orderLicensesByIds(licenses, orderedIds);
+}
+
+function resolveBundleItemLicense(
+  licenses: UploadLicense[],
+  item: { licenseMetaobjectId: string; licenseHandle: string },
+) {
+  return (
+    licenses.find((license) => license.id === item.licenseMetaobjectId) ||
+    licenses.find((license) => license.handle === item.licenseHandle) ||
+    null
+  );
+}
+
+function buildAutomaticLicenseAssignments(
+  licenses: UploadLicense[],
+  files: UploadedFile[],
+  existingAssignments: LicenseFiles,
+): LicenseFiles {
+  const latestByFormat = new Map<DeliveryFormat, string>();
+
+  files.forEach((file) => {
+    const normalizedFormat = normalizeDeliveryFormat(file.purpose || file.type);
+    if (normalizedFormat) {
+      latestByFormat.set(normalizedFormat, file.id);
+    }
+  });
+
+  const nextAssignments: LicenseFiles = { ...existingAssignments };
+
+  licenses.forEach((license) => {
+    nextAssignments[license.id] = getRequiredDeliveryFormats(license)
+      .map((format) => latestByFormat.get(format))
+      .filter((fileId): fileId is string => Boolean(fileId));
+  });
+
+  return nextAssignments;
+}
+
+function selectionStateEquals(
+  left: LicenseSelectionState,
+  right: LicenseSelectionState,
+) {
+  return (
+    arraysEqual(
+      [...left.selectedBundleIds].sort(),
+      [...right.selectedBundleIds].sort(),
+    ) &&
+    arraysEqual(
+      [...left.selectedLicenseIds].sort(),
+      [...right.selectedLicenseIds].sort(),
+    )
+  );
+}
+
 type UploadActionData = {
   success: boolean;
   intent?: string;
@@ -179,6 +456,137 @@ type UploadActionData = {
   redirectTo?: string;
   requiresUploadGuardrail?: boolean;
 };
+
+type BeatDraftCompatRecord = {
+  id: string;
+  shop: string;
+  title: string;
+  bpm: number | null;
+  key: string | null;
+  producerAlias: string | null;
+  genreGidsJson: string;
+  producerGidsJson: string;
+  licenseFilesJson: string;
+  licensePricesJson: string;
+  stemsAddonSelectionsJson: string;
+  selectionStateJson?: string | null;
+  uploadedFilesJson: string;
+  previewFileJson: string | null;
+  coverArtFileJson: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function isSchemaMismatchError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("does not exist in the current database") ||
+    message.includes("does not exist")
+  );
+}
+
+async function findBeatDraftByIdCompat(id: string, shop: string) {
+  try {
+    return (await prisma.beatDraft.findFirst({
+      where: { id, shop },
+    })) as BeatDraftCompatRecord | null;
+  } catch (error) {
+    if (!isSchemaMismatchError(error)) throw error;
+
+    return (await prisma.beatDraft.findFirst({
+      where: { id, shop },
+      select: {
+        id: true,
+        shop: true,
+        title: true,
+        bpm: true,
+        key: true,
+        producerAlias: true,
+        genreGidsJson: true,
+        producerGidsJson: true,
+        licenseFilesJson: true,
+        licensePricesJson: true,
+        stemsAddonSelectionsJson: true,
+        uploadedFilesJson: true,
+        previewFileJson: true,
+        coverArtFileJson: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })) as BeatDraftCompatRecord | null;
+  }
+}
+
+async function saveBeatDraftCompat(input: {
+  existingDraftId?: string;
+  data: {
+    shop: string;
+    title: string;
+    bpm: number | null;
+    key: string | null;
+    producerAlias: string | null;
+    genreGidsJson: string;
+    producerGidsJson: string;
+    licenseFilesJson: string;
+    licensePricesJson: string;
+    stemsAddonSelectionsJson: string;
+    selectionStateJson: string;
+    uploadedFilesJson: string;
+    previewFileJson: string | null;
+    coverArtFileJson: string | null;
+  };
+}) {
+  try {
+    if (input.existingDraftId) {
+      return await prisma.beatDraft.update({
+        where: { id: input.existingDraftId },
+        data: input.data,
+      });
+    }
+
+    return await prisma.beatDraft.create({
+      data: input.data,
+    });
+  } catch (error) {
+    if (!isSchemaMismatchError(error)) throw error;
+
+    const { selectionStateJson: _selectionStateJson, ...legacyData } = input.data;
+
+    if (input.existingDraftId) {
+      return await prisma.beatDraft.update({
+        where: { id: input.existingDraftId },
+        data: legacyData,
+      });
+    }
+
+    return await prisma.beatDraft.create({
+      data: legacyData,
+    });
+  }
+}
+
+async function getLastUsedOfferSelectionCompat(shop: string) {
+  const delegate = (prisma as unknown as {
+    shopUploadPreference?: {
+      findUnique: (args: { where: { shop: string } }) => Promise<{
+        lastUsedOfferSelectionJson: string;
+      } | null>;
+    };
+  }).shopUploadPreference;
+
+  if (!delegate?.findUnique) {
+    return null;
+  }
+
+  try {
+    return await delegate.findUnique({
+      where: { shop },
+    });
+  } catch (error) {
+    if (!isSchemaMismatchError(error)) throw error;
+    return null;
+  }
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -199,15 +607,85 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
 
     // Load upload dependencies
-    const [licenses, genres, producers] = await Promise.all([
+    const [
+      licenseMetaobjects,
+      genres,
+      producers,
+      bundleRecords,
+      shopUploadPreference,
+    ] = await Promise.all([
       productService.getLicenseMetaobjects(),
       productService.getGenreMetaobjects(),
       productService.getProducerMetaobjects(),
+      prisma.licenseBundle.findMany({
+        where: { shop: session.shop },
+        include: {
+          items: {
+            orderBy: { sortOrder: "asc" },
+          },
+        },
+        orderBy: { updatedAt: "desc" },
+      }),
+      getLastUsedOfferSelectionCompat(session.shop),
     ]);
 
     if (producers.length === 0) {
       return redirect(readiness.onboardingRoute);
     }
+
+    const licenses: UploadLicense[] = licenseMetaobjects
+      .map((license) => ({
+        ...license,
+        isStarter: STARTER_LICENSE_HANDLE_SET.has(license.handle),
+      }))
+      .sort((left, right) => {
+        if (left.isStarter !== right.isStarter) return left.isStarter ? -1 : 1;
+        return left.licenseName.localeCompare(right.licenseName);
+      });
+
+    const starterBundle = buildStarterBundle(licenses);
+    const customBundles: UploadLicenseBundle[] = bundleRecords.map(
+      (bundle: {
+        id: string;
+        name: string;
+        isDefault: boolean;
+        updatedAt: Date;
+        items: Array<{
+          licenseMetaobjectId: string;
+          licenseHandle: string;
+        }>;
+      }) => {
+        const resolvedLicenses = bundle.items
+          .map((item) => resolveBundleItemLicense(licenses, item))
+          .filter((license): license is UploadLicense => Boolean(license));
+        const missingBundleItems = bundle.items.filter(
+          (item) => !resolveBundleItemLicense(licenses, item),
+        );
+
+        return {
+          id: bundle.id,
+          name: bundle.name,
+          isDefault: bundle.isDefault,
+          isStarterBundle: false,
+          licenseMetaobjectIds: bundle.items.map(
+            (item: { licenseMetaobjectId: string }) => item.licenseMetaobjectId,
+          ),
+          licenseHandles: bundle.items.map(
+            (item: { licenseHandle: string }) => item.licenseHandle,
+          ),
+          resolvedLicenseMetaobjectIds: resolvedLicenses.map(
+            (license) => license.id,
+          ),
+          licenseNames: resolvedLicenses.map((license) => license.licenseName),
+          missingLicenseCount: missingBundleItems.length,
+          missingLicenseHandles: missingBundleItems.map(
+            (item) => item.licenseHandle,
+          ),
+          updatedAt: bundle.updatedAt.toISOString(),
+        };
+      },
+    );
+    const bundles = [starterBundle, ...customBundles];
 
     const hasAcceptedUploadGuardrail = await hasMerchantAcknowledged(
       session.shop,
@@ -215,16 +693,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const draftRecord = draftId
-      ? await prisma.beatDraft.findFirst({
-          where: {
-            id: draftId,
-            shop: session.shop,
-          },
-        })
+      ? await findBeatDraftByIdCompat(draftId, session.shop)
       : null;
 
     return json({
       licenses,
+      bundles,
+      lastUsedSelectionState: sanitizeLicenseSelectionState(
+        parseJsonField<LicenseSelectionState>(
+          shopUploadPreference?.lastUsedOfferSelectionJson,
+          buildDefaultSelectionState(),
+        ),
+        bundles,
+        licenses,
+      ),
       genres,
       producers,
       requiresUploadGuardrail: !hasAcceptedUploadGuardrail,
@@ -252,6 +734,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               draftRecord.stemsAddonSelectionsJson,
               {},
             ),
+            selectionState: sanitizeLicenseSelectionState(
+              parseJsonField<LicenseSelectionState>(
+                draftRecord.selectionStateJson,
+                buildDefaultSelectionState(),
+              ),
+              bundles,
+              licenses,
+            ),
             uploadedFiles: parseJsonField<UploadedFile[]>(
               draftRecord.uploadedFilesJson,
               [],
@@ -276,6 +766,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json(
       {
         licenses: [],
+        bundles: [] as UploadLicenseBundle[],
+        lastUsedSelectionState: buildDefaultSelectionState(),
         genres: [],
         producers: [],
         requiresUploadGuardrail: false,
@@ -377,6 +869,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       uploadedFilesStateRaw || "[]",
       [],
     );
+    const effectiveSelectedLicenseIds = dedupeIds(
+      parseJsonField<string[]>(
+        (formData.get("selectedLicenseIds") as string) || "[]",
+        [],
+      ),
+    );
+    const selectionState = parseJsonField<LicenseSelectionState>(
+      (formData.get("licenseSelectionState") as string) || "",
+      {
+        selectedBundleIds: [STARTER_BUNDLE_ID],
+        selectedLicenseIds: effectiveSelectedLicenseIds,
+      },
+    );
 
     // Extract preview file ID
     const previewFileId = formData.get("previewFileId") as string | null;
@@ -386,12 +891,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const fileMetadata = JSON.parse(fileMetadataJson);
 
     const existingDraft = draftId
-      ? await prisma.beatDraft.findFirst({
-          where: {
-            id: draftId,
-            shop: session.shop,
-          },
-        })
+      ? await findBeatDraftByIdCompat(draftId, session.shop)
       : null;
 
     const savedDraftUploadedFiles = existingDraft
@@ -457,13 +957,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Get actual license GIDs from the database
     const dbLicenses = await productService.getLicenseMetaobjects();
-    const templateIds = dbLicenses.map((license) => license.id);
+    const selectedLicenses = orderLicensesByIds(
+      dbLicenses,
+      effectiveSelectedLicenseIds.filter((id) =>
+        dbLicenses.some((license) => license.id === id),
+      ),
+    );
+    const templateIds = selectedLicenses.map((license) => license.id);
+
+    if (!isDraft && selectedLicenses.length === 0) {
+      return json(
+        {
+          success: false,
+          error:
+            "Choose at least one license offer before saving this beat as active.",
+        },
+        { status: 400 },
+      );
+    }
 
     // Validate each license tier has the full package its template promises
     const missingAssignments: string[] = [];
 
     if (!isDraft) {
-      for (const license of dbLicenses) {
+      for (const license of selectedLicenses) {
         const filesForTier = licenseFilesData[license.id];
         const requiredFormats = getRequiredDeliveryFormats(license);
 
@@ -505,7 +1022,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    const stemsSourceRequired = dbLicenses.some((license) =>
+    const stemsSourceRequired = selectedLicenses.some((license) =>
       licenseOffersStems(
         resolveOfferStemsPolicy(
           license.stemsPolicy,
@@ -519,7 +1036,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
 
     if (!isDraft && stemsSourceRequired && !sharedStemsFilePresent) {
-      const affectedLicenses = dbLicenses
+      const affectedLicenses = selectedLicenses
         .filter((license) =>
           licenseOffersStems(
             resolveOfferStemsPolicy(
@@ -551,7 +1068,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     if (!isDraft) {
-      const missingPrices = dbLicenses
+      const missingPrices = selectedLicenses
         .filter((license) => {
           const rawPrice = licensePricesData[license.id];
           if (rawPrice == null || String(rawPrice).trim() === "") return true;
@@ -747,6 +1264,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         licenseFilesJson: JSON.stringify(licenseFilesData),
         licensePricesJson: JSON.stringify(licensePricesData),
         stemsAddonSelectionsJson: JSON.stringify(stemsAddonSelectionsData),
+        selectionStateJson: JSON.stringify({
+          selectedBundleIds: dedupeIds(selectionState.selectedBundleIds || []),
+          selectedLicenseIds: dedupeIds(selectionState.selectedLicenseIds || []),
+        } satisfies LicenseSelectionState),
         uploadedFilesJson: JSON.stringify(mergedUploadedFiles),
         previewFileJson: mergedPreviewFile
           ? JSON.stringify(mergedPreviewFile)
@@ -756,14 +1277,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           : null,
       };
 
-      const savedDraft = existingDraft
-        ? await prisma.beatDraft.update({
-            where: { id: existingDraft.id },
-            data: draftData,
-          })
-        : await prisma.beatDraft.create({
-            data: draftData,
-          });
+      const savedDraft = await saveBeatDraftCompat({
+        existingDraftId: existingDraft?.id,
+        data: draftData,
+      });
+
+      if (selectedLicenses.length > 0) {
+        await persistLastUsedOfferSelection(session.shop, selectionState);
+      }
 
       console.info("[upload] draft saved successfully", {
         draftId: savedDraft.id,
@@ -775,7 +1296,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Get actual license GIDs from the database
-    const licenses = dbLicenses;
+    const licenses = selectedLicenses;
 
     // === CREATE SHOPIFY PRODUCT ===
     console.info("[upload] creating Shopify product");
@@ -913,6 +1434,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    if (selectedLicenses.length > 0) {
+      await persistLastUsedOfferSelection(session.shop, selectionState);
+    }
+
     console.info("[upload] completed successfully", {
       productId: result.productId,
     });
@@ -936,19 +1461,39 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function NewBeatPage() {
-  const {
+  const loaderData = useLoaderData<typeof loader>();
+  const licenses = loaderData.licenses as UploadLicense[];
+  const bundles = (loaderData.bundles || []) as UploadLicenseBundle[];
+  const lastUsedSelectionState = sanitizeLicenseSelectionState(
+    (loaderData.lastUsedSelectionState as LicenseSelectionState | undefined) ||
+      buildDefaultSelectionState(),
+    bundles,
     licenses,
-    genres,
-    producers,
-    draft,
-    storageWarning,
-    requiresUploadGuardrail,
-    error: loaderError,
-  } = useLoaderData<typeof loader>();
+  );
+  const genres = loaderData.genres;
+  const producers = loaderData.producers;
+  const draft = loaderData.draft;
+  const storageWarning = loaderData.storageWarning;
+  const requiresUploadGuardrail = loaderData.requiresUploadGuardrail;
+  const loaderError = loaderData.error;
   const fetcher = useFetcher<UploadActionData>();
   const acknowledgmentFetcher = useFetcher<UploadActionData>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
+  const initialSelectionState = useMemo(
+    () =>
+      sanitizeLicenseSelectionState(
+        draft?.selectionState,
+        bundles,
+        licenses as UploadLicense[],
+      ),
+    [bundles, draft?.selectionState, licenses],
+  );
+  const lastUsedLicenses = useMemo(
+    () => resolveSelectedLicenses(lastUsedSelectionState, bundles, licenses),
+    [bundles, lastUsedSelectionState, licenses],
+  );
+  const hasLastUsedOfferSelection = lastUsedLicenses.length > 0;
 
   const initialTitle = draft?.title || "";
   const initialBpm = draft?.bpm || "";
@@ -973,6 +1518,8 @@ export default function NewBeatPage() {
   );
   const initialProducerAlias = draft?.producerAlias || "";
   const initialStatus = draft ? "draft" : "active";
+  const initialSelectedBundleIds = initialSelectionState.selectedBundleIds;
+  const initialSelectedLicenseIds = initialSelectionState.selectedLicenseIds;
   const initialUploadedFiles = useMemo(
     () => (draft?.uploadedFiles || []) as UploadedFile[],
     [draft?.uploadedFiles],
@@ -1025,6 +1572,12 @@ export default function NewBeatPage() {
     useState<string[]>(initialProducerGids);
   const [producerAlias, setProducerAlias] = useState(initialProducerAlias);
   const [status, setStatus] = useState(initialStatus);
+  const [selectedBundleIds, setSelectedBundleIds] = useState<string[]>(
+    initialSelectedBundleIds,
+  );
+  const [selectedLicenseIds, setSelectedLicenseIds] = useState<string[]>(
+    initialSelectedLicenseIds,
+  );
 
   // License file assignment state
   const [uploadedFiles, setUploadedFiles] =
@@ -1049,6 +1602,25 @@ export default function NewBeatPage() {
     !requiresUploadGuardrail,
   );
   const [uploadGuardrailChecked, setUploadGuardrailChecked] = useState(false);
+  const [offerPickerOpen, setOfferPickerOpen] = useState(false);
+  const [offerPickerSearchValue, setOfferPickerSearchValue] =
+    useState("");
+  const [offerPickerBundleDraftIds, setOfferPickerBundleDraftIds] = useState<
+    string[]
+  >([]);
+  const [offerPickerLicenseDraftIds, setOfferPickerLicenseDraftIds] = useState<
+    string[]
+  >([]);
+  const [initialOfferPickerBundleDraftIds, setInitialOfferPickerBundleDraftIds] =
+    useState<string[]>([]);
+  const [initialOfferPickerLicenseDraftIds, setInitialOfferPickerLicenseDraftIds] =
+    useState<string[]>([]);
+  const offerPickerContentRef = useRef<HTMLDivElement | null>(null);
+  const offerPickerLastPointerDownLocationRef = useRef<
+    "inside" | "outside" | null
+  >(null);
+  const [offerPickerBlockedCloseAttemptCount, setOfferPickerBlockedCloseAttemptCount] =
+    useState(0);
 
   // Handle file upload with purpose
   const handleFileUpload = useCallback(
@@ -1116,6 +1688,131 @@ export default function NewBeatPage() {
     );
 
   const hasDraftMinimumFields = () => Boolean(title.trim());
+  const selectionState = useMemo<LicenseSelectionState>(
+    () => ({
+      selectedBundleIds,
+      selectedLicenseIds:
+        (licenses as UploadLicense[])
+          .filter((license) => selectedLicenseIds.includes(license.id))
+          .map((license) => license.id),
+    }),
+    [licenses, selectedBundleIds, selectedLicenseIds],
+  );
+  const selectedLicenses = useMemo(
+    () =>
+      resolveSelectedLicenses(
+        selectionState,
+        bundles as UploadLicenseBundle[],
+        licenses as UploadLicense[],
+      ),
+    [bundles, licenses, selectionState],
+  );
+  const selectedLicenseSummary = useMemo(
+    () => selectedLicenses.map((license) => license.licenseName),
+    [selectedLicenses],
+  );
+  const selectedBundleSummary = useMemo(
+    () =>
+      bundles
+        .filter((bundle) => selectedBundleIds.includes(bundle.id))
+        .map((bundle) => bundle.name),
+    [bundles, selectedBundleIds],
+  );
+  const selectedBundleWarnings = useMemo(
+    () =>
+      bundles
+        .filter(
+          (bundle) =>
+            selectedBundleIds.includes(bundle.id) && bundle.missingLicenseCount > 0,
+        )
+        .map(
+          (bundle) =>
+            `${bundle.name}: ${bundle.missingLicenseCount} removed ${bundle.missingLicenseCount === 1 ? "license" : "licenses"}. Review this bundle on the Licenses page.`,
+        ),
+    [bundles, selectedBundleIds],
+  );
+  const selectedIndividualLicenseSummary = useMemo(() => {
+    const bundledLicenseIds = new Set(
+      bundles
+        .filter((bundle) => selectedBundleIds.includes(bundle.id))
+        .flatMap((bundle) => bundle.resolvedLicenseMetaobjectIds),
+    );
+    const bundledLicenseHandles = new Set(
+      bundles
+        .filter((bundle) => selectedBundleIds.includes(bundle.id))
+        .flatMap((bundle) => bundle.licenseHandles),
+    );
+
+    return (licenses as UploadLicense[])
+      .filter(
+        (license) =>
+          selectedLicenseIds.includes(license.id) &&
+          !bundledLicenseIds.has(license.id) &&
+          !bundledLicenseHandles.has(license.handle),
+      )
+      .map((license) => license.licenseName);
+  }, [bundles, licenses, selectedBundleIds, selectedLicenseIds]);
+  const offerPickerHasChanges = useMemo(
+    () =>
+      !selectionStateEquals(
+        {
+          selectedBundleIds: offerPickerBundleDraftIds,
+          selectedLicenseIds: offerPickerLicenseDraftIds,
+        },
+        {
+          selectedBundleIds: initialOfferPickerBundleDraftIds,
+          selectedLicenseIds: initialOfferPickerLicenseDraftIds,
+        },
+      ),
+    [
+      initialOfferPickerBundleDraftIds,
+      initialOfferPickerLicenseDraftIds,
+      offerPickerBundleDraftIds,
+      offerPickerLicenseDraftIds,
+    ],
+  );
+  const filteredBundles = useMemo(() => {
+    const normalizedQuery = offerPickerSearchValue.trim().toLowerCase();
+    if (!normalizedQuery) return bundles;
+
+    return bundles.filter((bundle) => {
+      const searchableText = [
+        bundle.name,
+        ...bundle.licenseNames,
+        ...bundle.missingLicenseHandles,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return searchableText.includes(normalizedQuery);
+    });
+  }, [bundles, offerPickerSearchValue]);
+  const filteredIndividualLicenses = useMemo(() => {
+    const normalizedQuery = offerPickerSearchValue.trim().toLowerCase();
+    if (!normalizedQuery) return licenses as UploadLicense[];
+
+    return (licenses as UploadLicense[]).filter((license) => {
+      const searchableText = [
+        license.licenseName,
+        license.storefrontSummary,
+        getRequiredDeliveryFormats(license).map(formatDeliveryFormatLabel).join(" "),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return searchableText.includes(normalizedQuery);
+    });
+  }, [licenses, offerPickerSearchValue]);
+  const offerPickerPreviewSelectedLicenses = useMemo(
+    () =>
+      resolveSelectedLicenses(
+        {
+          selectedBundleIds: offerPickerBundleDraftIds,
+          selectedLicenseIds: offerPickerLicenseDraftIds,
+        },
+        bundles as UploadLicenseBundle[],
+        licenses as UploadLicense[],
+      ),
+    [bundles, licenses, offerPickerBundleDraftIds, offerPickerLicenseDraftIds],
+  );
 
   const initialSnapshot = useMemo(
     () =>
@@ -1127,6 +1824,10 @@ export default function NewBeatPage() {
         producerGids: initialProducerGids,
         producerAlias: initialProducerAlias,
         status: initialStatus,
+        selectionState: {
+          selectedBundleIds: initialSelectedBundleIds,
+          selectedLicenseIds: initialSelectedLicenseIds,
+        },
         uploadedFiles: serializeUploadedFiles(initialUploadedFiles),
         licenseFiles: initialLicenseFiles,
         licensePrices: initialLicensePrices,
@@ -1141,6 +1842,8 @@ export default function NewBeatPage() {
       initialKey,
       initialLicenseFiles,
       initialLicensePrices,
+      initialSelectedBundleIds,
+      initialSelectedLicenseIds,
       initialStemsAddonSelections,
       initialPreviewFile,
       initialProducerAlias,
@@ -1161,6 +1864,7 @@ export default function NewBeatPage() {
         producerGids,
         producerAlias,
         status,
+        selectionState,
         uploadedFiles: serializeUploadedFiles(uploadedFiles),
         licenseFiles,
         licensePrices,
@@ -1175,6 +1879,7 @@ export default function NewBeatPage() {
       key,
       licenseFiles,
       licensePrices,
+      selectionState,
       stemsAddonSelections,
       previewFile,
       producerAlias,
@@ -1192,21 +1897,23 @@ export default function NewBeatPage() {
   const showUploadGuardrail = !hasAcceptedUploadGuardrail;
 
   const isReadyForActive = () => {
+    if (selectedLicenses.length === 0) {
+      return false;
+    }
+
     const sharedStemsFilePresent = hasSharedStemsSourceFile(uploadedFiles);
-    const sharedStemsRequired = licenses
-      .filter(Boolean)
-      .some((license) =>
+    const sharedStemsRequired = selectedLicenses.some((license) =>
         licenseOffersStems(
           resolveOfferStemsPolicy(
-            license!.stemsPolicy,
-            stemsAddonSelections[license!.id],
-            license!.offerArchetype,
+            license.stemsPolicy,
+            stemsAddonSelections[license.id],
+            license.offerArchetype,
           ),
         ),
       );
-    const hasAllLicenseFiles = licenses.filter(Boolean).every((license) => {
-      const requiredFormats = getRequiredDeliveryFormats(license!);
-      const assignedFileIds = licenseFiles[license!.id] || [];
+    const hasAllLicenseFiles = selectedLicenses.every((license) => {
+      const requiredFormats = getRequiredDeliveryFormats(license);
+      const assignedFileIds = licenseFiles[license.id] || [];
       const assignedFormats = new Set(
         assignedFileIds
           .map(
@@ -1221,7 +1928,7 @@ export default function NewBeatPage() {
     });
 
     const hasAllLicensePrices = hasCompleteLicensePrices(
-      licenses.filter(Boolean).map((license) => ({ id: license!.id })),
+      selectedLicenses.map((license) => ({ id: license.id })),
       licensePrices,
     );
 
@@ -1245,6 +1952,149 @@ export default function NewBeatPage() {
         ? "Saving draft..."
         : "Save draft";
 
+  const handleOpenOfferPicker = useCallback(() => {
+    setOfferPickerBundleDraftIds(selectedBundleIds);
+    setOfferPickerLicenseDraftIds(selectedLicenseIds);
+    setInitialOfferPickerBundleDraftIds(selectedBundleIds);
+    setInitialOfferPickerLicenseDraftIds(selectedLicenseIds);
+    setOfferPickerSearchValue("");
+    setOfferPickerOpen(true);
+  }, [selectedBundleIds, selectedLicenseIds]);
+
+  const handleCloseOfferPicker = useCallback(() => {
+    setOfferPickerOpen(false);
+  }, []);
+
+  const handleRequestCloseOfferPicker = useCallback(() => {
+    const shouldBlockClose =
+      offerPickerHasChanges &&
+      offerPickerLastPointerDownLocationRef.current === "outside";
+
+    offerPickerLastPointerDownLocationRef.current = null;
+
+    if (shouldBlockClose) {
+      setOfferPickerBlockedCloseAttemptCount((count) => count + 1);
+      return;
+    }
+
+    handleCloseOfferPicker();
+  }, [handleCloseOfferPicker, offerPickerHasChanges]);
+
+  const handleToggleOfferPickerBundle = useCallback((bundleId: string) => {
+    setOfferPickerBundleDraftIds((current) =>
+      current.includes(bundleId)
+        ? current.filter((id) => id !== bundleId)
+        : [...current, bundleId],
+    );
+  }, []);
+
+  const handleToggleOfferPickerLicense = useCallback((licenseId: string) => {
+    setOfferPickerLicenseDraftIds((current) =>
+      current.includes(licenseId)
+        ? current.filter((id) => id !== licenseId)
+        : [...current, licenseId],
+    );
+  }, []);
+
+  const handleApplyOfferPicker = useCallback(() => {
+    setSelectedBundleIds(
+      bundles
+        .filter((bundle) => offerPickerBundleDraftIds.includes(bundle.id))
+        .map((bundle) => bundle.id),
+    );
+    setSelectedLicenseIds(
+      (licenses as UploadLicense[])
+        .filter((license) => offerPickerLicenseDraftIds.includes(license.id))
+        .map((license) => license.id),
+    );
+    setOfferPickerOpen(false);
+  }, [bundles, licenses, offerPickerBundleDraftIds, offerPickerLicenseDraftIds]);
+
+  const handleUseLastUsedOffers = useCallback(() => {
+    setSelectedBundleIds(lastUsedSelectionState.selectedBundleIds);
+    setSelectedLicenseIds(lastUsedSelectionState.selectedLicenseIds);
+  }, [lastUsedSelectionState]);
+
+  useEffect(() => {
+    if (!offerPickerOpen || !offerPickerHasChanges) {
+      setOfferPickerBlockedCloseAttemptCount(0);
+    }
+  }, [offerPickerHasChanges, offerPickerOpen]);
+
+  useEffect(() => {
+    if (!offerPickerOpen) {
+      offerPickerLastPointerDownLocationRef.current = null;
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const dialog = offerPickerContentRef.current?.closest('[role="dialog"]');
+      if (!(dialog instanceof HTMLElement)) {
+        offerPickerLastPointerDownLocationRef.current = null;
+        return;
+      }
+
+      const target = event.target;
+      offerPickerLastPointerDownLocationRef.current =
+        target instanceof Node && dialog.contains(target) ? "inside" : "outside";
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      offerPickerLastPointerDownLocationRef.current = null;
+    };
+  }, [offerPickerOpen]);
+
+  useEffect(() => {
+    if (offerPickerBlockedCloseAttemptCount === 0) return;
+
+    const dialog = offerPickerContentRef.current?.closest('[role="dialog"]');
+    if (!(dialog instanceof HTMLElement)) return;
+
+    const buttons = Array.from(dialog.querySelectorAll("button")).slice(-2);
+    const footerButtons = buttons.filter(
+      (button): button is HTMLButtonElement =>
+        button instanceof HTMLButtonElement,
+    );
+
+    if (footerButtons.length === 0) return;
+
+    footerButtons.forEach((button) => {
+      button.style.animation = "none";
+      button.getBoundingClientRect();
+      button.style.animation = "OfferPickerModal-shake 220ms ease";
+    });
+
+    const timeoutId = window.setTimeout(() => {
+      footerButtons.forEach((button) => {
+        button.style.animation = "";
+      });
+    }, 240);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      footerButtons.forEach((button) => {
+        button.style.animation = "";
+      });
+    };
+  }, [offerPickerBlockedCloseAttemptCount]);
+
+  const showOfferPickerUnsavedChangesFeedback =
+    offerPickerHasChanges && offerPickerBlockedCloseAttemptCount > 0;
+
+  useEffect(() => {
+    setLicenseFiles((current) => {
+      const next = buildAutomaticLicenseAssignments(
+        selectedLicenses,
+        uploadedFiles,
+        current,
+      );
+      return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+    });
+  }, [selectedLicenses, uploadedFiles]);
+
   const resetFormState = useCallback(() => {
     setTitle(initialTitle);
     setBpm(initialBpm);
@@ -1253,6 +2103,8 @@ export default function NewBeatPage() {
     setProducerGids(initialProducerGids);
     setProducerAlias(initialProducerAlias);
     setStatus(initialStatus);
+    setSelectedBundleIds(initialSelectedBundleIds);
+    setSelectedLicenseIds(initialSelectedLicenseIds);
     setUploadedFiles(initialUploadedFiles);
     setLicenseFiles(initialLicenseFiles);
     setLicensePrices(initialLicensePrices);
@@ -1267,6 +2119,8 @@ export default function NewBeatPage() {
     initialKey,
     initialLicenseFiles,
     initialLicensePrices,
+    initialSelectedBundleIds,
+    initialSelectedLicenseIds,
     initialStemsAddonSelections,
     initialPreviewFile,
     initialProducerAlias,
@@ -1292,6 +2146,11 @@ export default function NewBeatPage() {
     formData.append("producerGids", JSON.stringify(producerGids));
     formData.append("producerAlias", producerAlias);
     formData.append("status", resolvedStatus);
+    formData.append(
+      "selectedLicenseIds",
+      JSON.stringify(selectedLicenses.map((license) => license.id)),
+    );
+    formData.append("licenseSelectionState", JSON.stringify(selectionState));
     if (status === "active" && resolvedStatus === "draft") {
       formData.append("intendedActive", "true");
       const missing: string[] = [];
@@ -1299,11 +2158,12 @@ export default function NewBeatPage() {
       if (!key) missing.push("key");
       if (genreGids.length === 0) missing.push("genre");
       if (producerGids.length === 0) missing.push("producer");
+      if (selectedLicenses.length === 0) missing.push("license offers");
       if (!previewFile) missing.push("preview audio");
       if (uploadedFiles.length === 0) missing.push("delivery files");
       if (
         !hasCompleteLicensePrices(
-          licenses.filter(Boolean).map((l) => ({ id: l!.id })),
+          selectedLicenses.map((license) => ({ id: license.id })),
           licensePrices,
         )
       )
@@ -1454,20 +2314,20 @@ export default function NewBeatPage() {
       });
   }, [fetcher.data, navigate, shopify, suppressSaveBar]);
 
-  // Map licenses to tier format for LicenseFileAssignment
-  const dynamicLicenseTiers = licenses.filter(Boolean).map((l) => ({
-    id: l!.id,
-    name: l!.licenseName,
-    price: licensePrices[l!.id] ? `$${licensePrices[l!.id]}` : "Not set",
-    description: l!.displayName,
-    packageFormats: getRequiredDeliveryFormats(l!),
+  // Map the active license selection into the existing variant/file assignment UI.
+  const dynamicLicenseTiers = selectedLicenses.map((license) => ({
+    id: license.id,
+    name: license.licenseName,
+    price: licensePrices[license.id] ? `$${licensePrices[license.id]}` : "Not set",
+    description: license.displayName,
+    packageFormats: getRequiredDeliveryFormats(license),
     stemsPolicy: resolveOfferStemsPolicy(
-      l!.stemsPolicy,
-      stemsAddonSelections[l!.id],
-      l!.offerArchetype,
+      license.stemsPolicy,
+      stemsAddonSelections[license.id],
+      license.offerArchetype,
     ),
-    templateStemsPolicy: l!.stemsPolicy,
-    stemsAddonEnabled: Boolean(stemsAddonSelections[l!.id]),
+    templateStemsPolicy: license.stemsPolicy,
+    stemsAddonEnabled: Boolean(stemsAddonSelections[license.id]),
   }));
 
   const genreOptions = genres.filter(Boolean).map((g) => ({
@@ -1655,6 +2515,15 @@ export default function NewBeatPage() {
 
                 <LicenseFileAssignment
                   licenses={dynamicLicenseTiers}
+                  selectedBundleNames={selectedBundleSummary}
+                  bundleWarnings={selectedBundleWarnings}
+                  selectedIndividualLicenseNames={selectedIndividualLicenseSummary}
+                  selectedLicenseNames={selectedLicenseSummary}
+                  onChooseOffers={handleOpenOfferPicker}
+                  onUseLastUsedOffers={
+                    hasLastUsedOfferSelection ? handleUseLastUsedOffers : undefined
+                  }
+                  hasLastUsedOfferSelection={hasLastUsedOfferSelection}
                   uploadedFiles={uploadedFiles}
                   licenseFiles={licenseFiles}
                   licensePrices={licensePrices}
@@ -1745,6 +2614,155 @@ export default function NewBeatPage() {
           </Layout>
         </form>
       </Page>
+
+      <Modal
+        open={offerPickerOpen}
+        onClose={handleRequestCloseOfferPicker}
+        title="Choose license offers"
+        primaryAction={{
+          content: "Use selection",
+          onAction: handleApplyOfferPicker,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: handleCloseOfferPicker,
+          },
+        ]}
+        footer={
+          showOfferPickerUnsavedChangesFeedback ? (
+            <InlineStack gap="150" blockAlign="center">
+              <Icon source={AlertCircleIcon} tone="base" />
+              <Text as="p" variant="bodyMd" fontWeight="medium">
+                Unsaved changes
+              </Text>
+            </InlineStack>
+          ) : offerPickerHasChanges ? (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {offerPickerPreviewSelectedLicenses.length} offers will be created
+              from this selection.
+            </Text>
+          ) : undefined
+        }
+      >
+        <Modal.Section>
+          <style>
+            {`
+              @keyframes OfferPickerModal-shake {
+                0% { transform: translateX(0); }
+                25% { transform: translateX(-4px); }
+                50% { transform: translateX(4px); }
+                75% { transform: translateX(-2px); }
+                100% { transform: translateX(0); }
+              }
+            `}
+          </style>
+          <div ref={offerPickerContentRef}>
+            <BlockStack gap="300">
+              <TextField
+                label="Search offers"
+                labelHidden
+                value={offerPickerSearchValue}
+                onChange={setOfferPickerSearchValue}
+                autoComplete="off"
+                placeholder="Search bundles or licenses"
+              />
+
+              <Text as="p" variant="bodySm" tone="subdued">
+                Bundles are the fast path. Individual licenses let merchants mix
+                in extra offers without leaving the upload flow.
+              </Text>
+
+              <Scrollable shadow style={{ maxHeight: "50vh" }}>
+                <BlockStack gap="400">
+                  <BlockStack gap="200">
+                    <Text variant="headingSm" as="h3">
+                      Bundles
+                    </Text>
+                    {filteredBundles.length > 0 ? (
+                      filteredBundles.map((bundle) => (
+                        <Box
+                          key={bundle.id}
+                          borderWidth="025"
+                          borderColor="border"
+                          borderRadius="200"
+                          padding="300"
+                        >
+                          <BlockStack gap="150">
+                            <Checkbox
+                              label={bundle.name}
+                              checked={offerPickerBundleDraftIds.includes(bundle.id)}
+                              onChange={() => handleToggleOfferPickerBundle(bundle.id)}
+                              disabled={
+                                bundle.missingLicenseCount > 0 &&
+                                bundle.resolvedLicenseMetaobjectIds.length === 0 &&
+                                !offerPickerBundleDraftIds.includes(bundle.id)
+                              }
+                            />
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {bundle.licenseNames.length > 0
+                                ? bundle.licenseNames.join(", ")
+                                : "No active licenses in this bundle."}
+                            </Text>
+                            {bundle.missingLicenseCount > 0 ? (
+                              <Text as="p" variant="bodySm" tone="critical">
+                                {bundle.missingLicenseCount ===
+                                  bundle.licenseMetaobjectIds.length
+                                  ? "This bundle no longer contains active licenses. Review it on the Licenses page."
+                                  : `${bundle.missingLicenseCount} removed ${bundle.missingLicenseCount === 1 ? "license" : "licenses"}. Review this bundle before using it.`}
+                              </Text>
+                            ) : null}
+                          </BlockStack>
+                        </Box>
+                      ))
+                    ) : (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        No bundles match this search.
+                      </Text>
+                    )}
+                  </BlockStack>
+
+                  <BlockStack gap="200">
+                    <Text variant="headingSm" as="h3">
+                      Individual licenses
+                    </Text>
+                    {filteredIndividualLicenses.length > 0 ? (
+                      filteredIndividualLicenses.map((license) => (
+                        <Box
+                          key={license.id}
+                          borderWidth="025"
+                          borderColor="border"
+                          borderRadius="200"
+                          padding="300"
+                        >
+                          <BlockStack gap="150">
+                            <Checkbox
+                              label={license.licenseName}
+                              checked={offerPickerLicenseDraftIds.includes(license.id)}
+                              onChange={() => handleToggleOfferPickerLicense(license.id)}
+                            />
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {license.isStarter ? "Starter license" : "Custom license"}
+                              {" • "}
+                              {getRequiredDeliveryFormats(license)
+                                .map(formatDeliveryFormatLabel)
+                                .join(", ")}
+                            </Text>
+                          </BlockStack>
+                        </Box>
+                      ))
+                    ) : (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        No individual licenses match this search.
+                      </Text>
+                    )}
+                  </BlockStack>
+                </BlockStack>
+              </Scrollable>
+            </BlockStack>
+          </div>
+        </Modal.Section>
+      </Modal>
 
       <AcknowledgmentModal
         open={showUploadGuardrail}

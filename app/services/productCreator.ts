@@ -2,6 +2,28 @@ import { createShopifyClient, type ShopifyClient } from "./shopify";
 import { normalizeTemplateFields } from "./licenses/archetypes";
 import { buildProductPreviewPlaybackPath } from "./appUrl.server";
 
+function parsePublishingSplitPercents(mode: string, summary: string) {
+  if (mode === "fixed_split") {
+    return {
+      publishingSplitLicensorPercent: "50",
+      publishingSplitLicenseePercent: "50",
+    };
+  }
+
+  const match = summary.match(/(\d+)%\s*Licensor\s*\/\s*(\d+)%\s*Licensee/i);
+  if (match) {
+    return {
+      publishingSplitLicensorPercent: match[1],
+      publishingSplitLicenseePercent: match[2],
+    };
+  }
+
+  return {
+    publishingSplitLicensorPercent: "50",
+    publishingSplitLicenseePercent: "50",
+  };
+}
+
 export interface LicensePricing {
   templateId: string;
   licenseGid: string;
@@ -189,6 +211,7 @@ export class ProductCreatorService {
     Array<{
       id: string;
       handle: string;
+      updatedAt: string;
       offerArchetype: string;
       licenseName: string;
       displayName: string;
@@ -206,6 +229,8 @@ export class ProductCreatorService {
       creditRequirement: string;
       publishingSplitMode: string;
       publishingSplitSummary: string;
+      publishingSplitLicensorPercent: string;
+      publishingSplitLicenseePercent: string;
       terms: string[];
     }>
   > {
@@ -223,10 +248,18 @@ export class ProductCreatorService {
         videoViewLimit: fields.get("video_view_limit") || "",
         termYears: fields.get("term_years") || "",
       });
+      const publishingSplitMode = fields.get("publishing_split_mode") || "";
+      const publishingSplitSummary =
+        fields.get("publishing_split_summary") || "";
+      const publishingSplitPercents = parsePublishingSplitPercents(
+        publishingSplitMode,
+        publishingSplitSummary,
+      );
 
       return {
         id: obj.id,
         handle: obj.handle,
+        updatedAt: obj.updatedAt,
         offerArchetype: normalizedFields.offerArchetype,
         licenseName: fields.get("license_name") || "",
         displayName: fields.get("license_name") || "",
@@ -242,8 +275,9 @@ export class ProductCreatorService {
         contentIdPolicy: fields.get("content_id_policy") || "",
         syncPolicy: fields.get("sync_policy") || "",
         creditRequirement: fields.get("credit_requirement") || "",
-        publishingSplitMode: fields.get("publishing_split_mode") || "",
-        publishingSplitSummary: fields.get("publishing_split_summary") || "",
+        publishingSplitMode,
+        publishingSplitSummary,
+        ...publishingSplitPercents,
         terms: [
           fields.get("term_1") || "",
           fields.get("term_2") || "",

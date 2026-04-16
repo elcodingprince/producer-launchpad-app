@@ -565,6 +565,7 @@ export class ShopifyClient {
             id
             handle
             type
+            updatedAt
             fields {
               key
               value
@@ -580,6 +581,7 @@ export class ShopifyClient {
           id: string;
           handle: string;
           type: string;
+          updatedAt: string;
           fields: Array<{ key: string; value: string }>;
         }>;
       };

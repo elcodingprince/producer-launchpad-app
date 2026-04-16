@@ -18,6 +18,7 @@ import {
   Button,
   Card,
   Checkbox,
+  ChoiceList,
   EmptyState,
   FormLayout,
   IndexFilters,
@@ -26,6 +27,7 @@ import {
   InlineStack,
   Layout,
   List,
+  Modal,
   Page,
   Popover,
   Select,
@@ -66,6 +68,7 @@ import { authenticate } from "~/shopify.server";
 type LicenseTemplate = {
   id: string;
   handle: string;
+  updatedAt: string;
   offerArchetype: string;
   licenseName: string;
   legalTemplateFamily: string;
@@ -95,13 +98,20 @@ type LicenseUsageSummary = {
   beatTitles: string[];
 };
 
+type LicenseStatusFilter = "ready" | "unused" | "needs_setup";
+type LicenseSourceFilter = "starter" | "custom";
+
 type LicenseBundle = {
   id: string;
   name: string;
   isDefault: boolean;
   isStarterBundle: boolean;
   licenseMetaobjectIds: string[];
+  licenseHandles: string[];
+  resolvedLicenseMetaobjectIds: string[];
   licenseNames: string[];
+  missingLicenseCount: number;
+  missingLicenseHandles: string[];
   updatedAt: string;
 };
 
@@ -142,6 +152,8 @@ type ActionDataShape = {
   templateHandle?: string;
   starterVersion?: string | null;
   bundleId?: string;
+  bundleName?: string;
+  deletedBundleCount?: number;
 };
 
 type AgreementPreviewData = {
@@ -174,6 +186,18 @@ const PUBLISHING_SPLIT_MODE_OPTIONS = [
   { label: "Custom split", value: "custom_split" },
   { label: "Handled outside this agreement", value: "left_to_parties" },
 ];
+
+function compareUpdatedAt(
+  leftUpdatedAt: string,
+  rightUpdatedAt: string,
+  direction: "asc" | "desc",
+) {
+  const left = Date.parse(leftUpdatedAt);
+  const right = Date.parse(rightUpdatedAt);
+
+  if (Number.isNaN(left) || Number.isNaN(right)) return 0;
+  return direction === "asc" ? left - right : right - left;
+}
 
 /** Map the legacy "custom_split_summary" value to the new "custom_split" key. */
 function normalizePublishingSplitMode(mode: string): string {
@@ -627,6 +651,17 @@ function buildBundleMembershipSummary(bundleNames: string[]) {
   };
 }
 
+function resolveBundleItemLicense(
+  licenses: LicenseTemplate[],
+  item: { licenseMetaobjectId: string; licenseHandle: string },
+) {
+  return (
+    licenses.find((license) => license.id === item.licenseMetaobjectId) ||
+    licenses.find((license) => license.handle === item.licenseHandle) ||
+    null
+  );
+}
+
 function getLicenseStatus(
   license: LicenseTemplate,
   usage: LicenseUsageSummary | undefined,
@@ -640,6 +675,33 @@ function getLicenseStatus(
   }
 
   return { label: "Ready", tone: "success" };
+}
+
+function getLicenseStatusFilterValue(
+  license: LicenseTemplate,
+  usage: LicenseUsageSummary | undefined,
+): LicenseStatusFilter {
+  const status = getLicenseStatus(license, usage).label;
+
+  if (status === "Needs setup") return "needs_setup";
+  if (status === "Unused") return "unused";
+  return "ready";
+}
+
+function getLicenseStatusFilterLabel(filter: LicenseStatusFilter) {
+  switch (filter) {
+    case "needs_setup":
+      return "Needs setup";
+    case "unused":
+      return "Unused";
+    case "ready":
+    default:
+      return "Ready";
+  }
+}
+
+function getLicenseSourceFilterLabel(filter: LicenseSourceFilter) {
+  return filter === "starter" ? "Starter" : "Custom";
 }
 
 async function getLicenseUsage(admin: {
@@ -785,11 +847,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                 `${license.handle}:${license.starterVersion}`,
               )
             : true,
-      }))
-      .sort((a, b) => {
-        if (a.isStarter !== b.isStarter) return a.isStarter ? -1 : 1;
-        return a.licenseName.localeCompare(b.licenseName);
-      });
+      }));
 
     const starterBundle: LicenseBundle = {
       id: STARTER_BUNDLE_ID,
@@ -799,9 +857,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       licenseMetaobjectIds: normalizedLicenses
         .filter((license) => license.isStarter)
         .map((license) => license.id),
+      licenseHandles: normalizedLicenses
+        .filter((license) => license.isStarter)
+        .map((license) => license.handle),
+      resolvedLicenseMetaobjectIds: normalizedLicenses
+        .filter((license) => license.isStarter)
+        .map((license) => license.id),
       licenseNames: normalizedLicenses
         .filter((license) => license.isStarter)
         .map((license) => license.licenseName),
+      missingLicenseCount: 0,
+      missingLicenseHandles: [],
       updatedAt: new Date().toISOString(),
     };
 
@@ -814,23 +880,36 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         licenseMetaobjectId: string;
         licenseHandle: string;
       }>;
-    }) => ({
-      id: bundle.id,
-      name: bundle.name,
-      isDefault: bundle.isDefault,
-      isStarterBundle: false,
-      licenseMetaobjectIds: bundle.items.map(
-        (item: { licenseMetaobjectId: string }) => item.licenseMetaobjectId,
-      ),
-      licenseNames: bundle.items
-        .map((item: { licenseMetaobjectId: string; licenseHandle: string }) =>
-          normalizedLicenses.find(
-            (license) => license.id === item.licenseMetaobjectId,
-          )?.licenseName || item.licenseHandle,
-        )
-        .filter(Boolean),
-      updatedAt: bundle.updatedAt.toISOString(),
-    }));
+    }) => {
+      const resolvedLicenses = bundle.items
+        .map((item) => resolveBundleItemLicense(normalizedLicenses, item))
+        .filter((license): license is LicenseTemplate => Boolean(license));
+      const missingBundleItems = bundle.items.filter(
+        (item) => !resolveBundleItemLicense(normalizedLicenses, item),
+      );
+
+      return {
+        id: bundle.id,
+        name: bundle.name,
+        isDefault: bundle.isDefault,
+        isStarterBundle: false,
+        licenseMetaobjectIds: bundle.items.map(
+          (item: { licenseMetaobjectId: string }) => item.licenseMetaobjectId,
+        ),
+        licenseHandles: bundle.items.map(
+          (item: { licenseHandle: string }) => item.licenseHandle,
+        ),
+        resolvedLicenseMetaobjectIds: resolvedLicenses.map(
+          (license) => license.id,
+        ),
+        licenseNames: resolvedLicenses.map((license) => license.licenseName),
+        missingLicenseCount: missingBundleItems.length,
+        missingLicenseHandles: missingBundleItems.map(
+          (item) => item.licenseHandle,
+        ),
+        updatedAt: bundle.updatedAt.toISOString(),
+      };
+    });
 
     return json({
       licenses: normalizedLicenses,
@@ -1046,6 +1125,65 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         { status: 500 },
       );
     }
+  }
+
+  if (intent === "delete_bundle" || intent === "delete_bundles") {
+    const bundleIds =
+      intent === "delete_bundles"
+        ? formData
+            .getAll("bundleIds")
+            .map((value) => String(value).trim())
+            .filter(Boolean)
+        : [String(formData.get("bundleId") || "").trim()].filter(Boolean);
+    const bundleName = String(formData.get("bundleName") || "").trim();
+
+    if (bundleIds.length === 0) {
+      return json(
+        {
+          success: false,
+          intent,
+          error: "Missing bundle id.",
+        } satisfies ActionDataShape,
+        { status: 400 },
+      );
+    }
+
+    const matchingBundles = await prisma.licenseBundle.findMany({
+      where: {
+        id: { in: bundleIds },
+        shop: session.shop,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (matchingBundles.length === 0) {
+      return json(
+        {
+          success: false,
+          intent,
+          error: "Bundle not found.",
+        } satisfies ActionDataShape,
+        { status: 404 },
+      );
+    }
+
+    await prisma.licenseBundle.deleteMany({
+      where: {
+        id: { in: matchingBundles.map((bundle: { id: string }) => bundle.id) },
+        shop: session.shop,
+      },
+    });
+
+    return json({
+      success: true,
+      intent,
+      bundleId: matchingBundles[0]?.id,
+      bundleName: bundleName || matchingBundles[0]?.name,
+      deletedBundleCount: matchingBundles.length,
+    } satisfies ActionDataShape);
   }
 
   if (intent === "add_to_existing_bundles") {
@@ -1414,6 +1552,9 @@ export default function LicensesPage() {
   >([]);
   const [bundleSearchValue, setBundleSearchValue] = useState("");
   const [bundleShowSelectedOnly, setBundleShowSelectedOnly] = useState(false);
+  const [bundleDeleteTargets, setBundleDeleteTargets] = useState<
+    LicenseBundle[]
+  >([]);
   const previewRequestSequence = useRef(0);
   const previousGeneratedStorefrontSummaryRef = useRef("");
   const customTemplateGuardrailFetcher = useFetcher<ActionDataShape>();
@@ -1424,6 +1565,12 @@ export default function LicensesPage() {
   const [savedState, setSavedState] = useState<string | null>(
     searchParams.get("saved"),
   );
+  const [selectedLicenseStatuses, setSelectedLicenseStatuses] = useState<
+    LicenseStatusFilter[]
+  >([]);
+  const [selectedLicenseSources, setSelectedLicenseSources] = useState<
+    LicenseSourceFilter[]
+  >([]);
   const licensesWithGuardrailState = useMemo(
     () =>
       licenses.map((license) => {
@@ -1441,6 +1588,10 @@ export default function LicensesPage() {
       }),
     [acceptedStarterVersions, licenses],
   );
+  const sortDirection = useMemo<"asc" | "desc">(
+    () => (sortSelected[0] === "updated asc" ? "asc" : "desc"),
+    [sortSelected],
+  );
   const bundleNamesByLicenseId = useMemo(() => {
     const next = new Map<string, string[]>();
 
@@ -1453,7 +1604,7 @@ export default function LicensesPage() {
     for (const bundle of bundles) {
       if (bundle.isStarterBundle) continue;
 
-      for (const licenseId of bundle.licenseMetaobjectIds) {
+      for (const licenseId of bundle.resolvedLicenseMetaobjectIds) {
         const existing = next.get(licenseId) ?? [];
         existing.push(bundle.name);
         next.set(licenseId, existing);
@@ -1465,37 +1616,87 @@ export default function LicensesPage() {
   const filteredLicenses = useMemo(() => {
     const normalizedQuery = queryValue.trim().toLowerCase();
 
-    if (!normalizedQuery) return licensesWithGuardrailState;
+    return licensesWithGuardrailState
+      .filter((license) => {
+        const bundleNames = bundleNamesByLicenseId.get(license.id) ?? [];
+        const matchesQuery =
+          normalizedQuery.length === 0 ||
+          license.licenseName.toLowerCase().includes(normalizedQuery) ||
+          license.handle.toLowerCase().includes(normalizedQuery) ||
+          bundleNames.some((name) => name.toLowerCase().includes(normalizedQuery));
+        const matchesStatus =
+          selectedLicenseStatuses.length === 0 ||
+          selectedLicenseStatuses.includes(
+            getLicenseStatusFilterValue(license, licenseUsageById[license.id]),
+          );
+        const matchesSource =
+          selectedLicenseSources.length === 0 ||
+          selectedLicenseSources.includes(
+            license.isStarter ? "starter" : "custom",
+          );
 
-    return licensesWithGuardrailState.filter((license) => {
-      const bundleNames = bundleNamesByLicenseId.get(license.id) ?? [];
-      return (
-        license.licenseName.toLowerCase().includes(normalizedQuery) ||
-        license.handle.toLowerCase().includes(normalizedQuery) ||
-        bundleNames.some((name) => name.toLowerCase().includes(normalizedQuery))
-      );
-    });
-  }, [bundleNamesByLicenseId, licensesWithGuardrailState, queryValue]);
+        return matchesQuery && matchesStatus && matchesSource;
+      })
+      .sort((left, right) => {
+        const updatedComparison = compareUpdatedAt(
+          left.updatedAt,
+          right.updatedAt,
+          sortDirection,
+        );
+
+        if (updatedComparison !== 0) return updatedComparison;
+        return left.licenseName.localeCompare(right.licenseName);
+      });
+  }, [
+    bundleNamesByLicenseId,
+    licenseUsageById,
+    licensesWithGuardrailState,
+    queryValue,
+    selectedLicenseSources,
+    selectedLicenseStatuses,
+    sortDirection,
+  ]);
   const filteredBundles = useMemo(() => {
     const normalizedQuery = queryValue.trim().toLowerCase();
 
-    if (!normalizedQuery) return bundles;
+    return bundles
+      .filter((bundle) => {
+        if (!normalizedQuery) return true;
 
-    return bundles.filter((bundle) => {
-      return (
-        bundle.name.toLowerCase().includes(normalizedQuery) ||
-        bundle.licenseNames.some((name) =>
-          name.toLowerCase().includes(normalizedQuery),
-        )
-      );
-    });
-  }, [bundles, queryValue]);
+        return (
+          bundle.name.toLowerCase().includes(normalizedQuery) ||
+          bundle.licenseNames.some((name) =>
+            name.toLowerCase().includes(normalizedQuery),
+          ) ||
+          bundle.missingLicenseHandles.some((name) =>
+            name.toLowerCase().includes(normalizedQuery),
+          )
+        );
+      })
+      .sort((left, right) => {
+        const updatedComparison = compareUpdatedAt(
+          left.updatedAt,
+          right.updatedAt,
+          sortDirection,
+        );
+
+        if (updatedComparison !== 0) return updatedComparison;
+        return left.name.localeCompare(right.name);
+      });
+  }, [bundles, queryValue, sortDirection]);
   const {
     selectedResources: selectedLicenseIds,
     allResourcesSelected,
-    handleSelectionChange,
-    clearSelection,
+    handleSelectionChange: handleLicenseSelectionChange,
+    clearSelection: clearLicenseSelection,
   } = useIndexResourceState(filteredLicenses);
+  const {
+    selectedResources: selectedBundleRowIds,
+    handleSelectionChange: handleRawBundleSelectionChange,
+    clearSelection: clearBundleRowSelection,
+  } = useIndexResourceState(filteredBundles, {
+    resourceFilter: (bundle) => !bundle.isStarterBundle,
+  });
   const editorLicense = useMemo(
     () =>
       licensesWithGuardrailState.find(
@@ -1608,6 +1809,21 @@ export default function LicensesPage() {
     bundleFetcher.data && !bundleFetcher.data.success
       ? bundleFetcher.data.error || "Unable to save bundle changes right now."
       : null;
+  const editingBundle = useMemo(
+    () =>
+      editingBundleId
+        ? bundles.find((bundle) => bundle.id === editingBundleId) || null
+        : null,
+    [bundles, editingBundleId],
+  );
+  const selectedDeletableBundles = useMemo(
+    () =>
+      bundles.filter(
+        (bundle) =>
+          selectedBundleRowIds.includes(bundle.id) && !bundle.isStarterBundle,
+      ),
+    [bundles, selectedBundleRowIds],
+  );
   const hasCustomBundles = bundles.some((bundle) => !bundle.isStarterBundle);
   const addableBundles = useMemo(
     () => bundles.filter((bundle) => !bundle.isStarterBundle),
@@ -1646,10 +1862,97 @@ export default function LicensesPage() {
   }, [addableBundles, bundleSearchValue, bundleShowSelectedOnly, selectedBundleIds]);
   const selectedLicenseCount = selectedLicenseIds.length;
   const selectedLicenseLabel = pluralize(selectedLicenseCount, "license");
+  const selectedBundleRowCount = selectedBundleRowIds.length;
+  const selectedBundleDeleteLabel = pluralize(
+    selectedDeletableBundles.length,
+    "bundle",
+  );
+  const licenseFilters = useMemo<IndexFiltersProps["filters"]>(
+    () => [
+      {
+        key: "status",
+        label: "Status",
+        filter: (
+          <ChoiceList
+            title="Status"
+            titleHidden
+            choices={[
+              { label: "Ready", value: "ready" },
+              { label: "Unused", value: "unused" },
+              { label: "Needs setup", value: "needs_setup" },
+            ]}
+            selected={selectedLicenseStatuses}
+            onChange={(value) =>
+              setSelectedLicenseStatuses(value as LicenseStatusFilter[])
+            }
+            allowMultiple
+          />
+        ),
+        shortcut: false,
+      },
+      {
+        key: "source",
+        label: "Source",
+        filter: (
+          <ChoiceList
+            title="Source"
+            titleHidden
+            choices={[
+              { label: "Starter", value: "starter" },
+              { label: "Custom", value: "custom" },
+            ]}
+            selected={selectedLicenseSources}
+            onChange={(value) =>
+              setSelectedLicenseSources(value as LicenseSourceFilter[])
+            }
+            allowMultiple
+          />
+        ),
+        shortcut: false,
+      },
+    ],
+    [selectedLicenseSources, selectedLicenseStatuses],
+  );
+  const licenseAppliedFilters = useMemo(
+    () => [
+      ...(selectedLicenseStatuses.length === 0
+        ? []
+        : [
+            {
+              key: "status",
+              label: `Status: ${selectedLicenseStatuses
+                .map(getLicenseStatusFilterLabel)
+                .join(", ")}`,
+              onRemove: () => setSelectedLicenseStatuses([]),
+            },
+          ]),
+      ...(selectedLicenseSources.length === 0
+        ? []
+        : [
+            {
+              key: "source",
+              label: `Source: ${selectedLicenseSources
+                .map(getLicenseSourceFilterLabel)
+                .join(", ")}`,
+              onRemove: () => setSelectedLicenseSources([]),
+            },
+          ]),
+    ],
+    [selectedLicenseSources, selectedLicenseStatuses],
+  );
   const tableTabs = LICENSE_TABLE_TABS;
   const sortOptions = useMemo<IndexFiltersProps["sortOptions"]>(
     () => [
-      { label: "Updated newest", value: "updated desc", directionLabel: "Newest" },
+      {
+        label: "Updated newest",
+        value: "updated desc",
+        directionLabel: "Newest first",
+      },
+      {
+        label: "Updated oldest",
+        value: "updated asc",
+        directionLabel: "Oldest first",
+      },
     ],
     [],
   );
@@ -1931,20 +2234,24 @@ export default function LicensesPage() {
     if (
       bundleFetcher.data.intent === "create_bundle" ||
       bundleFetcher.data.intent === "update_bundle" ||
-      bundleFetcher.data.intent === "add_to_existing_bundles"
+      bundleFetcher.data.intent === "add_to_existing_bundles" ||
+      bundleFetcher.data.intent === "delete_bundle" ||
+      bundleFetcher.data.intent === "delete_bundles"
     ) {
       setBundleModalOpen(false);
       setAddToBundlesModalOpen(false);
+      setBundleDeleteTargets([]);
       setBundleModalSearchValue("");
       setBundleSearchValue("");
       setBundleModalShowSelectedOnly(false);
       setBundleShowSelectedOnly(false);
       setSelectedBundleIds([]);
       setEditingBundleId(null);
-      clearSelection();
+      clearLicenseSelection();
+      clearBundleRowSelection();
       navigate("/app/licenses", { replace: true });
     }
-  }, [bundleFetcher.data, clearSelection, navigate]);
+  }, [bundleFetcher.data, clearBundleRowSelection, clearLicenseSelection, navigate]);
 
   useEffect(() => {
     if (
@@ -2028,13 +2335,45 @@ export default function LicensesPage() {
     setBundleModalMode("update");
     setEditingBundleId(bundle.id);
     setBundleModalName(bundle.name);
-    setBundleModalSelectedLicenseIds(bundle.licenseMetaobjectIds);
+    setBundleModalSelectedLicenseIds(bundle.resolvedLicenseMetaobjectIds);
     setInitialBundleModalName(bundle.name);
-    setInitialBundleModalSelectedLicenseIds(bundle.licenseMetaobjectIds);
+    setInitialBundleModalSelectedLicenseIds(bundle.resolvedLicenseMetaobjectIds);
     setBundleModalSearchValue("");
     setBundleModalShowSelectedOnly(false);
     setBundleModalOpen(true);
   }, []);
+
+  const handleBundleRowSelectionChange = useCallback(
+    (
+      selectionType: Parameters<typeof handleRawBundleSelectionChange>[0],
+      isSelecting: Parameters<typeof handleRawBundleSelectionChange>[1],
+      selection?: Parameters<typeof handleRawBundleSelectionChange>[2],
+      position?: Parameters<typeof handleRawBundleSelectionChange>[3],
+    ) => {
+      if (selectionType === "single" && typeof selection === "string") {
+        const bundle = filteredBundles.find((candidate) => candidate.id === selection);
+        if (bundle?.isStarterBundle) {
+          return;
+        }
+      }
+
+      handleRawBundleSelectionChange(
+        selectionType,
+        isSelecting,
+        selection,
+        position,
+      );
+    },
+    [filteredBundles, handleRawBundleSelectionChange],
+  );
+
+  const handleOpenDeleteBundles = useCallback(() => {
+    if (selectedDeletableBundles.length === 0) {
+      return;
+    }
+
+    setBundleDeleteTargets(selectedDeletableBundles);
+  }, [selectedDeletableBundles]);
 
   const handleOpenAddToBundles = useCallback(() => {
     setSelectedBundleIds([]);
@@ -2104,6 +2443,10 @@ export default function LicensesPage() {
     setBundleModalShowSelectedOnly(false);
   }, []);
 
+  const handleCloseDeleteBundleModal = useCallback(() => {
+    setBundleDeleteTargets([]);
+  }, []);
+
   const handleCloseAddToBundlesModal = useCallback(() => {
     setAddToBundlesModalOpen(false);
     setSelectedBundleIds([]);
@@ -2146,8 +2489,11 @@ export default function LicensesPage() {
 
   const handleClearAll = useCallback(() => {
     setQueryValue("");
-    setSelectedTableView(0);
-  }, []);
+    setSelectedLicenseStatuses([]);
+    setSelectedLicenseSources([]);
+    clearLicenseSelection();
+    clearBundleRowSelection();
+  }, [clearBundleRowSelection, clearLicenseSelection]);
 
   const handleToggleBundleLicense = useCallback((licenseId: string) => {
     setBundleModalSelectedLicenseIds((current) =>
@@ -2217,6 +2563,17 @@ export default function LicensesPage() {
     editingBundleId,
     licensesWithGuardrailState,
   ]);
+
+  const handleDeleteBundles = useCallback(() => {
+    if (bundleDeleteTargets.length === 0) return;
+
+    const formData = new FormData();
+    formData.append("intent", "delete_bundles");
+    bundleDeleteTargets.forEach((bundle) => {
+      formData.append("bundleIds", bundle.id);
+    });
+    bundleFetcher.submit(formData, { method: "post" });
+  }, [bundleDeleteTargets, bundleFetcher]);
 
   const handleSubmitAddToBundles = useCallback(() => {
     const selectedLicenses = filteredLicenses.filter((license) =>
@@ -3032,6 +3389,11 @@ export default function LicensesPage() {
                     ? "Bundle created"
                     : bundleFetcher.data.intent === "update_bundle"
                       ? "Bundle updated"
+                      : bundleFetcher.data.intent === "delete_bundle" ||
+                          bundleFetcher.data.intent === "delete_bundles"
+                        ? (bundleFetcher.data.deletedBundleCount || 0) > 1
+                          ? "Bundles deleted"
+                          : "Bundle deleted"
                       : "Licenses included in bundle"
                 }
                 tone="success"
@@ -3081,7 +3443,7 @@ export default function LicensesPage() {
                       onAction: handleClearAll,
                       disabled:
                         !queryValue &&
-                        selectedTableView === 0 &&
+                        licenseAppliedFilters.length === 0 &&
                         (sortSelected[0] || "updated desc") === "updated desc",
                       loading: false,
                     }}
@@ -3090,10 +3452,13 @@ export default function LicensesPage() {
                     onSelect={(index) => {
                       setSelectedTableView(index);
                       setQueryValue("");
-                      clearSelection();
+                      clearLicenseSelection();
+                      clearBundleRowSelection();
                     }}
-                    filters={[]}
-                    appliedFilters={[]}
+                    filters={selectedTableView === 0 ? licenseFilters : []}
+                    appliedFilters={
+                      selectedTableView === 0 ? licenseAppliedFilters : []
+                    }
                     onClearAll={handleClearAll}
                     sortOptions={sortOptions}
                     sortSelected={sortSelected}
@@ -3101,6 +3466,7 @@ export default function LicensesPage() {
                     mode={mode}
                     setMode={setMode}
                     canCreateNewView={false}
+                    hideFilters={selectedTableView !== 0}
                   />
 
                   {selectedTableView === 0 ? (
@@ -3111,7 +3477,7 @@ export default function LicensesPage() {
                       selectedItemsCount={
                         allResourcesSelected ? "All" : selectedLicenseIds.length
                       }
-                      onSelectionChange={handleSelectionChange}
+                      onSelectionChange={handleLicenseSelectionChange}
                       promotedBulkActions={[
                         {
                           content: "Include in license bundles",
@@ -3426,9 +3792,20 @@ export default function LicensesPage() {
                     </Card>
                   ) : (
                     <IndexTable
-                      selectable={false}
+                      selectable
                       resourceName={{ singular: "bundle", plural: "bundles" }}
                       itemCount={filteredBundles.length}
+                      selectedItemsCount={selectedBundleRowCount}
+                      onSelectionChange={handleBundleRowSelectionChange}
+                      promotedBulkActions={[
+                        {
+                          content:
+                            selectedDeletableBundles.length > 1
+                              ? "Delete bundles"
+                              : "Delete bundle",
+                          onAction: handleOpenDeleteBundles,
+                        },
+                      ]}
                       headings={[
                         { title: "Bundle" },
                         { title: "Included licenses" },
@@ -3442,6 +3819,7 @@ export default function LicensesPage() {
                           key={bundle.id}
                           id={bundle.id}
                           position={index}
+                          selected={selectedBundleRowIds.includes(bundle.id)}
                         >
                           <IndexTable.Cell>
                             <Text
@@ -3456,17 +3834,33 @@ export default function LicensesPage() {
                           <IndexTable.Cell>
                             <BlockStack gap="050">
                               <Text as="p">
-                                {pluralize(bundle.licenseNames.length, "license")}
+                                {pluralize(
+                                  bundle.licenseNames.length,
+                                  "license",
+                                )}
                               </Text>
                               <Text as="p" variant="bodySm" tone="subdued">
                                 {bundle.licenseNames.slice(0, 3).join(", ") ||
-                                  "No licenses yet"}
+                                  (bundle.missingLicenseCount > 0
+                                    ? "No active licenses remain"
+                                    : "No licenses yet")}
                               </Text>
+                              {bundle.missingLicenseCount > 0 ? (
+                                <Text as="p" variant="bodySm" tone="critical">
+                                  {pluralize(
+                                    bundle.missingLicenseCount,
+                                    "license",
+                                  )}{" "}
+                                  removed. Review this bundle before using it.
+                                </Text>
+                              ) : null}
                             </BlockStack>
                           </IndexTable.Cell>
 
                           <IndexTable.Cell>
-                            {bundle.isDefault ? (
+                            {bundle.missingLicenseCount > 0 ? (
+                              <Badge tone="warning">Needs review</Badge>
+                            ) : bundle.isDefault ? (
                               <Badge tone="success">Default</Badge>
                             ) : (
                               <Text as="span" tone="subdued">
@@ -3487,12 +3881,19 @@ export default function LicensesPage() {
                                 Included by default
                               </Text>
                             ) : (
-                              <Button
-                                variant="plain"
-                                onClick={() => handleOpenEditBundle(bundle)}
+                              <div
+                                onClick={(event) => event.stopPropagation()}
+                                onKeyDown={(event) => event.stopPropagation()}
                               >
-                                Edit
-                              </Button>
+                                <Button
+                                  variant="plain"
+                                  onClick={() => handleOpenEditBundle(bundle)}
+                                >
+                                  {bundle.missingLicenseCount > 0
+                                    ? "Review"
+                                    : "Edit"}
+                                </Button>
+                              </div>
                             )}
                           </IndexTable.Cell>
                         </IndexTable.Row>
@@ -3581,6 +3982,7 @@ export default function LicensesPage() {
         emptyStateTitle="No licenses match"
         emptyStateBody="Try a different search or turn off Show all selected."
         hasUnsavedChanges={hasBundleModalUnsavedChanges}
+        closeGuardBehavior="outside-only"
         onSearchChange={setBundleModalSearchValue}
         onShowSelectedOnlyChange={setBundleModalShowSelectedOnly}
         onToggleItem={handleToggleBundleLicense}
@@ -3589,6 +3991,17 @@ export default function LicensesPage() {
         onPrimaryAction={handleSubmitBundle}
         onClose={handleCloseBundleModal}
       >
+        {bundleModalMode === "update" &&
+        editingBundle &&
+        editingBundle.missingLicenseCount > 0 ? (
+          <Banner tone="warning">
+            <p>
+              {pluralize(editingBundle.missingLicenseCount, "license")} were
+              removed from this bundle. Review the remaining licenses and save
+              to clean it up.
+            </p>
+          </Banner>
+        ) : null}
         <TextField
           label="Bundle name"
           value={bundleModalName}
@@ -3596,6 +4009,57 @@ export default function LicensesPage() {
           autoComplete="off"
         />
       </SelectableListModal>
+
+      <Modal
+        open={bundleDeleteTargets.length > 0}
+        onClose={handleCloseDeleteBundleModal}
+        title={
+          bundleDeleteTargets.length > 1 ? "Delete bundles" : "Delete bundle"
+        }
+        primaryAction={{
+          content:
+            bundleDeleteTargets.length > 1 ? "Delete bundles" : "Delete bundle",
+          destructive: true,
+          onAction: handleDeleteBundles,
+          loading:
+            bundleFetcher.state !== "idle" &&
+            bundleFetcher.formData?.get("intent") === "delete_bundles",
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: handleCloseDeleteBundleModal,
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">
+              {bundleDeleteTargets.length > 1 ? (
+                <>Delete {selectedBundleDeleteLabel}?</>
+              ) : (
+                <>
+                  Delete{" "}
+                  <strong>{bundleDeleteTargets[0]?.name || "this bundle"}</strong>
+                  ?
+                </>
+              )}
+            </Text>
+            <Text as="p" tone="subdued">
+              This removes the reusable upload setup only. It does not delete
+              license templates or change existing beat offers.
+            </Text>
+            {bundleDeleteTargets.some(
+              (bundle) => bundle.missingLicenseCount > 0,
+            ) ? (
+              <Text as="p" tone="subdued">
+                Some selected bundles already need review because licenses were
+                removed.
+              </Text>
+            ) : null}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
 
       <LegalGuardrailModal
         open={Boolean(guardrailModalTemplate)}
