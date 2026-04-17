@@ -12,6 +12,9 @@ import {
   Spinner,
   Icon,
   Box,
+  Popover,
+  Scrollable,
+  Tag,
   TextField,
 } from "@shopify/polaris";
 import {
@@ -21,6 +24,7 @@ import {
   CheckCircleIcon,
   ImageIcon,
   PlusIcon,
+  PlusCircleIcon,
 } from "@shopify/polaris-icons";
 import { validateUploadFile, ALLOWED_FILE_TYPES } from "../services/bunnyCdn";
 import { FileFormatBadge, getFileFormatLabel } from "./FileFormatBadge";
@@ -70,13 +74,38 @@ export interface StemsAddonSelections {
   [tierId: string]: boolean;
 }
 
+export interface LicenseOfferGroup {
+  id: string;
+  title: string;
+  kind: "bundle" | "individual";
+  licenseNames: string[];
+  warning?: string;
+  isEditing?: boolean;
+  availableLicenses?: Array<{
+    id: string;
+    name: string;
+    selected: boolean;
+  }>;
+}
+
+export interface AddableLicenseBundleItem {
+  id: string;
+  title: string;
+  subtitle?: string;
+  warning?: string;
+  disabled?: boolean;
+}
+
 export interface LicenseFileAssignmentProps {
   licenses: LicenseTier[];
-  selectedBundleNames?: string[];
-  bundleWarnings?: string[];
-  selectedIndividualLicenseNames?: string[];
-  selectedLicenseNames?: string[];
-  onChooseOffers?: () => void;
+  offerGroups?: LicenseOfferGroup[];
+  addableBundles?: AddableLicenseBundleItem[];
+  onAddBundle?: (bundleId: string) => void;
+  onAddIndividual?: () => void;
+  onEditGroup?: (groupId: string) => void;
+  onDeleteGroup?: (groupId: string) => void;
+  onDoneEditingGroup?: (groupId: string) => void;
+  onToggleGroupLicense?: (groupId: string, licenseId: string) => void;
   onUseLastUsedOffers?: () => void;
   hasLastUsedOfferSelection?: boolean;
   uploadedFiles?: UploadedFile[];
@@ -140,11 +169,14 @@ const getTierMeta = (tier: LicenseTier) => {
 
 export function LicenseFileAssignment({
   licenses,
-  selectedBundleNames = [],
-  bundleWarnings = [],
-  selectedIndividualLicenseNames = [],
-  selectedLicenseNames = [],
-  onChooseOffers,
+  offerGroups = [],
+  addableBundles = [],
+  onAddBundle,
+  onAddIndividual,
+  onEditGroup,
+  onDeleteGroup,
+  onDoneEditingGroup,
+  onToggleGroupLicense,
   onUseLastUsedOffers,
   hasLastUsedOfferSelection = false,
   uploadedFiles: externalFiles,
@@ -179,6 +211,16 @@ export function LicenseFileAssignment({
   const [coverArtPreviewUrl, setCoverArtPreviewUrl] = useState<string | null>(
     null,
   );
+  const [isOfferPickerButtonHovered, setIsOfferPickerButtonHovered] =
+    useState(false);
+  const [addOfferMenuOpen, setAddOfferMenuOpen] = useState(false);
+  const [addOfferMenuSearchValue, setAddOfferMenuSearchValue] = useState("");
+  const [activeGroupPopoverId, setActiveGroupPopoverId] = useState<
+    string | null
+  >(null);
+  const [groupSearchValues, setGroupSearchValues] = useState<
+    Record<string, string>
+  >({});
 
   const uploadedFiles = externalFiles ?? internalFiles;
   const licenseFiles = externalLicenseFiles ?? internalLicenseFiles;
@@ -187,6 +229,15 @@ export function LicenseFileAssignment({
     externalStemsAddonSelections ?? internalStemsAddonSelections;
   const previewFile = externalPreviewFile ?? internalPreviewFile;
   const coverArtFile = externalCoverArtFile ?? internalCoverArtFile;
+  const hasSelectedOffers = licenses.length > 0;
+  const filteredAddableBundles = addableBundles.filter((bundle) => {
+    const normalizedQuery = addOfferMenuSearchValue.trim().toLowerCase();
+    if (!normalizedQuery) return true;
+    return [bundle.title, bundle.subtitle || "", bundle.warning || ""]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery);
+  });
 
   const buildAutomaticLicenseFiles = useCallback(
     (newFiles: UploadedFile[]) => {
@@ -885,110 +936,392 @@ export function LicenseFileAssignment({
           borderColor="border"
         >
           <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="start">
-              <BlockStack gap="100">
-                <Text variant="headingMd" as="h2">
-                  License offers
-                </Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Set the price for each offer and review what the buyer will
-                  receive.
-                </Text>
-              </BlockStack>
+            <BlockStack gap="100">
+              <Text variant="headingMd" as="h2">
+                License offers
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Add bundles or individual licenses, then set the price for each
+                offer and review what the buyer will receive.
+              </Text>
+            </BlockStack>
 
-              <InlineStack gap="200">
-                {licenses.length === 0 &&
-                hasLastUsedOfferSelection &&
-                onUseLastUsedOffers ? (
-                  <Button onClick={onUseLastUsedOffers}>Use last used</Button>
-                ) : null}
-                {onChooseOffers ? (
-                  <Button
-                    variant={licenses.length > 0 ? "secondary" : "primary"}
-                    onClick={onChooseOffers}
+            <Box borderWidth="025" borderColor="border" borderRadius="200">
+              <BlockStack gap="0">
+                {offerGroups.map((group, index) => (
+                  <Box
+                    key={group.id}
+                    padding="300"
+                    borderBlockEndWidth={
+                      index < offerGroups.length - 1 ||
+                      onAddBundle ||
+                      onAddIndividual
+                        ? "025"
+                        : "0"
+                    }
+                    borderColor="border"
                   >
-                    {licenses.length > 0 ? "Edit offers" : "Choose offers"}
-                  </Button>
-                ) : null}
-              </InlineStack>
-            </InlineStack>
+                    {group.isEditing && group.kind === "bundle" ? (
+                      <BlockStack gap="300">
+                        <BlockStack gap="150">
+                          <Text as="p" variant="bodyMd" fontWeight="medium">
+                            {group.title}
+                          </Text>
 
-            <InlineStack gap="200" blockAlign="center">
-              <Badge tone={licenses.length > 0 ? "success" : "attention"}>
-                {`${licenses.length} selected`}
-              </Badge>
-              {licenses.length === 0 ? (
-                <Text as="span" variant="bodySm" tone="subdued">
-                  Choose bundles or individual licenses for this beat.
-                </Text>
-              ) : null}
-            </InlineStack>
+                          {group.warning ? (
+                            <Text as="p" variant="bodySm" tone="critical">
+                              {group.warning}
+                            </Text>
+                          ) : null}
+                        </BlockStack>
 
-            {selectedBundleNames.length > 0 ? (
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" fontWeight="medium">
-                  Bundles
-                </Text>
-                <InlineStack gap="150" wrap>
-                  {selectedBundleNames.map((bundleName) => (
-                    <Badge key={bundleName}>{bundleName}</Badge>
-                  ))}
-                </InlineStack>
-              </BlockStack>
-            ) : null}
+                        <Popover
+                          active={activeGroupPopoverId === group.id}
+                          autofocusTarget="first-node"
+                          preferredAlignment="left"
+                          onClose={() => setActiveGroupPopoverId(null)}
+                          activator={
+                            <Box
+                              borderWidth="025"
+                              borderColor="border"
+                              borderRadius="200"
+                              padding="200"
+                            >
+                              <BlockStack gap="200">
+                                {group.licenseNames.length > 0 ? (
+                                  <InlineStack gap="150" wrap>
+                                    {group.licenseNames.map((licenseName) => {
+                                      const matchedLicense = (
+                                        group.availableLicenses || []
+                                      ).find(
+                                        (license) =>
+                                          license.name === licenseName &&
+                                          license.selected,
+                                      );
 
-            {bundleWarnings.length > 0 ? (
-              <BlockStack gap="100">
-                {bundleWarnings.map((warning) => (
-                  <Text key={warning} as="p" variant="bodySm" tone="critical">
-                    {warning}
-                  </Text>
+                                      return (
+                                        <Tag
+                                          key={`${group.id}-${licenseName}`}
+                                          onRemove={() => {
+                                            if (matchedLicense) {
+                                              onToggleGroupLicense?.(
+                                                group.id,
+                                                matchedLicense.id,
+                                              );
+                                            }
+                                          }}
+                                        >
+                                          {licenseName}
+                                        </Tag>
+                                      );
+                                    })}
+                                  </InlineStack>
+                                ) : (
+                                  <Text as="p" variant="bodySm" tone="subdued">
+                                    No active licenses are selected in this
+                                    bundle.
+                                  </Text>
+                                )}
+
+                                <input
+                                  value={groupSearchValues[group.id] || ""}
+                                  onFocus={() => setActiveGroupPopoverId(group.id)}
+                                  onChange={(event) => {
+                                    setGroupSearchValues((current) => ({
+                                      ...current,
+                                      [group.id]: event.currentTarget.value,
+                                    }));
+                                    setActiveGroupPopoverId(group.id);
+                                  }}
+                                  placeholder="Search licenses"
+                                  style={{
+                                    border: "none",
+                                    outline: "none",
+                                    padding: 0,
+                                    background: "transparent",
+                                    fontSize: "16px",
+                                    lineHeight: "24px",
+                                    width: "100%",
+                                    color: "var(--p-color-text)",
+                                  }}
+                                />
+                              </BlockStack>
+                            </Box>
+                          }
+                        >
+                          <Box minWidth="320px">
+                            <Scrollable shadow style={{ maxHeight: "240px" }}>
+                              <BlockStack gap="0">
+                                {(group.availableLicenses || [])
+                                  .filter((license) => {
+                                    const normalizedQuery = (
+                                      groupSearchValues[group.id] || ""
+                                    )
+                                      .trim()
+                                      .toLowerCase();
+                                    if (!normalizedQuery) return true;
+                                    return license.name
+                                      .toLowerCase()
+                                      .includes(normalizedQuery);
+                                  })
+                                  .map((license) => (
+                                    <Box
+                                      key={`${group.id}-${license.id}`}
+                                      paddingInline="200"
+                                      paddingBlock="050"
+                                      background={
+                                        license.selected
+                                          ? "bg-surface-secondary"
+                                          : "bg-surface"
+                                      }
+                                    >
+                                      <Checkbox
+                                        label={license.name}
+                                        checked={license.selected}
+                                        onChange={() =>
+                                          onToggleGroupLicense?.(
+                                            group.id,
+                                            license.id,
+                                          )
+                                        }
+                                      />
+                                    </Box>
+                                  ))}
+                              </BlockStack>
+                            </Scrollable>
+                          </Box>
+                        </Popover>
+
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Button
+                            tone="critical"
+                            variant="secondary"
+                            onClick={() => onDeleteGroup?.(group.id)}
+                          >
+                            Delete
+                          </Button>
+                          <Button
+                            variant="primary"
+                            onClick={() => onDoneEditingGroup?.(group.id)}
+                          >
+                            Done
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onEditGroup?.(group.id)}
+                        style={{
+                          appearance: "none",
+                          border: "none",
+                          background: "transparent",
+                          padding: 0,
+                          margin: 0,
+                          width: "100%",
+                          textAlign: "left",
+                          cursor: onEditGroup ? "pointer" : "default",
+                        }}
+                      >
+                        <BlockStack gap="150">
+                          <Text as="p" variant="bodyMd" fontWeight="medium">
+                            {group.title}
+                          </Text>
+
+                          {group.licenseNames.length > 0 ? (
+                            <InlineStack gap="150" wrap>
+                              {group.licenseNames.map((licenseName) => (
+                                <Badge key={`${group.id}-${licenseName}`}>
+                                  {licenseName}
+                                </Badge>
+                              ))}
+                            </InlineStack>
+                          ) : (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              No active licenses are included right now.
+                            </Text>
+                          )}
+
+                          {group.warning ? (
+                            <Text as="p" variant="bodySm" tone="critical">
+                              {group.warning}
+                            </Text>
+                          ) : null}
+                        </BlockStack>
+                      </button>
+                    )}
+                  </Box>
                 ))}
-              </BlockStack>
-            ) : null}
 
-            {selectedIndividualLicenseNames.length > 0 ? (
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" fontWeight="medium">
-                  Individual licenses
-                </Text>
-                <InlineStack gap="150" wrap>
-                  {selectedIndividualLicenseNames.map((licenseName) => (
-                    <Badge key={licenseName}>{licenseName}</Badge>
-                  ))}
-                </InlineStack>
-              </BlockStack>
-            ) : null}
+                {onAddBundle || onAddIndividual ? (
+                  <Box padding="0">
+                    <Popover
+                      active={addOfferMenuOpen}
+                      autofocusTarget="first-node"
+                      preferredAlignment="left"
+                      onClose={() => setAddOfferMenuOpen(false)}
+                      activator={
+                        <button
+                          type="button"
+                          onClick={() => setAddOfferMenuOpen((open) => !open)}
+                          onMouseEnter={() =>
+                            setIsOfferPickerButtonHovered(true)
+                          }
+                          onMouseLeave={() =>
+                            setIsOfferPickerButtonHovered(false)
+                          }
+                          style={{
+                            appearance: "none",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            border: "none",
+                            background: isOfferPickerButtonHovered
+                              ? "var(--p-color-bg-surface-secondary)"
+                              : "transparent",
+                            cursor: "pointer",
+                            padding: hasSelectedOffers ? "12px 16px" : "4px 0",
+                            textAlign: "left",
+                            borderRadius: "10px",
+                            width: hasSelectedOffers ? "100%" : "auto",
+                            transition:
+                              "background-color 120ms var(--p-motion-ease-out)",
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Icon source={PlusCircleIcon} />
+                          </span>
+                          {hasSelectedOffers ? (
+                            <Text as="span" variant="bodyMd">
+                              Add another license
+                            </Text>
+                          ) : (
+                            <Text as="span" variant="bodySm">
+                              Choose bundles first, then fine-tune with
+                              individual licenses.
+                            </Text>
+                          )}
+                        </button>
+                      }
+                    >
+                      <Box minWidth="320px" maxWidth="360px">
+                        <Box
+                          padding="200"
+                          borderBlockEndWidth="025"
+                          borderColor="border"
+                        >
+                          <BlockStack gap="200">
+                            <TextField
+                              label="Search bundles"
+                              labelHidden
+                              autoComplete="off"
+                              placeholder="Search"
+                              value={addOfferMenuSearchValue}
+                              onChange={setAddOfferMenuSearchValue}
+                            />
+                            <BlockStack gap="100">
+                              <Text as="p" variant="bodyMd" fontWeight="medium">
+                                Recommended
+                              </Text>
+                              <Scrollable shadow style={{ maxHeight: "220px" }}>
+                                <BlockStack gap="050">
+                                  {filteredAddableBundles.length > 0 ? (
+                                    filteredAddableBundles.map((bundle) => (
+                                      <button
+                                        key={bundle.id}
+                                        type="button"
+                                        disabled={bundle.disabled}
+                                        onClick={() => {
+                                          onAddBundle?.(bundle.id);
+                                          setAddOfferMenuOpen(false);
+                                          setAddOfferMenuSearchValue("");
+                                        }}
+                                        style={{
+                                          appearance: "none",
+                                          border: "none",
+                                          background: "transparent",
+                                        cursor: bundle.disabled
+                                          ? "not-allowed"
+                                          : "pointer",
+                                        textAlign: "left",
+                                          padding: "6px 8px",
+                                          borderRadius: "10px",
+                                          opacity: bundle.disabled ? 0.55 : 1,
+                                        }}
+                                      >
+                                        <Text as="span" variant="bodyMd">
+                                          {bundle.title}
+                                        </Text>
+                                      </button>
+                                    ))
+                                  ) : (
+                                    <Text as="p" variant="bodySm" tone="subdued">
+                                      No bundles match this search.
+                                    </Text>
+                                  )}
+                                </BlockStack>
+                              </Scrollable>
+                            </BlockStack>
+                          </BlockStack>
+                        </Box>
 
-            {selectedLicenseNames.length > 0 ? (
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" fontWeight="medium">
-                  Final offers for this beat
-                </Text>
-                <InlineStack gap="150" wrap>
-                  {selectedLicenseNames.map((licenseName) => (
-                    <Badge key={licenseName}>{licenseName}</Badge>
-                  ))}
-                </InlineStack>
+                        <Box padding="150">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onAddIndividual?.();
+                              setAddOfferMenuOpen(false);
+                              setAddOfferMenuSearchValue("");
+                            }}
+                            style={{
+                              appearance: "none",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              border: "none",
+                              background: "var(--p-color-bg-surface-secondary)",
+                              cursor: "pointer",
+                              padding: "6px 10px",
+                              borderRadius: "10px",
+                            }}
+                          >
+                            <Icon source={PlusCircleIcon} />
+                            <Text as="span" variant="bodySm">
+                              Add individual
+                            </Text>
+                          </button>
+                        </Box>
+                      </Box>
+                    </Popover>
+                  </Box>
+                ) : null}
               </BlockStack>
+            </Box>
+
+            {!hasSelectedOffers &&
+            hasLastUsedOfferSelection &&
+            onUseLastUsedOffers ? (
+              <InlineStack gap="200" blockAlign="center">
+                <Button variant="plain" onClick={onUseLastUsedOffers}>
+                  Use last used offers
+                </Button>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  Start from the most recent draft or upload setup.
+                </Text>
+              </InlineStack>
             ) : null}
           </BlockStack>
         </Box>
 
         <Box padding="0">
-          {licenses.length === 0 ? (
-            <Box padding="400">
-              <BlockStack gap="200">
-                <Text as="p" variant="bodySm" tone="subdued">
-                  No license offers selected yet.
-                </Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Choose offers to set pricing and review the delivery package
-                  for this beat.
-                </Text>
-              </BlockStack>
-            </Box>
-          ) : (
+          {hasSelectedOffers ? (
             <div style={{ overflowX: "auto" }}>
               <table
                 style={{
@@ -1184,7 +1517,7 @@ export function LicenseFileAssignment({
                 </tbody>
               </table>
             </div>
-          )}
+          ) : null}
         </Box>
       </Card>
     </BlockStack>
