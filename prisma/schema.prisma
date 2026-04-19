@@ -90,6 +90,7 @@ model BeatDraft {
   bpm                      Int?
   key                      String?
   producerAlias            String?
+  tagsJson                 String   @default("[]")
   genreGidsJson            String   @default("[]")
   producerGidsJson         String   @default("[]")
   licenseFilesJson         String   @default("{}")

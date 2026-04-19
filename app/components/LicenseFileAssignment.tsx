@@ -16,6 +16,7 @@ import {
   Scrollable,
   Tag,
   TextField,
+  InlineError,
 } from "@shopify/polaris";
 import {
   XIcon,
@@ -108,6 +109,13 @@ export interface LicenseFileAssignmentProps {
   onToggleGroupLicense?: (groupId: string, licenseId: string) => void;
   onUseLastUsedOffers?: () => void;
   hasLastUsedOfferSelection?: boolean;
+  offerError?: string | null;
+  previewError?: string | null;
+  priceErrors?: Record<string, string>;
+  deliveryErrors?: Record<string, string>;
+  onPriceBlur?: (licenseId: string) => void;
+  onPreviewInteraction?: () => void;
+  onDeliveryInteraction?: () => void;
   uploadedFiles?: UploadedFile[];
   licenseFiles?: LicenseFiles;
   licensePrices?: Record<string, string>;
@@ -165,6 +173,79 @@ const getTierMeta = (tier: LicenseTier) => {
   };
 };
 
+function InlineCriticalError({
+  message,
+  fieldID,
+}: {
+  message: string;
+  fieldID: string;
+}) {
+  return <InlineError message={message} fieldID={fieldID} />;
+}
+
+function SwitchButton({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      style={{
+        appearance: "none",
+        border: "none",
+        background: "transparent",
+        padding: 0,
+        margin: 0,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <span
+        style={{
+          position: "relative",
+          display: "inline-flex",
+          alignItems: "center",
+          width: "28px",
+          height: "16px",
+          borderRadius: "999px",
+          background: checked
+            ? "var(--p-color-bg-fill-brand)"
+            : "var(--p-color-bg-fill-tertiary)",
+          boxShadow: "inset 0 0 0 1px var(--p-color-border-secondary)",
+          transition:
+            "background-color 120ms var(--p-motion-ease-out), opacity 120ms var(--p-motion-ease-out)",
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: "2px",
+            left: checked ? "14px" : "2px",
+            width: "12px",
+            height: "12px",
+            borderRadius: "999px",
+            background: "var(--p-color-bg-surface)",
+            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.16)",
+            transition: "left 120ms var(--p-motion-ease-out)",
+          }}
+        />
+      </span>
+    </button>
+  );
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function LicenseFileAssignment({
@@ -179,6 +260,13 @@ export function LicenseFileAssignment({
   onToggleGroupLicense,
   onUseLastUsedOffers,
   hasLastUsedOfferSelection = false,
+  offerError,
+  previewError,
+  priceErrors = {},
+  deliveryErrors = {},
+  onPriceBlur,
+  onPreviewInteraction,
+  onDeliveryInteraction,
   uploadedFiles: externalFiles,
   licenseFiles: externalLicenseFiles,
   licensePrices: externalLicensePrices,
@@ -215,7 +303,14 @@ export function LicenseFileAssignment({
     useState(false);
   const [addOfferMenuOpen, setAddOfferMenuOpen] = useState(false);
   const [addOfferMenuSearchValue, setAddOfferMenuSearchValue] = useState("");
+  const [hoveredAddableBundleId, setHoveredAddableBundleId] = useState<
+    string | null
+  >(null);
+  const [isAddIndividualHovered, setIsAddIndividualHovered] = useState(false);
   const [activeGroupPopoverId, setActiveGroupPopoverId] = useState<
+    string | null
+  >(null);
+  const [activeDeliveryPopoverId, setActiveDeliveryPopoverId] = useState<
     string | null
   >(null);
   const [groupSearchValues, setGroupSearchValues] = useState<
@@ -376,6 +471,7 @@ export function LicenseFileAssignment({
   // Preview
   const handlePreviewDrop = useCallback(
     async (_: File[], accepted: File[], rejected: File[]) => {
+      onPreviewInteraction?.();
       if (rejected.length > 0) {
         setRejectedFiles([{ file: rejected[0], error: "Use MP3." }]);
         return;
@@ -429,6 +525,7 @@ export function LicenseFileAssignment({
       coverArtFile,
       licensePrices,
       stemsAddonSelections,
+      onPreviewInteraction,
       onUpload,
       formatFileSize,
       updateState,
@@ -438,6 +535,7 @@ export function LicenseFileAssignment({
   // License files pool
   const handleLicenseFilesDrop = useCallback(
     async (_: File[], accepted: File[], rejected: File[]) => {
+      onDeliveryInteraction?.();
       if (rejected.length > 0) {
         setRejectedFiles(
           rejected.map((f) => ({ file: f, error: "File type not supported" })),
@@ -529,6 +627,7 @@ export function LicenseFileAssignment({
       coverArtFile,
       licensePrices,
       stemsAddonSelections,
+      onDeliveryInteraction,
       onUpload,
       detectFileType,
       formatFileSize,
@@ -537,19 +636,22 @@ export function LicenseFileAssignment({
   );
 
   const removePreviewFile = useCallback(
-    () =>
+    () => {
+      onPreviewInteraction?.();
       updateState(
         uploadedFiles,
         null,
         coverArtFile,
         licensePrices,
         stemsAddonSelections,
-      ),
+      );
+    },
     [
       uploadedFiles,
       coverArtFile,
       licensePrices,
       stemsAddonSelections,
+      onPreviewInteraction,
       updateState,
     ],
   );
@@ -557,6 +659,7 @@ export function LicenseFileAssignment({
   const removeLicenseFile = useCallback(
     (fileId: string) => {
       const updated = uploadedFiles.filter((f) => f.id !== fileId);
+      onDeliveryInteraction?.();
       updateState(
         updated,
         previewFile,
@@ -571,6 +674,7 @@ export function LicenseFileAssignment({
       coverArtFile,
       licensePrices,
       stemsAddonSelections,
+      onDeliveryInteraction,
       updateState,
     ],
   );
@@ -595,23 +699,31 @@ export function LicenseFileAssignment({
     (file) => file.purpose === "stems",
   );
 
-  const packageStatusMessage = (
-    missingFiles: string[],
-    hasAssignments: boolean,
-    tier: LicenseTier,
-  ) => {
-    if (uploadedFiles.length === 0)
-      return "Upload delivery files to build this package.";
-    if (missingFiles.length > 0) {
-      return `Missing: ${missingFiles.map((file) => getFileFormatLabel(file)).join(", ")}`;
+  const getPackageReadiness = (requiredCount: number, missingCount: number) => {
+    if (requiredCount === 0 || missingCount === 0) {
+      return {
+        label: "Ready",
+        tone: "success" as const,
+      };
     }
-    if (stemsAvailableAsAddon(tier.stemsPolicy)) {
-      return hasSharedStemsFile
-        ? "Base package ready. Shared stems ZIP can fulfill stems add-on orders."
-        : "Base package ready. Upload one stems ZIP to fulfill stems add-on orders.";
+
+    return {
+      label: "Needs files",
+      tone: "critical" as const,
+    };
+  };
+
+  const getPackageSummary = (requiredCount: number, missingCount: number) => {
+    if (requiredCount === 0) return "No required files for this license.";
+
+    const readyCount = Math.max(requiredCount - missingCount, 0);
+    const noun = requiredCount === 1 ? "file" : "files";
+
+    if (missingCount === 0) {
+      return `${requiredCount} required ${noun} ready`;
     }
-    if (hasAssignments) return "Matches this license template.";
-    return "No matching package files uploaded yet.";
+
+    return `${readyCount} of ${requiredCount} required ${noun} ready`;
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -658,6 +770,11 @@ export function LicenseFileAssignment({
             <BlockStack gap="150">
               <Text variant="bodySm" as="p" tone="subdued">
                 Cover Art
+              </Text>
+              <Text variant="bodyXs" as="p" tone="subdued">
+                Upload at least 1024 x 1024 px for best quality. Ideal size is
+                1400 x 1400 px for sharper retina and zoomed-in views. Square is
+                best, but near-square art like 4:5 or 5:4 is okay.
               </Text>
               {!coverArtFile ? (
                 <div style={{ height: "160px" }}>
@@ -714,8 +831,12 @@ export function LicenseFileAssignment({
                       style={{
                         width: "100%",
                         height: "100%",
-                        objectFit: "cover",
+                        objectFit: "contain",
+                        objectPosition: "center",
                         display: "block",
+                        padding: "12px",
+                        background:
+                          "radial-gradient(circle at center, rgba(0, 0, 0, 0.04), transparent 72%), var(--p-color-bg-surface-secondary)",
                       }}
                     />
                   ) : (
@@ -761,67 +882,96 @@ export function LicenseFileAssignment({
                 </BlockStack>
 
                 {!previewFile ? (
-                  <DropZone
-                    onDrop={handlePreviewDrop}
-                    accept="audio/mpeg"
-                    type="file"
-                    allowMultiple={false}
-                    disabled={uploading}
+                  <div
+                    style={{
+                      borderRadius: "12px",
+                      boxShadow: previewError
+                        ? "0 0 0 1px var(--p-color-border-critical)"
+                        : undefined,
+                    }}
                   >
-                    {uploading ? (
-                      <Box padding="400">
-                        <InlineStack align="center" gap="200">
-                          <Spinner size="small" />
-                          <Text as="span" variant="bodySm">
-                            Uploading…
-                          </Text>
-                        </InlineStack>
-                      </Box>
-                    ) : (
-                      <DropZone.FileUpload
-                        actionTitle="Add preview MP3"
-                        actionHint=".mp3 only"
-                      />
-                    )}
-                  </DropZone>
-                ) : (
-                  <Box
-                    borderWidth="025"
-                    borderColor="border"
-                    borderRadius="200"
-                    padding="200"
-                  >
-                    <InlineStack gap="300" blockAlign="center">
-                      <FileFormatBadge format="preview" />
-                      <BlockStack gap="0">
-                        <div
-                          style={{
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            maxWidth: "260px",
-                          }}
-                        >
-                          <Text as="span" variant="bodySm" fontWeight="medium">
-                            {previewFile.name}
-                          </Text>
-                        </div>
-                        <Text as="span" variant="bodyXs" tone="subdued">
-                          {previewFile.size}
-                        </Text>
-                      </BlockStack>
-                      <div style={{ marginLeft: "auto" }}>
-                        <Button
-                          icon={XIcon}
-                          variant="plain"
-                          onClick={removePreviewFile}
-                          disabled={uploading}
-                          accessibilityLabel="Remove preview"
+                    <DropZone
+                      onDrop={handlePreviewDrop}
+                      accept="audio/mpeg"
+                      type="file"
+                      allowMultiple={false}
+                      disabled={uploading}
+                    >
+                      {uploading ? (
+                        <Box padding="400">
+                          <InlineStack align="center" gap="200">
+                            <Spinner size="small" />
+                            <Text as="span" variant="bodySm">
+                              Uploading…
+                            </Text>
+                          </InlineStack>
+                        </Box>
+                      ) : (
+                        <DropZone.FileUpload
+                          actionTitle="Add preview MP3"
+                          actionHint=".mp3 only"
                         />
-                      </div>
-                    </InlineStack>
-                  </Box>
+                      )}
+                    </DropZone>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      borderRadius: "8px",
+                      border: previewError
+                        ? "1px solid var(--p-color-border-critical)"
+                        : undefined,
+                      background: previewError
+                        ? "var(--p-color-bg-surface-critical)"
+                        : undefined,
+                    }}
+                  >
+                    <Box
+                      borderWidth="025"
+                      borderColor="border"
+                      borderRadius="200"
+                      padding="200"
+                      background="bg-surface"
+                    >
+                      <InlineStack gap="300" blockAlign="center">
+                        <FileFormatBadge format="preview" />
+                        <BlockStack gap="0">
+                          <div
+                            style={{
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              maxWidth: "260px",
+                            }}
+                          >
+                            <Text as="span" variant="bodySm" fontWeight="medium">
+                              {previewFile.name}
+                            </Text>
+                          </div>
+                          <Text as="span" variant="bodyXs" tone="subdued">
+                            {previewFile.size}
+                          </Text>
+                        </BlockStack>
+                        <div style={{ marginLeft: "auto" }}>
+                          <Button
+                            icon={XIcon}
+                            variant="plain"
+                            onClick={removePreviewFile}
+                            disabled={uploading}
+                            accessibilityLabel="Remove preview"
+                          />
+                        </div>
+                      </InlineStack>
+                    </Box>
+                  </div>
                 )}
+
+                {previewError ? (
+                  <InlineCriticalError
+                    message={previewError}
+                    fieldID="preview-audio"
+                  />
+                ) : null}
               </BlockStack>
             </BlockStack>
           </div>
@@ -946,364 +1096,403 @@ export function LicenseFileAssignment({
               </Text>
             </BlockStack>
 
-            <Box borderWidth="025" borderColor="border" borderRadius="200">
-              <BlockStack gap="0">
-                {offerGroups.map((group, index) => (
-                  <Box
-                    key={group.id}
-                    padding="300"
-                    borderBlockEndWidth={
-                      index < offerGroups.length - 1 ||
-                      onAddBundle ||
-                      onAddIndividual
-                        ? "025"
-                        : "0"
-                    }
-                    borderColor="border"
-                  >
-                    {group.isEditing && group.kind === "bundle" ? (
-                      <BlockStack gap="300">
-                        <BlockStack gap="150">
-                          <Text as="p" variant="bodyMd" fontWeight="medium">
-                            {group.title}
-                          </Text>
-
-                          {group.warning ? (
-                            <Text as="p" variant="bodySm" tone="critical">
-                              {group.warning}
-                            </Text>
-                          ) : null}
-                        </BlockStack>
-
-                        <Popover
-                          active={activeGroupPopoverId === group.id}
-                          autofocusTarget="first-node"
-                          preferredAlignment="left"
-                          onClose={() => setActiveGroupPopoverId(null)}
-                          activator={
-                            <Box
-                              borderWidth="025"
-                              borderColor="border"
-                              borderRadius="200"
-                              padding="200"
-                            >
-                              <BlockStack gap="200">
-                                {group.licenseNames.length > 0 ? (
-                                  <InlineStack gap="150" wrap>
-                                    {group.licenseNames.map((licenseName) => {
-                                      const matchedLicense = (
-                                        group.availableLicenses || []
-                                      ).find(
-                                        (license) =>
-                                          license.name === licenseName &&
-                                          license.selected,
-                                      );
-
-                                      return (
-                                        <Tag
-                                          key={`${group.id}-${licenseName}`}
-                                          onRemove={() => {
-                                            if (matchedLicense) {
-                                              onToggleGroupLicense?.(
-                                                group.id,
-                                                matchedLicense.id,
-                                              );
-                                            }
-                                          }}
-                                        >
-                                          {licenseName}
-                                        </Tag>
-                                      );
-                                    })}
-                                  </InlineStack>
-                                ) : (
-                                  <Text as="p" variant="bodySm" tone="subdued">
-                                    No active licenses are selected in this
-                                    bundle.
-                                  </Text>
-                                )}
-
-                                <input
-                                  value={groupSearchValues[group.id] || ""}
-                                  onFocus={() => setActiveGroupPopoverId(group.id)}
-                                  onChange={(event) => {
-                                    setGroupSearchValues((current) => ({
-                                      ...current,
-                                      [group.id]: event.currentTarget.value,
-                                    }));
-                                    setActiveGroupPopoverId(group.id);
-                                  }}
-                                  placeholder="Search licenses"
-                                  style={{
-                                    border: "none",
-                                    outline: "none",
-                                    padding: 0,
-                                    background: "transparent",
-                                    fontSize: "16px",
-                                    lineHeight: "24px",
-                                    width: "100%",
-                                    color: "var(--p-color-text)",
-                                  }}
-                                />
-                              </BlockStack>
-                            </Box>
-                          }
-                        >
-                          <Box minWidth="320px">
-                            <Scrollable shadow style={{ maxHeight: "240px" }}>
-                              <BlockStack gap="0">
-                                {(group.availableLicenses || [])
-                                  .filter((license) => {
-                                    const normalizedQuery = (
-                                      groupSearchValues[group.id] || ""
-                                    )
-                                      .trim()
-                                      .toLowerCase();
-                                    if (!normalizedQuery) return true;
-                                    return license.name
-                                      .toLowerCase()
-                                      .includes(normalizedQuery);
-                                  })
-                                  .map((license) => (
-                                    <Box
-                                      key={`${group.id}-${license.id}`}
-                                      paddingInline="200"
-                                      paddingBlock="050"
-                                      background={
-                                        license.selected
-                                          ? "bg-surface-secondary"
-                                          : "bg-surface"
-                                      }
-                                    >
-                                      <Checkbox
-                                        label={license.name}
-                                        checked={license.selected}
-                                        onChange={() =>
-                                          onToggleGroupLicense?.(
-                                            group.id,
-                                            license.id,
-                                          )
-                                        }
-                                      />
-                                    </Box>
-                                  ))}
-                              </BlockStack>
-                            </Scrollable>
-                          </Box>
-                        </Popover>
-
-                        <InlineStack align="space-between" blockAlign="center">
-                          <Button
-                            tone="critical"
-                            variant="secondary"
-                            onClick={() => onDeleteGroup?.(group.id)}
-                          >
-                            Delete
-                          </Button>
-                          <Button
-                            variant="primary"
-                            onClick={() => onDoneEditingGroup?.(group.id)}
-                          >
-                            Done
-                          </Button>
-                        </InlineStack>
-                      </BlockStack>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => onEditGroup?.(group.id)}
-                        style={{
-                          appearance: "none",
-                          border: "none",
-                          background: "transparent",
-                          padding: 0,
-                          margin: 0,
-                          width: "100%",
-                          textAlign: "left",
-                          cursor: onEditGroup ? "pointer" : "default",
-                        }}
-                      >
-                        <BlockStack gap="150">
-                          <Text as="p" variant="bodyMd" fontWeight="medium">
-                            {group.title}
-                          </Text>
-
-                          {group.licenseNames.length > 0 ? (
-                            <InlineStack gap="150" wrap>
-                              {group.licenseNames.map((licenseName) => (
-                                <Badge key={`${group.id}-${licenseName}`}>
-                                  {licenseName}
-                                </Badge>
-                              ))}
-                            </InlineStack>
-                          ) : (
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              No active licenses are included right now.
-                            </Text>
-                          )}
-
-                          {group.warning ? (
-                            <Text as="p" variant="bodySm" tone="critical">
-                              {group.warning}
-                            </Text>
-                          ) : null}
-                        </BlockStack>
-                      </button>
-                    )}
-                  </Box>
-                ))}
-
-                {onAddBundle || onAddIndividual ? (
-                  <Box padding="0">
-                    <Popover
-                      active={addOfferMenuOpen}
-                      autofocusTarget="first-node"
-                      preferredAlignment="left"
-                      onClose={() => setAddOfferMenuOpen(false)}
-                      activator={
-                        <button
-                          type="button"
-                          onClick={() => setAddOfferMenuOpen((open) => !open)}
-                          onMouseEnter={() =>
-                            setIsOfferPickerButtonHovered(true)
-                          }
-                          onMouseLeave={() =>
-                            setIsOfferPickerButtonHovered(false)
-                          }
-                          style={{
-                            appearance: "none",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            border: "none",
-                            background: isOfferPickerButtonHovered
-                              ? "var(--p-color-bg-surface-secondary)"
-                              : "transparent",
-                            cursor: "pointer",
-                            padding: hasSelectedOffers ? "12px 16px" : "4px 0",
-                            textAlign: "left",
-                            borderRadius: "10px",
-                            width: hasSelectedOffers ? "100%" : "auto",
-                            transition:
-                              "background-color 120ms var(--p-motion-ease-out)",
-                          }}
-                        >
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              flexShrink: 0,
-                            }}
-                          >
-                            <Icon source={PlusCircleIcon} />
-                          </span>
-                          {hasSelectedOffers ? (
-                            <Text as="span" variant="bodyMd">
-                              Add another license
-                            </Text>
-                          ) : (
-                            <Text as="span" variant="bodySm">
-                              Choose bundles first, then fine-tune with
-                              individual licenses.
-                            </Text>
-                          )}
-                        </button>
+            <div
+              style={{
+                borderRadius: "8px",
+                border: offerError
+                  ? "1px solid var(--p-color-border-critical)"
+                  : undefined,
+                background: offerError
+                  ? "var(--p-color-bg-surface-critical)"
+                  : undefined,
+              }}
+            >
+              <Box borderWidth="025" borderColor="border" borderRadius="200">
+                <BlockStack gap="0">
+                  {offerGroups.map((group, index) => (
+                    <Box
+                      key={group.id}
+                      padding="300"
+                      borderBlockEndWidth={
+                        index < offerGroups.length - 1 ||
+                        onAddBundle ||
+                        onAddIndividual
+                          ? "025"
+                          : "0"
                       }
+                      borderColor="border"
                     >
-                      <Box minWidth="320px" maxWidth="360px">
-                        <Box
-                          padding="200"
-                          borderBlockEndWidth="025"
-                          borderColor="border"
-                        >
-                          <BlockStack gap="200">
-                            <TextField
-                              label="Search bundles"
-                              labelHidden
-                              autoComplete="off"
-                              placeholder="Search"
-                              value={addOfferMenuSearchValue}
-                              onChange={setAddOfferMenuSearchValue}
-                            />
-                            <BlockStack gap="100">
-                              <Text as="p" variant="bodyMd" fontWeight="medium">
-                                Recommended
+                      {group.isEditing && group.kind === "bundle" ? (
+                        <BlockStack gap="300">
+                          <BlockStack gap="150">
+                            <Text as="p" variant="bodyMd" fontWeight="medium">
+                              {group.title}
+                            </Text>
+
+                            {group.warning ? (
+                              <Text as="p" variant="bodySm" tone="critical">
+                                {group.warning}
                               </Text>
-                              <Scrollable shadow style={{ maxHeight: "220px" }}>
-                                <BlockStack gap="050">
-                                  {filteredAddableBundles.length > 0 ? (
-                                    filteredAddableBundles.map((bundle) => (
-                                      <button
-                                        key={bundle.id}
-                                        type="button"
-                                        disabled={bundle.disabled}
-                                        onClick={() => {
-                                          onAddBundle?.(bundle.id);
-                                          setAddOfferMenuOpen(false);
-                                          setAddOfferMenuSearchValue("");
-                                        }}
-                                        style={{
-                                          appearance: "none",
-                                          border: "none",
-                                          background: "transparent",
-                                        cursor: bundle.disabled
-                                          ? "not-allowed"
-                                          : "pointer",
-                                        textAlign: "left",
-                                          padding: "6px 8px",
-                                          borderRadius: "10px",
-                                          opacity: bundle.disabled ? 0.55 : 1,
-                                        }}
-                                      >
-                                        <Text as="span" variant="bodyMd">
-                                          {bundle.title}
-                                        </Text>
-                                      </button>
-                                    ))
+                            ) : null}
+                          </BlockStack>
+
+                          <Popover
+                            active={activeGroupPopoverId === group.id}
+                            autofocusTarget="first-node"
+                            preferredAlignment="left"
+                            onClose={() => setActiveGroupPopoverId(null)}
+                            activator={
+                              <Box
+                                borderWidth="025"
+                                borderColor="border"
+                                borderRadius="200"
+                                padding="200"
+                              >
+                                <BlockStack gap="200">
+                                  {group.licenseNames.length > 0 ? (
+                                    <InlineStack gap="150" wrap>
+                                      {group.licenseNames.map((licenseName) => {
+                                        const matchedLicense = (
+                                          group.availableLicenses || []
+                                        ).find(
+                                          (license) =>
+                                            license.name === licenseName &&
+                                            license.selected,
+                                        );
+
+                                        return (
+                                          <Tag
+                                            key={`${group.id}-${licenseName}`}
+                                            onRemove={() => {
+                                              if (matchedLicense) {
+                                                onToggleGroupLicense?.(
+                                                  group.id,
+                                                  matchedLicense.id,
+                                                );
+                                              }
+                                            }}
+                                          >
+                                            {licenseName}
+                                          </Tag>
+                                        );
+                                      })}
+                                    </InlineStack>
                                   ) : (
                                     <Text as="p" variant="bodySm" tone="subdued">
-                                      No bundles match this search.
+                                      No active licenses are selected in this
+                                      bundle.
                                     </Text>
                                   )}
+
+                                  <input
+                                    value={groupSearchValues[group.id] || ""}
+                                    onFocus={() => setActiveGroupPopoverId(group.id)}
+                                    onChange={(event) => {
+                                      setGroupSearchValues((current) => ({
+                                        ...current,
+                                        [group.id]: event.currentTarget.value,
+                                      }));
+                                      setActiveGroupPopoverId(group.id);
+                                    }}
+                                    placeholder="Search licenses"
+                                    style={{
+                                      border: "none",
+                                      outline: "none",
+                                      padding: 0,
+                                      background: "transparent",
+                                      fontSize: "16px",
+                                      lineHeight: "24px",
+                                      width: "100%",
+                                      color: "var(--p-color-text)",
+                                    }}
+                                  />
+                                </BlockStack>
+                              </Box>
+                            }
+                          >
+                            <Box minWidth="320px">
+                              <Scrollable shadow style={{ maxHeight: "240px" }}>
+                                <BlockStack gap="0">
+                                  {(group.availableLicenses || [])
+                                    .filter((license) => {
+                                      const normalizedQuery = (
+                                        groupSearchValues[group.id] || ""
+                                      )
+                                        .trim()
+                                        .toLowerCase();
+                                      if (!normalizedQuery) return true;
+                                      return license.name
+                                        .toLowerCase()
+                                        .includes(normalizedQuery);
+                                    })
+                                    .map((license) => (
+                                      <Box
+                                        key={`${group.id}-${license.id}`}
+                                        paddingInline="200"
+                                        paddingBlock="050"
+                                        background={
+                                          license.selected
+                                            ? "bg-surface-secondary"
+                                            : "bg-surface"
+                                        }
+                                      >
+                                        <Checkbox
+                                          label={license.name}
+                                          checked={license.selected}
+                                          onChange={() =>
+                                            onToggleGroupLicense?.(
+                                              group.id,
+                                              license.id,
+                                            )
+                                          }
+                                        />
+                                      </Box>
+                                    ))}
                                 </BlockStack>
                               </Scrollable>
-                            </BlockStack>
-                          </BlockStack>
-                        </Box>
+                            </Box>
+                          </Popover>
 
-                        <Box padding="150">
+                          <InlineStack align="space-between" blockAlign="center">
+                            <Button
+                              tone="critical"
+                              variant="secondary"
+                              onClick={() => onDeleteGroup?.(group.id)}
+                            >
+                              Delete
+                            </Button>
+                            <Button
+                              variant="primary"
+                              onClick={() => onDoneEditingGroup?.(group.id)}
+                            >
+                              Done
+                            </Button>
+                          </InlineStack>
+                        </BlockStack>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onEditGroup?.(group.id)}
+                          style={{
+                            appearance: "none",
+                            border: "none",
+                            background: "transparent",
+                            padding: 0,
+                            margin: 0,
+                            width: "100%",
+                            textAlign: "left",
+                            cursor: onEditGroup ? "pointer" : "default",
+                          }}
+                        >
+                          <BlockStack gap="150">
+                            <Text as="p" variant="bodyMd" fontWeight="medium">
+                              {group.title}
+                            </Text>
+
+                            {group.licenseNames.length > 0 ? (
+                              <InlineStack gap="150" wrap>
+                                {group.licenseNames.map((licenseName) => (
+                                  <Badge key={`${group.id}-${licenseName}`}>
+                                    {licenseName}
+                                  </Badge>
+                                ))}
+                              </InlineStack>
+                            ) : (
+                              <Text as="p" variant="bodySm" tone="subdued">
+                                No active licenses are included right now.
+                              </Text>
+                            )}
+
+                            {group.warning ? (
+                              <Text as="p" variant="bodySm" tone="critical">
+                                {group.warning}
+                              </Text>
+                            ) : null}
+                          </BlockStack>
+                        </button>
+                      )}
+                    </Box>
+                  ))}
+
+                  {onAddBundle || onAddIndividual ? (
+                    <Box padding="0">
+                      <Popover
+                        active={addOfferMenuOpen}
+                        autofocusTarget="first-node"
+                        preferredAlignment="left"
+                        onClose={() => setAddOfferMenuOpen(false)}
+                        activator={
                           <button
                             type="button"
-                            onClick={() => {
-                              onAddIndividual?.();
-                              setAddOfferMenuOpen(false);
-                              setAddOfferMenuSearchValue("");
-                            }}
+                            onClick={() => setAddOfferMenuOpen((open) => !open)}
+                            onMouseEnter={() =>
+                              setIsOfferPickerButtonHovered(true)
+                            }
+                            onMouseLeave={() =>
+                              setIsOfferPickerButtonHovered(false)
+                            }
                             style={{
                               appearance: "none",
                               display: "inline-flex",
                               alignItems: "center",
                               gap: "8px",
                               border: "none",
-                              background: "var(--p-color-bg-surface-secondary)",
+                              background: isOfferPickerButtonHovered
+                                ? "var(--p-color-bg-surface-secondary)"
+                                : "transparent",
                               cursor: "pointer",
-                              padding: "6px 10px",
+                              padding: hasSelectedOffers ? "12px 16px" : "4px 0",
+                              textAlign: "left",
                               borderRadius: "10px",
+                              width: hasSelectedOffers ? "100%" : "auto",
+                              transition:
+                                "background-color 120ms var(--p-motion-ease-out)",
                             }}
                           >
-                            <Icon source={PlusCircleIcon} />
-                            <Text as="span" variant="bodySm">
-                              Add individual
-                            </Text>
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                flexShrink: 0,
+                              }}
+                            >
+                              <Icon source={PlusCircleIcon} />
+                            </span>
+                            {hasSelectedOffers ? (
+                              <Text as="span" variant="bodyMd">
+                                Add another license
+                              </Text>
+                            ) : (
+                              <Text as="span" variant="bodySm">
+                                Choose bundles first, then fine-tune with
+                                individual licenses.
+                              </Text>
+                            )}
                           </button>
+                        }
+                      >
+                        <Box minWidth="320px" maxWidth="360px">
+                          <Box
+                            padding="200"
+                            borderBlockEndWidth="025"
+                            borderColor="border"
+                          >
+                            <BlockStack gap="200">
+                              <TextField
+                                label="Search bundles"
+                                labelHidden
+                                autoComplete="off"
+                                placeholder="Search"
+                                value={addOfferMenuSearchValue}
+                                onChange={setAddOfferMenuSearchValue}
+                              />
+                              <BlockStack gap="100">
+                                <Text as="p" variant="bodyMd" fontWeight="medium">
+                                  Recommended
+                                </Text>
+                                <Scrollable shadow style={{ maxHeight: "220px" }}>
+                                  <BlockStack gap="050">
+                                    {filteredAddableBundles.length > 0 ? (
+                                      filteredAddableBundles.map((bundle) => (
+                                        <button
+                                          key={bundle.id}
+                                          type="button"
+                                          disabled={bundle.disabled}
+                                          onMouseEnter={() =>
+                                            setHoveredAddableBundleId(bundle.id)
+                                          }
+                                          onMouseLeave={() =>
+                                            setHoveredAddableBundleId((current) =>
+                                              current === bundle.id ? null : current,
+                                            )
+                                          }
+                                          onClick={() => {
+                                            onAddBundle?.(bundle.id);
+                                            setAddOfferMenuOpen(false);
+                                            setAddOfferMenuSearchValue("");
+                                          }}
+                                          style={{
+                                            appearance: "none",
+                                            border: "none",
+                                            background:
+                                              hoveredAddableBundleId === bundle.id
+                                                ? "var(--p-color-bg-surface-secondary)"
+                                                : "transparent",
+                                            cursor: bundle.disabled
+                                              ? "not-allowed"
+                                              : "pointer",
+                                            textAlign: "left",
+                                            width: "100%",
+                                            padding: "6px 8px",
+                                            borderRadius: "10px",
+                                            opacity: bundle.disabled ? 0.55 : 1,
+                                            transition:
+                                              "background-color 120ms var(--p-motion-ease-out)",
+                                          }}
+                                        >
+                                          <Text as="span" variant="bodyMd">
+                                            {bundle.title}
+                                          </Text>
+                                        </button>
+                                      ))
+                                    ) : (
+                                      <Text as="p" variant="bodySm" tone="subdued">
+                                        No bundles match this search.
+                                      </Text>
+                                    )}
+                                  </BlockStack>
+                                </Scrollable>
+                              </BlockStack>
+                            </BlockStack>
+                          </Box>
+
+                          <Box padding="150">
+                            <button
+                              type="button"
+                              onMouseEnter={() => setIsAddIndividualHovered(true)}
+                              onMouseLeave={() => setIsAddIndividualHovered(false)}
+                              onClick={() => {
+                                onAddIndividual?.();
+                                setAddOfferMenuOpen(false);
+                                setAddOfferMenuSearchValue("");
+                              }}
+                              style={{
+                                appearance: "none",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "8px",
+                                border: "none",
+                                background: isAddIndividualHovered
+                                  ? "var(--p-color-bg-surface-secondary)"
+                                  : "transparent",
+                                cursor: "pointer",
+                                padding: "6px 10px",
+                                borderRadius: "10px",
+                                transition:
+                                  "background-color 120ms var(--p-motion-ease-out)",
+                              }}
+                            >
+                              <Icon source={PlusCircleIcon} />
+                              <Text as="span" variant="bodySm">
+                                Add individual
+                              </Text>
+                            </button>
+                          </Box>
                         </Box>
-                      </Box>
-                    </Popover>
-                  </Box>
-                ) : null}
-              </BlockStack>
-            </Box>
+                      </Popover>
+                    </Box>
+                  ) : null}
+                </BlockStack>
+              </Box>
+            </div>
+
+            {offerError ? (
+              <InlineCriticalError
+                message={offerError}
+                fieldID="license-offers"
+              />
+            ) : null}
 
             {!hasSelectedOffers &&
             hasLastUsedOfferSelection &&
@@ -1343,7 +1532,7 @@ export function LicenseFileAssignment({
                         fontWeight: 500,
                         fontSize: "13px",
                         color: "var(--p-color-text-subdued)",
-                        width: "25%",
+                        width: "22%",
                       }}
                     >
                       License
@@ -1354,7 +1543,7 @@ export function LicenseFileAssignment({
                         fontWeight: 500,
                         fontSize: "13px",
                         color: "var(--p-color-text-subdued)",
-                        width: "25%",
+                        width: "26%",
                       }}
                     >
                       Price
@@ -1365,10 +1554,21 @@ export function LicenseFileAssignment({
                         fontWeight: 500,
                         fontSize: "13px",
                         color: "var(--p-color-text-subdued)",
-                        width: "50%",
+                        width: "30%",
                       }}
                     >
                       Delivered package
+                    </th>
+                    <th
+                      style={{
+                        padding: "8px 16px",
+                        fontWeight: 500,
+                        fontSize: "13px",
+                        color: "var(--p-color-text-subdued)",
+                        width: "22%",
+                      }}
+                    >
+                      Stems add-on
                     </th>
                   </tr>
                 </thead>
@@ -1380,10 +1580,47 @@ export function LicenseFileAssignment({
                     const assignedFiles = tierFiles
                       .map((fileId) => getFile(fileId))
                       .filter(Boolean) as UploadedFile[];
-                    const missingFiles = meta.recommendedFiles.filter(
-                      (format) =>
-                        !assignedFiles.some((file) => file.purpose === format),
+                    const supportsStemsAddon = stemsAvailableAsAddon(
+                      tier.templateStemsPolicy || tier.stemsPolicy,
                     );
+                    const stemsIncluded = stemsIncludedByDefault(tier.stemsPolicy);
+                    const addonSelected = Boolean(stemsAddonSelections[tier.id]);
+                    const reviewExpectedFormats = [...meta.recommendedFiles];
+
+                    if (
+                      supportsStemsAddon &&
+                      addonSelected &&
+                      !reviewExpectedFormats.includes("stems")
+                    ) {
+                      reviewExpectedFormats.push("stems");
+                    }
+
+                    const readyReviewFormats = reviewExpectedFormats.filter(
+                      (format) =>
+                        format === "stems"
+                          ? hasSharedStemsFile
+                          : assignedFiles.some((file) => file.purpose === format),
+                    );
+                    const missingFiles = reviewExpectedFormats.filter(
+                      (format) =>
+                        format === "stems"
+                          ? !hasSharedStemsFile
+                          : !assignedFiles.some((file) => file.purpose === format),
+                    );
+                    const packageReadiness = getPackageReadiness(
+                      reviewExpectedFormats.length,
+                      missingFiles.length,
+                    );
+                    const packageSummary = getPackageSummary(
+                      reviewExpectedFormats.length,
+                      missingFiles.length,
+                    );
+                    const missingFilesMessage =
+                      missingFiles.length > 0
+                        ? `Missing ${missingFiles
+                            .map((format) => getFileFormatLabel(format))
+                            .join(", ")}`
+                        : null;
 
                     return (
                       <tr
@@ -1417,13 +1654,15 @@ export function LicenseFileAssignment({
                         <td
                           style={{ padding: "12px 16px", verticalAlign: "top" }}
                         >
-                          <div style={{ maxWidth: "140px" }}>
+                          <div style={{ maxWidth: "184px", minWidth: "168px" }}>
                             <TextField
                               label="Price"
                               labelHidden
                               autoComplete="off"
                               prefix="$"
                               value={licensePrices[tier.id] || ""}
+                              error={priceErrors[tier.id]}
+                              onBlur={() => onPriceBlur?.(tier.id)}
                               onChange={(val) => {
                                 const updated = {
                                   ...licensePrices,
@@ -1443,73 +1682,157 @@ export function LicenseFileAssignment({
                         <td
                           style={{ padding: "12px 16px", verticalAlign: "top" }}
                         >
-                          <Box
-                            padding="200"
-                            borderWidth="025"
-                            borderColor="border"
-                            borderRadius="200"
-                            background={
-                              uploadedFiles.length === 0
-                                ? "bg-surface-disabled"
-                                : "bg-surface"
-                            }
-                          >
-                            <BlockStack gap="200">
-                              {assignedFiles.length > 0 ? (
-                                <InlineStack gap="200" wrap>
-                                  {assignedFiles.map((file) => (
-                                    <FileFormatBadge
-                                      key={file.id}
-                                      format={file.purpose || file.type}
-                                    />
-                                  ))}
-                                </InlineStack>
-                              ) : null}
-
-                              <Text
-                                as="span"
-                                variant="bodySm"
-                                tone={
-                                  uploadedFiles.length === 0
-                                    ? "disabled"
-                                    : "subdued"
-                                }
-                              >
-                                {packageStatusMessage(
-                                  missingFiles,
-                                  assignedFiles.length > 0,
-                                  tier,
-                                )}
-                              </Text>
-
-                              {tier.templateStemsPolicy ===
-                                "available_as_addon" && (
-                                <Checkbox
-                                  label="Offer stems add-on for this beat"
-                                  checked={Boolean(stemsAddonSelections[tier.id])}
-                                  onChange={(checked) => {
-                                    const nextSelections = {
-                                      ...stemsAddonSelections,
-                                      [tier.id]: checked,
-                                    };
-                                    updateState(
-                                      uploadedFiles,
-                                      previewFile,
-                                      coverArtFile,
-                                      licensePrices,
-                                      nextSelections,
-                                    );
+                          <BlockStack gap="250">
+                            <Popover
+                              active={activeDeliveryPopoverId === tier.id}
+                              preferredAlignment="right"
+                              onClose={() => setActiveDeliveryPopoverId(null)}
+                              activator={
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setActiveDeliveryPopoverId((current) =>
+                                      current === tier.id ? null : tier.id,
+                                    )
+                                  }
+                                  style={{
+                                    appearance: "none",
+                                    border: "none",
+                                    background: "transparent",
+                                    padding: 0,
+                                    margin: 0,
+                                    cursor: "pointer",
                                   }}
-                                />
-                              )}
+                                  aria-label={`Review files for ${tier.name}`}
+                                >
+                                  <Badge tone={packageReadiness.tone}>
+                                    {packageReadiness.label}
+                                  </Badge>
+                                </button>
+                              }
+                            >
+                              <Box padding="300" minWidth="280px">
+                                <BlockStack gap="250">
+                                  <BlockStack gap="150">
+                                    <Text
+                                      as="p"
+                                      variant="bodySm"
+                                      fontWeight="medium"
+                                    >
+                                      Included files
+                                    </Text>
+                                    {readyReviewFormats.length > 0 ? (
+                                      <InlineStack gap="150" wrap>
+                                        {readyReviewFormats.map((format) => (
+                                          <FileFormatBadge
+                                            key={`${tier.id}-assigned-${format}`}
+                                            format={format}
+                                          />
+                                        ))}
+                                      </InlineStack>
+                                    ) : (
+                                      <Text
+                                        as="p"
+                                        variant="bodySm"
+                                        tone="subdued"
+                                      >
+                                        No required files added yet.
+                                      </Text>
+                                    )}
+                                  </BlockStack>
 
-                              {stemsIncludedByDefault(tier.stemsPolicy) && (
-                                <Text as="span" variant="bodyXs" tone="subdued">
-                                  Stems included — upload a stems ZIP.
-                                </Text>
-                              )}
-                            </BlockStack>
-                          </Box>
+                                  <BlockStack gap="150">
+                                    <Text
+                                      as="p"
+                                      variant="bodySm"
+                                      fontWeight="medium"
+                                    >
+                                      Base package
+                                    </Text>
+                                    <InlineStack gap="150" wrap>
+                                      {meta.recommendedFiles.map((format) => (
+                                        <FileFormatBadge
+                                          key={`${tier.id}-expected-${format}`}
+                                          format={format}
+                                        />
+                                      ))}
+                                    </InlineStack>
+                                  </BlockStack>
+
+                                  {supportsStemsAddon && addonSelected ? (
+                                    <BlockStack gap="150">
+                                      <Text
+                                        as="p"
+                                        variant="bodySm"
+                                        fontWeight="medium"
+                                      >
+                                        Stems add-on
+                                      </Text>
+                                      <InlineStack gap="150" wrap>
+                                        <Badge>
+                                          STEMS ZIP
+                                        </Badge>
+                                      </InlineStack>
+                                    </BlockStack>
+                                  ) : null}
+
+                                  {missingFilesMessage ? (
+                                    <InlineCriticalError
+                                      message={missingFilesMessage}
+                                      fieldID={`delivery-package-popover-${tier.id}`}
+                                    />
+                                  ) : null}
+                                </BlockStack>
+                              </Box>
+                            </Popover>
+
+                            <Text
+                              as="span"
+                              variant="bodySm"
+                              tone={
+                                uploadedFiles.length === 0
+                                  ? "disabled"
+                                  : "subdued"
+                              }
+                            >
+                              {packageSummary}
+                            </Text>
+                          </BlockStack>
+                        </td>
+                        <td
+                          style={{ padding: "12px 16px", verticalAlign: "top" }}
+                        >
+                          <InlineStack gap="150" blockAlign="center">
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                minHeight: "16px",
+                              }}
+                            >
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                Include
+                              </Text>
+                            </span>
+                            <SwitchButton
+                              checked={stemsIncluded ? true : addonSelected}
+                              disabled={stemsIncluded || !supportsStemsAddon}
+                              label={`Include stems for ${tier.name}`}
+                              onChange={(checked) => {
+                                const nextSelections = {
+                                  ...stemsAddonSelections,
+                                  [tier.id]: checked,
+                                };
+                                updateState(
+                                  uploadedFiles,
+                                  previewFile,
+                                  coverArtFile,
+                                  licensePrices,
+                                  nextSelections,
+                                );
+                              }}
+                            />
+                          </InlineStack>
                         </td>
                       </tr>
                     );

@@ -20,6 +20,8 @@ export interface MultiSelectComboboxProps {
   selectedValues: string[];
   onChange: (selected: string[]) => void;
   placeholder?: string;
+  error?: string | boolean;
+  onBlur?: () => void;
 }
 
 export function MultiSelectCombobox({
@@ -28,6 +30,8 @@ export function MultiSelectCombobox({
   selectedValues,
   onChange,
   placeholder = 'Search...',
+  error,
+  onBlur,
 }: MultiSelectComboboxProps) {
   const [inputValue, setInputValue] = useState('');
 
@@ -100,10 +104,12 @@ export function MultiSelectCombobox({
           <Combobox.TextField
             prefix={<Icon source={SearchIcon} />}
             onChange={handleInputValueChange}
+            onBlur={onBlur}
             label={label}
             value={inputValue}
             placeholder={placeholder}
             autoComplete="off"
+            error={error}
           />
         }
       >

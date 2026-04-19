@@ -10,7 +10,6 @@ import {
   Banner,
   Card,
   BlockStack,
-  Button,
   Box,
   Checkbox,
   TextField,
@@ -60,6 +59,7 @@ import {
   type StemsAddonSelections,
 } from "../components/LicenseFileAssignment";
 import { MultiSelectCombobox } from "../components/MultiSelectCombobox";
+import { ProductTagsField } from "../components/ProductTagsField";
 
 type UploadLicense = {
   id: string;
@@ -103,6 +103,19 @@ type LicenseSelectionState = {
   selectedBundleIds: string[];
   selectedLicenseIds: string[];
   bundleLicenseOverrides?: Record<string, string[]>;
+};
+
+type UploadValidationErrors = {
+  title?: string;
+  bpm?: string;
+  key?: string;
+  genreGids?: string;
+  producerGids?: string;
+  previewFile?: string;
+  selectedOffers?: string;
+  priceByLicenseId: Record<string, string>;
+  deliveryByLicenseId: Record<string, string>;
+  bannerMessages: string[];
 };
 
 const STARTER_BUNDLE_ID = "starter-preset-bundle";
@@ -190,6 +203,26 @@ function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
+function normalizeProductTag(tag: string) {
+  return tag.replace(/\s+/g, " ").trim().replace(/^,+|,+$/g, "");
+}
+
+function normalizeProductTags(tags: string[]) {
+  const seen = new Set<string>();
+
+  return tags.reduce<string[]>((result, tag) => {
+    const normalizedTag = normalizeProductTag(tag);
+    if (!normalizedTag) return result;
+
+    const dedupeKey = normalizedTag.toLowerCase();
+    if (seen.has(dedupeKey)) return result;
+
+    seen.add(dedupeKey);
+    result.push(normalizedTag);
+    return result;
+  }, []);
+}
+
 function dedupeFilesById(files: Array<UploadedFile | null | undefined>) {
   const byId = new Map<string, UploadedFile>();
   for (const file of files) {
@@ -240,6 +273,158 @@ function arraysEqual(left: string[], right: string[]) {
 
 function dedupeIds(ids: string[]) {
   return Array.from(new Set(ids.filter(Boolean)));
+}
+
+function createEmptyUploadValidationErrors(): UploadValidationErrors {
+  return {
+    priceByLicenseId: {},
+    deliveryByLicenseId: {},
+    bannerMessages: [],
+  };
+}
+
+function getTitleValidationError(title: string) {
+  return title.trim() ? undefined : "Title can't be blank";
+}
+
+function getUploadValidationErrors({
+  title,
+  bpm,
+  key,
+  genreGids,
+  producerGids,
+  previewFile,
+  selectedLicenses,
+  uploadedFiles,
+  licenseFiles,
+  licensePrices,
+  stemsAddonSelections,
+}: {
+  title: string;
+  bpm: string | number;
+  key: string;
+  genreGids: string[];
+  producerGids: string[];
+  previewFile: UploadedFile | null;
+  selectedLicenses: Array<
+    Pick<
+      UploadLicense,
+      "id" | "licenseName" | "stemsPolicy" | "offerArchetype" | "fileFormats"
+    >
+  >;
+  uploadedFiles: UploadedFile[];
+  licenseFiles: LicenseFiles;
+  licensePrices: Record<string, string>;
+  stemsAddonSelections: StemsAddonSelections;
+}): UploadValidationErrors {
+  const errors = createEmptyUploadValidationErrors();
+
+  const parsedBpm =
+    typeof bpm === "number" ? bpm : Number.parseInt(String(bpm), 10);
+  const hasSharedStems = hasSharedStemsSourceFile(uploadedFiles);
+
+  errors.title = getTitleValidationError(title);
+  if (errors.title) errors.bannerMessages.push(errors.title);
+
+  if (!Number.isFinite(parsedBpm) || parsedBpm <= 0) {
+    errors.bpm = "Add BPM";
+    errors.bannerMessages.push("Add BPM.");
+  }
+
+  if (!key.trim()) {
+    errors.key = "Choose a key";
+    errors.bannerMessages.push("Choose a key.");
+  }
+
+  if (genreGids.length === 0) {
+    errors.genreGids = "Choose at least one genre";
+    errors.bannerMessages.push("Choose at least one genre.");
+  }
+
+  if (producerGids.length === 0) {
+    errors.producerGids = "Choose at least one producer";
+    errors.bannerMessages.push("Choose at least one producer.");
+  }
+
+  if (!previewFile) {
+    errors.previewFile = "Upload a preview MP3";
+    errors.bannerMessages.push("Upload a preview MP3.");
+  }
+
+  if (selectedLicenses.length === 0) {
+    errors.selectedOffers = "Choose at least one license offer";
+    errors.bannerMessages.push("Choose at least one license offer.");
+  }
+
+  selectedLicenses.forEach((license) => {
+    const rawPrice = licensePrices[license.id];
+    const parsedPrice = Number.parseFloat(String(rawPrice || ""));
+    if (!rawPrice || rawPrice.trim() === "" || !Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      errors.priceByLicenseId[license.id] = "Add a price";
+    }
+
+    const assignedFiles = (licenseFiles[license.id] || [])
+      .map((fileId) => uploadedFiles.find((file) => file.id === fileId))
+      .filter((file): file is UploadedFile => Boolean(file));
+    const assignedFormats = new Set(
+      assignedFiles
+        .map((file) => normalizeDeliveryFormat(file.purpose || file.type || ""))
+        .filter((format): format is DeliveryFormat => Boolean(format)),
+    );
+    const missingFormats = getRequiredDeliveryFormats(license).filter(
+      (format) => !assignedFormats.has(format),
+    );
+
+    const offersStems = licenseOffersStems(
+      resolveOfferStemsPolicy(
+        license.stemsPolicy,
+        stemsAddonSelections[license.id],
+        license.offerArchetype,
+      ),
+    );
+
+    const deliveryMessages: string[] = [];
+    if (missingFormats.length > 0) {
+      deliveryMessages.push(
+        `Missing ${missingFormats.map(formatDeliveryFormatLabel).join(", ")}`,
+      );
+    }
+    if (offersStems && !hasSharedStems) {
+      deliveryMessages.push("Upload one stems ZIP");
+    }
+
+    if (deliveryMessages.length > 0) {
+      errors.deliveryByLicenseId[license.id] = deliveryMessages.join(". ");
+    }
+  });
+
+  if (Object.keys(errors.priceByLicenseId).length > 0) {
+    errors.bannerMessages.push("Add a price for each selected license offer.");
+  }
+
+  if (Object.keys(errors.deliveryByLicenseId).length > 0) {
+    errors.bannerMessages.push(
+      "Upload the required delivery files for each selected license offer.",
+    );
+  }
+
+  errors.bannerMessages = dedupeIds(errors.bannerMessages);
+
+  return errors;
+}
+
+function hasUploadValidationErrors(errors: UploadValidationErrors) {
+  return Boolean(
+    errors.title ||
+      errors.bpm ||
+      errors.key ||
+      errors.genreGids ||
+      errors.producerGids ||
+      errors.previewFile ||
+      errors.selectedOffers ||
+      Object.keys(errors.priceByLicenseId).length > 0 ||
+      Object.keys(errors.deliveryByLicenseId).length > 0,
+  );
 }
 
 function orderLicensesByIds<T extends { id: string }>(
@@ -473,32 +658,6 @@ function buildAutomaticLicenseAssignments(
   return nextAssignments;
 }
 
-function selectionStateEquals(
-  left: LicenseSelectionState,
-  right: LicenseSelectionState,
-) {
-  return (
-    arraysEqual(
-      [...left.selectedBundleIds].sort(),
-      [...right.selectedBundleIds].sort(),
-    ) &&
-    arraysEqual(
-      [...left.selectedLicenseIds].sort(),
-      [...right.selectedLicenseIds].sort(),
-    ) &&
-    JSON.stringify(
-      Object.entries(left.bundleLicenseOverrides || {})
-        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
-        .map(([bundleId, licenseIds]) => [bundleId, [...licenseIds].sort()]),
-    ) ===
-      JSON.stringify(
-        Object.entries(right.bundleLicenseOverrides || {})
-          .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
-          .map(([bundleId, licenseIds]) => [bundleId, [...licenseIds].sort()]),
-      )
-  );
-}
-
 type UploadActionData = {
   success: boolean;
   intent?: string;
@@ -514,6 +673,7 @@ type BeatDraftCompatRecord = {
   bpm: number | null;
   key: string | null;
   producerAlias: string | null;
+  tagsJson?: string | null;
   genreGidsJson: string;
   producerGidsJson: string;
   licenseFilesJson: string;
@@ -531,7 +691,9 @@ function isSchemaMismatchError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return (
     message.includes("does not exist in the current database") ||
-    message.includes("does not exist")
+    message.includes("does not exist") ||
+    message.includes("Unknown argument") ||
+    message.includes("Unknown field")
   );
 }
 
@@ -575,6 +737,7 @@ async function saveBeatDraftCompat(input: {
     bpm: number | null;
     key: string | null;
     producerAlias: string | null;
+    tagsJson: string;
     genreGidsJson: string;
     producerGidsJson: string;
     licenseFilesJson: string;
@@ -600,7 +763,11 @@ async function saveBeatDraftCompat(input: {
   } catch (error) {
     if (!isSchemaMismatchError(error)) throw error;
 
-    const { selectionStateJson: _selectionStateJson, ...legacyData } = input.data;
+    const {
+      selectionStateJson: _selectionStateJson,
+      tagsJson: _tagsJson,
+      ...legacyData
+    } = input.data;
 
     if (input.existingDraftId) {
       return await prisma.beatDraft.update({
@@ -767,6 +934,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             bpm: draftRecord.bpm ? String(draftRecord.bpm) : "",
             key: draftRecord.key || "C minor",
             producerAlias: draftRecord.producerAlias || "",
+            tags: normalizeProductTags(
+              parseJsonField<string[]>(draftRecord.tagsJson, []),
+            ),
             genreGids: parseJsonField<string[]>(draftRecord.genreGidsJson, []),
             producerGids: parseJsonField<string[]>(
               draftRecord.producerGidsJson,
@@ -893,9 +1063,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       (formData.get("producerGids") as string) || "[]",
     );
     const producerAlias = (formData.get("producerAlias") as string) || "";
+    const tags = normalizeProductTags(
+      parseJsonField<string[]>((formData.get("tags") as string) || "[]", []),
+    );
     const statusValue = (formData.get("status") as string) || "active";
-    const intendedActive = formData.get("intendedActive") === "true";
-    const missing = (formData.get("missing") as string) || "";
     const productStatus = statusValue === "draft" ? "DRAFT" : "ACTIVE";
     const isDraft = productStatus === "DRAFT";
     const draftId = (formData.get("draftId") as string) || null;
@@ -977,21 +1148,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // === SERVER-SIDE VALIDATION ===
 
-    const hasRequiredMetadata =
-      Boolean(title) &&
-      Boolean(bpm) &&
-      Boolean(key) &&
-      genreGids.length > 0 &&
-      producerGids.length > 0;
+    const titleError = getTitleValidationError(title);
 
-    // Validate required fields
-    if ((!isDraft && !hasRequiredMetadata) || (isDraft && !title)) {
+    if (isDraft && titleError) {
       return json(
         {
           success: false,
-          error: isDraft
-            ? "Add a beat title before saving this draft"
-            : "Please fill in all required fields",
+          error: titleError,
         },
         { status: 400 },
       );
@@ -1000,7 +1163,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Validate preview file exists for active beats
     if (!isDraft && !previewFileId) {
       return json(
-        { success: false, error: "Please upload a preview audio file" },
+        { success: false, error: "Upload a preview MP3 before saving active." },
         { status: 400 },
       );
     }
@@ -1014,6 +1177,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ),
     );
     const templateIds = selectedLicenses.map((license) => license.id);
+
+    const submittedDeliveryFiles = uploadedFilesState.filter(isLicenseDeliveryFile);
+    const validationUploadedFiles = dedupeFilesById([
+      ...submittedDeliveryFiles,
+      ...existingUploadedFiles,
+    ]);
+    const validationPreviewFile =
+      (previewFileId
+        ? uploadedFilesState.find((file) => file.id === previewFileId) ||
+          existingPreviewFile
+        : null) || null;
+
+    if (!isDraft) {
+      const validationErrors = getUploadValidationErrors({
+        title,
+        bpm,
+        key,
+        genreGids,
+        producerGids,
+        previewFile: validationPreviewFile,
+        selectedLicenses,
+        uploadedFiles: validationUploadedFiles,
+        licenseFiles: licenseFilesData,
+        licensePrices: licensePricesData,
+        stemsAddonSelections: stemsAddonSelectionsData,
+      });
+
+      if (hasUploadValidationErrors(validationErrors)) {
+        return json(
+          {
+            success: false,
+            error: validationErrors.bannerMessages[0] || "Complete the required fields before saving active.",
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     if (!isDraft && selectedLicenses.length === 0) {
       return json(
@@ -1309,6 +1509,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         bpm: bpm || null,
         key: key || null,
         producerAlias: producerAlias || null,
+        tagsJson: JSON.stringify(tags),
         genreGidsJson: JSON.stringify(genreGids),
         producerGidsJson: JSON.stringify(producerGids),
         licenseFilesJson: JSON.stringify(licenseFilesData),
@@ -1341,7 +1542,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       return json({
         success: true,
-        redirectTo: `/app/beats?success=true&status=draft${intendedActive ? `&intendedActive=true${missing ? `&missing=${encodeURIComponent(missing)}` : ""}` : ""}`,
+        redirectTo: "/app/beats?success=true&status=draft",
       } satisfies UploadActionData);
     }
 
@@ -1379,6 +1580,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       producerGids,
       producerNames,
       producerAlias: producerAlias || undefined,
+      tags,
       licenses: licensePrices,
       coverArtUrl:
         shopifyCoverResourceUrl ||
@@ -1493,7 +1695,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     return json({
       success: true,
-      redirectTo: `/app/beats?success=true&status=${statusValue}${intendedActive && isDraft ? `&intendedActive=true${missing ? `&missing=${encodeURIComponent(missing)}` : ""}` : ""}`,
+      redirectTo: `/app/beats?success=true&status=${statusValue}`,
     } satisfies UploadActionData);
   } catch (error) {
     console.error("Upload error:", error);
@@ -1567,6 +1769,10 @@ export default function NewBeatPage() {
     [draft?.producerGids, producers],
   );
   const initialProducerAlias = draft?.producerAlias || "";
+  const initialTags = useMemo(
+    () => normalizeProductTags((draft?.tags || []) as string[]),
+    [draft?.tags],
+  );
   const initialStatus = draft ? "draft" : "active";
   const initialSelectedBundleIds = initialSelectionState.selectedBundleIds;
   const initialSelectedLicenseIds = initialSelectionState.selectedLicenseIds;
@@ -1623,6 +1829,7 @@ export default function NewBeatPage() {
   const [producerGids, setProducerGids] =
     useState<string[]>(initialProducerGids);
   const [producerAlias, setProducerAlias] = useState(initialProducerAlias);
+  const [tags, setTags] = useState<string[]>(initialTags);
   const [status, setStatus] = useState(initialStatus);
   const [selectedBundleIds, setSelectedBundleIds] = useState<string[]>(
     initialSelectedBundleIds,
@@ -1667,6 +1874,30 @@ export default function NewBeatPage() {
   const [editingOfferGroupId, setEditingOfferGroupId] = useState<string | null>(
     null,
   );
+  const [validationTouched, setValidationTouched] = useState<{
+    title: boolean;
+    bpm: boolean;
+    key: boolean;
+    genreGids: boolean;
+    producerGids: boolean;
+    previewFile: boolean;
+    selectedOffers: boolean;
+    deliveryFiles: boolean;
+    priceByLicenseId: Record<string, boolean>;
+  }>({
+    title: false,
+    bpm: false,
+    key: false,
+    genreGids: false,
+    producerGids: false,
+    previewFile: false,
+    selectedOffers: false,
+    deliveryFiles: false,
+    priceByLicenseId: {},
+  });
+  const [saveAttemptMode, setSaveAttemptMode] = useState<
+    "draft" | "active" | null
+  >(null);
   const offerPickerContentRef = useRef<HTMLDivElement | null>(null);
   const offerPickerLastPointerDownLocationRef = useRef<
     "inside" | "outside" | null
@@ -1738,8 +1969,6 @@ export default function NewBeatPage() {
     Boolean(
       title && bpm && key && genreGids.length > 0 && producerGids.length > 0,
     );
-
-  const hasDraftMinimumFields = () => Boolean(title.trim());
   const selectionState = useMemo<LicenseSelectionState>(
     () => ({
       selectedBundleIds,
@@ -1894,6 +2123,36 @@ export default function NewBeatPage() {
       ),
     [licenses, offerPickerLicenseDraftIds],
   );
+  const titleValidationError = getTitleValidationError(title);
+  const activeValidationErrors = useMemo(
+    () =>
+      getUploadValidationErrors({
+        title,
+        bpm,
+        key,
+        genreGids,
+        producerGids,
+        previewFile,
+        selectedLicenses,
+        uploadedFiles,
+        licenseFiles,
+        licensePrices,
+        stemsAddonSelections,
+      }),
+    [
+      bpm,
+      genreGids,
+      key,
+      licenseFiles,
+      licensePrices,
+      previewFile,
+      producerGids,
+      selectedLicenses,
+      stemsAddonSelections,
+      title,
+      uploadedFiles,
+    ],
+  );
 
   const initialSnapshot = useMemo(
     () =>
@@ -1904,6 +2163,7 @@ export default function NewBeatPage() {
         genreGids: initialGenreGids,
         producerGids: initialProducerGids,
         producerAlias: initialProducerAlias,
+        tags: initialTags,
         status: initialStatus,
         selectionState: {
           selectedBundleIds: initialSelectedBundleIds,
@@ -1931,6 +2191,7 @@ export default function NewBeatPage() {
       initialPreviewFile,
       initialProducerAlias,
       initialProducerGids,
+      initialTags,
       initialStatus,
       initialTitle,
       initialUploadedFiles,
@@ -1946,6 +2207,7 @@ export default function NewBeatPage() {
         genreGids,
         producerGids,
         producerAlias,
+        tags,
         status,
         selectionState,
         uploadedFiles: serializeUploadedFiles(uploadedFiles),
@@ -1968,6 +2230,7 @@ export default function NewBeatPage() {
       previewFile,
       producerAlias,
       producerGids,
+      tags,
       status,
       title,
       uploadedFiles,
@@ -2024,17 +2287,71 @@ export default function NewBeatPage() {
       (!sharedStemsRequired || sharedStemsFilePresent),
     );
   };
-
-  const effectiveSaveMode =
-    status === "active" && isReadyForActive() ? "active" : "draft";
   const saveActionLabel =
-    effectiveSaveMode === "active"
+    status === "active"
       ? isBusy
         ? "Saving beat..."
         : "Save beat"
       : isBusy
         ? "Saving draft..."
         : "Save draft";
+  const visibleTitleError =
+    validationTouched.title || saveAttemptMode !== null
+      ? titleValidationError
+      : undefined;
+  const shouldShowActiveErrors =
+    status === "active" && saveAttemptMode === "active";
+  const visibleBpmError =
+    status === "active" &&
+    (validationTouched.bpm || shouldShowActiveErrors)
+      ? activeValidationErrors.bpm
+      : undefined;
+  const visibleKeyError =
+    status === "active" &&
+    (validationTouched.key || shouldShowActiveErrors)
+      ? activeValidationErrors.key
+      : undefined;
+  const visibleGenreError =
+    status === "active" &&
+    (validationTouched.genreGids || shouldShowActiveErrors)
+      ? activeValidationErrors.genreGids
+      : undefined;
+  const visibleProducerError =
+    status === "active" &&
+    (validationTouched.producerGids || shouldShowActiveErrors)
+      ? activeValidationErrors.producerGids
+      : undefined;
+  const visibleOfferError =
+    status === "active" &&
+    (validationTouched.selectedOffers || shouldShowActiveErrors)
+      ? activeValidationErrors.selectedOffers
+      : undefined;
+  const visiblePreviewError =
+    status === "active" &&
+    (validationTouched.previewFile || shouldShowActiveErrors)
+      ? activeValidationErrors.previewFile
+      : undefined;
+  const visiblePriceErrors = Object.fromEntries(
+    Object.entries(activeValidationErrors.priceByLicenseId).filter(
+      ([licenseId]) =>
+        status === "active" &&
+        (validationTouched.priceByLicenseId[licenseId] ||
+          shouldShowActiveErrors),
+    ),
+  );
+  const visibleDeliveryErrors =
+    status === "active" &&
+    (validationTouched.deliveryFiles || shouldShowActiveErrors)
+      ? activeValidationErrors.deliveryByLicenseId
+      : {};
+  const validationBannerMessages =
+    saveAttemptMode === "draft"
+      ? titleValidationError
+        ? [titleValidationError]
+        : []
+      : status === "active" && saveAttemptMode === "active"
+        ? activeValidationErrors.bannerMessages
+        : [];
 
   const handleOpenOfferPicker = useCallback(() => {
     setOfferPickerLicenseDraftIds(selectedLicenseIds);
@@ -2071,6 +2388,10 @@ export default function NewBeatPage() {
   }, []);
 
   const handleApplyOfferPicker = useCallback(() => {
+    setValidationTouched((current) => ({
+      ...current,
+      selectedOffers: true,
+    }));
     setSelectedLicenseIds(
       (licenses as UploadLicense[])
         .filter((license) => offerPickerLicenseDraftIds.includes(license.id))
@@ -2089,6 +2410,10 @@ export default function NewBeatPage() {
       setSelectedBundleIds((current) =>
         current.includes(bundleId) ? current : [...current, bundleId],
       );
+      setValidationTouched((current) => ({
+        ...current,
+        selectedOffers: true,
+      }));
       setBundleLicenseOverrides((current) => ({
         ...current,
         [bundleId]: getBundleActiveLicenseIds(bundle, licenses as UploadLicense[]),
@@ -2115,6 +2440,10 @@ export default function NewBeatPage() {
   }, []);
 
   const handleDeleteOfferGroup = useCallback((groupId: string) => {
+    setValidationTouched((current) => ({
+      ...current,
+      selectedOffers: true,
+    }));
     if (groupId === "individual-licenses") {
       setSelectedLicenseIds([]);
       setEditingOfferGroupId(null);
@@ -2133,6 +2462,10 @@ export default function NewBeatPage() {
 
   const handleToggleOfferGroupLicense = useCallback(
     (groupId: string, licenseId: string) => {
+      setValidationTouched((current) => ({
+        ...current,
+        selectedOffers: true,
+      }));
       const bundleId = groupId.replace(/^bundle:/, "");
       const bundle = (bundles as UploadLicenseBundle[]).find(
         (candidate) => candidate.id === bundleId,
@@ -2162,6 +2495,10 @@ export default function NewBeatPage() {
   );
 
   const handleUseLastUsedOffers = useCallback(() => {
+    setValidationTouched((current) => ({
+      ...current,
+      selectedOffers: true,
+    }));
     setSelectedBundleIds(lastUsedSelectionState.selectedBundleIds);
     setSelectedLicenseIds(lastUsedSelectionState.selectedLicenseIds);
     setBundleLicenseOverrides(lastUsedSelectionState.bundleLicenseOverrides || {});
@@ -2254,6 +2591,7 @@ export default function NewBeatPage() {
     setGenreGids(initialGenreGids);
     setProducerGids(initialProducerGids);
     setProducerAlias(initialProducerAlias);
+    setTags(initialTags);
     setStatus(initialStatus);
     setSelectedBundleIds(initialSelectedBundleIds);
     setSelectedLicenseIds(initialSelectedLicenseIds);
@@ -2263,6 +2601,18 @@ export default function NewBeatPage() {
     setStemsAddonSelections(initialStemsAddonSelections);
     setPreviewFile(initialPreviewFile);
     setCoverArtFile(initialCoverArtFile);
+    setValidationTouched({
+      title: false,
+      bpm: false,
+      key: false,
+      genreGids: false,
+      producerGids: false,
+      previewFile: false,
+      selectedOffers: false,
+      deliveryFiles: false,
+      priceByLicenseId: {},
+    });
+    setSaveAttemptMode(null);
     setUploadError(null);
   }, [
     initialBpm,
@@ -2277,6 +2627,7 @@ export default function NewBeatPage() {
     initialPreviewFile,
     initialProducerAlias,
     initialProducerGids,
+    initialTags,
     initialStatus,
     initialTitle,
     initialUploadedFiles,
@@ -2284,9 +2635,45 @@ export default function NewBeatPage() {
 
   // Handle form submission
   const handleSubmit = (saveMode?: "draft" | "active") => {
+    const resolvedStatus = saveMode || status;
     setSuppressSaveBar(false);
+
+    if (resolvedStatus === "draft") {
+      setSaveAttemptMode("draft");
+      setValidationTouched((current) => ({
+        ...current,
+        title: true,
+      }));
+
+      if (titleValidationError) {
+        return;
+      }
+    } else {
+      setSaveAttemptMode("active");
+      setValidationTouched((current) => ({
+        ...current,
+        title: true,
+        bpm: true,
+        key: true,
+        genreGids: true,
+        producerGids: true,
+        previewFile: true,
+        selectedOffers: true,
+        deliveryFiles: true,
+        priceByLicenseId: {
+          ...current.priceByLicenseId,
+          ...Object.fromEntries(
+            selectedLicenses.map((license) => [license.id, true]),
+          ),
+        },
+      }));
+
+      if (hasUploadValidationErrors(activeValidationErrors)) {
+        return;
+      }
+    }
+
     setIsSaveSubmitting(true);
-    const resolvedStatus = saveMode || effectiveSaveMode;
     const formData = new FormData();
     if (draft?.id) {
       formData.append("draftId", draft.id);
@@ -2297,33 +2684,13 @@ export default function NewBeatPage() {
     formData.append("genreGids", JSON.stringify(genreGids));
     formData.append("producerGids", JSON.stringify(producerGids));
     formData.append("producerAlias", producerAlias);
+    formData.append("tags", JSON.stringify(tags));
     formData.append("status", resolvedStatus);
     formData.append(
       "selectedLicenseIds",
       JSON.stringify(selectedLicenses.map((license) => license.id)),
     );
     formData.append("licenseSelectionState", JSON.stringify(selectionState));
-    if (status === "active" && resolvedStatus === "draft") {
-      formData.append("intendedActive", "true");
-      const missing: string[] = [];
-      if (!bpm) missing.push("BPM");
-      if (!key) missing.push("key");
-      if (genreGids.length === 0) missing.push("genre");
-      if (producerGids.length === 0) missing.push("producer");
-      if (selectedLicenses.length === 0) missing.push("license offers");
-      if (!previewFile) missing.push("preview audio");
-      if (uploadedFiles.length === 0) missing.push("delivery files");
-      if (
-        !hasCompleteLicensePrices(
-          selectedLicenses.map((license) => ({ id: license.id })),
-          licensePrices,
-        )
-      )
-        missing.push("pricing");
-      if (missing.length > 0) {
-        formData.append("missing", missing.join(","));
-      }
-    }
     formData.append("licenseFiles", JSON.stringify(licenseFiles));
     formData.append("licensePrices", JSON.stringify(licensePrices));
     formData.append(
@@ -2495,7 +2862,7 @@ export default function NewBeatPage() {
   const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isBusy) return;
-    handleSubmit(effectiveSaveMode);
+    handleSubmit(status === "draft" ? "draft" : "active");
   };
 
   const handleFormReset = (event: React.FormEvent<HTMLFormElement>) => {
@@ -2568,18 +2935,13 @@ export default function NewBeatPage() {
           <button
             type="button"
             variant="primary"
-            disabled={
-              isBusy ||
-              (effectiveSaveMode === "draft"
-                ? !hasDraftMinimumFields()
-                : !isReadyForActive())
-            }
+            disabled={isBusy}
             loading={
               isSaveSubmitting || isSubmittingForm || isUploading
                 ? ""
                 : undefined
             }
-            onClick={() => handleSubmit(effectiveSaveMode)}
+            onClick={() => handleSubmit(status === "draft" ? "draft" : "active")}
           >
             {saveActionLabel}
           </button>
@@ -2599,6 +2961,25 @@ export default function NewBeatPage() {
                   action={{ content: "Fix storage", url: "/app/settings" }}
                 >
                   <p>{storageWarning}</p>
+                </Banner>
+              </Layout.Section>
+            )}
+
+            {validationBannerMessages.length > 0 && (
+              <Layout.Section>
+                <Banner
+                  title={
+                    validationBannerMessages.length === 1
+                      ? "There is 1 error with this beat:"
+                      : `There are ${validationBannerMessages.length} errors with this beat:`
+                  }
+                  tone="critical"
+                >
+                  <ul style={{ margin: 0, paddingLeft: "18px" }}>
+                    {validationBannerMessages.map((message) => (
+                      <li key={message}>{message}</li>
+                    ))}
+                  </ul>
                 </Banner>
               </Layout.Section>
             )}
@@ -2639,7 +3020,14 @@ export default function NewBeatPage() {
                         label="Title"
                         value={title}
                         onChange={setTitle}
+                        onBlur={() =>
+                          setValidationTouched((current) => ({
+                            ...current,
+                            title: true,
+                          }))
+                        }
                         autoComplete="off"
+                        error={visibleTitleError}
                       />
 
                       <FormLayout.Group>
@@ -2648,7 +3036,14 @@ export default function NewBeatPage() {
                           type="number"
                           value={bpm}
                           onChange={setBpm}
+                          onBlur={() =>
+                            setValidationTouched((current) => ({
+                              ...current,
+                              bpm: true,
+                            }))
+                          }
                           autoComplete="off"
+                          error={visibleBpmError}
                         />
 
                         <Select
@@ -2659,6 +3054,13 @@ export default function NewBeatPage() {
                           }))}
                           value={key}
                           onChange={setKey}
+                          onBlur={() =>
+                            setValidationTouched((current) => ({
+                              ...current,
+                              key: true,
+                            }))
+                          }
+                          error={visibleKeyError}
                         />
                       </FormLayout.Group>
                     </FormLayout>
@@ -2679,6 +3081,31 @@ export default function NewBeatPage() {
                     hasLastUsedOfferSelection ? handleUseLastUsedOffers : undefined
                   }
                   hasLastUsedOfferSelection={hasLastUsedOfferSelection}
+                  offerError={visibleOfferError}
+                  previewError={visiblePreviewError}
+                  priceErrors={visiblePriceErrors}
+                  deliveryErrors={visibleDeliveryErrors}
+                  onPriceBlur={(licenseId) =>
+                    setValidationTouched((current) => ({
+                      ...current,
+                      priceByLicenseId: {
+                        ...current.priceByLicenseId,
+                        [licenseId]: true,
+                      },
+                    }))
+                  }
+                  onPreviewInteraction={() =>
+                    setValidationTouched((current) => ({
+                      ...current,
+                      previewFile: true,
+                    }))
+                  }
+                  onDeliveryInteraction={() =>
+                    setValidationTouched((current) => ({
+                      ...current,
+                      deliveryFiles: true,
+                    }))
+                  }
                   uploadedFiles={uploadedFiles}
                   licenseFiles={licenseFiles}
                   licensePrices={licensePrices}
@@ -2714,7 +3141,6 @@ export default function NewBeatPage() {
                   <BlockStack gap="400">
                     <InlineStatusHeader
                       status={status}
-                      effectiveSaveMode={effectiveSaveMode}
                       isReadyForActive={isReadyForActive()}
                     />
                     <Select
@@ -2730,10 +3156,10 @@ export default function NewBeatPage() {
 
                     <Text as="p" variant="bodySm" tone="subdued">
                       {status === "draft"
-                        ? "Save as draft to finish later."
-                        : effectiveSaveMode === "draft"
-                          ? "Missing files or pricing — will save as draft for now."
-                          : "Ready to publish to your Shopify store."}
+                        ? "Drafts only require a title."
+                        : isReadyForActive()
+                          ? "Ready to publish to your Shopify store."
+                          : "Complete the required fields below before publishing to Shopify."}
                     </Text>
                   </BlockStack>
                 </Card>
@@ -2752,6 +3178,13 @@ export default function NewBeatPage() {
                         selectedValues={producerGids}
                         onChange={setProducerGids}
                         placeholder="Search producers"
+                        onBlur={() =>
+                          setValidationTouched((current) => ({
+                            ...current,
+                            producerGids: true,
+                          }))
+                        }
+                        error={visibleProducerError}
                       />
 
                       <MultiSelectCombobox
@@ -2760,6 +3193,20 @@ export default function NewBeatPage() {
                         selectedValues={genreGids}
                         onChange={setGenreGids}
                         placeholder="Search genres"
+                        onBlur={() =>
+                          setValidationTouched((current) => ({
+                            ...current,
+                            genreGids: true,
+                          }))
+                        }
+                        error={visibleGenreError}
+                      />
+
+                      <ProductTagsField
+                        label="Tags"
+                        tags={tags}
+                        onChange={setTags}
+                        placeholder="Add tags"
                       />
                     </FormLayout>
                   </BlockStack>
@@ -2915,11 +3362,9 @@ export default function NewBeatPage() {
 
 function InlineStatusHeader({
   status,
-  effectiveSaveMode,
   isReadyForActive,
 }: {
   status: string;
-  effectiveSaveMode: "draft" | "active";
   isReadyForActive: boolean;
 }) {
   return (
@@ -2931,16 +3376,12 @@ function InlineStatusHeader({
         tone={
           status === "draft"
             ? undefined
-            : isReadyForActive && effectiveSaveMode === "active"
+            : isReadyForActive
               ? "success"
               : "warning"
         }
       >
-        {status === "draft"
-          ? "Draft"
-          : effectiveSaveMode === "active"
-            ? "Ready"
-            : "Incomplete"}
+        {status === "draft" ? "Draft" : isReadyForActive ? "Ready" : "Incomplete"}
       </Badge>
     </InlineStack>
   );
