@@ -45,12 +45,12 @@ export interface BeatUploadFormProps {
 }
 
 const keyOptions = [
-  "C major", "C minor", "C# major", "C# minor",
-  "D major", "D minor", "D# major", "D# minor",
-  "E major", "E minor", "F major", "F minor",
-  "F# major", "F# minor", "G major", "G minor",
-  "G# major", "G# minor", "A major", "A minor",
-  "A# major", "A# minor", "B major", "B minor",
+  "C Major", "C Minor", "C# Major", "C# Minor",
+  "D Major", "D Minor", "D# Major", "D# Minor",
+  "E Major", "E Minor", "F Major", "F Minor",
+  "F# Major", "F# Minor", "G Major", "G Minor",
+  "G# Major", "G# Minor", "A Major", "A Minor",
+  "A# Major", "A# Minor", "B Major", "B Minor",
 ];
 
 export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormProps) {
@@ -60,7 +60,7 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
   // Form state
   const [title, setTitle] = useState("");
   const [bpm, setBpm] = useState("");
-  const [key, setKey] = useState("C minor");
+  const [key, setKey] = useState("");
   const [genreGids, setGenreGids] = useState<string[]>(genres[0]?.id ? [genres[0].id] : []);
   const [producerGids, setProducerGids] = useState<string[]>(
     producers[0]?.id ? [producers[0].id] : []
@@ -103,7 +103,7 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
   );
 
   const handleUpload = () => {
-    if (!title || !bpm || !key || genreGids.length === 0 || producerGids.length === 0) {
+    if (!title || genreGids.length === 0 || producerGids.length === 0) {
       return;
     }
 
@@ -166,16 +166,18 @@ export function BeatUploadForm({ licenses, genres, producers }: BeatUploadFormPr
               value={bpm}
               onChange={setBpm}
               autoComplete="off"
-              helpText="Beats per minute"
-              requiredIndicator
+              helpText="Optional"
             />
 
             <Select
               label="Key"
-              options={keyOptions.map((k) => ({ label: k, value: k }))}
+              options={[
+                { label: "Select key (optional)", value: "" },
+                ...keyOptions.map((k) => ({ label: k, value: k })),
+              ]}
               value={key}
               onChange={setKey}
-              requiredIndicator
+              helpText="Optional"
             />
           </FormLayout.Group>
 

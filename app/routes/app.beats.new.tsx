@@ -128,30 +128,30 @@ const STARTER_LICENSE_HANDLES = [
 const STARTER_LICENSE_HANDLE_SET = new Set<string>(STARTER_LICENSE_HANDLES);
 
 const keyOptions = [
-  "C major",
-  "C minor",
-  "C# major",
-  "C# minor",
-  "D major",
-  "D minor",
-  "D# major",
-  "D# minor",
-  "E major",
-  "E minor",
-  "F major",
-  "F minor",
-  "F# major",
-  "F# minor",
-  "G major",
-  "G minor",
-  "G# major",
-  "G# minor",
-  "A major",
-  "A minor",
-  "A# major",
-  "A# minor",
-  "B major",
-  "B minor",
+  "C Major",
+  "C Minor",
+  "C# Major",
+  "C# Minor",
+  "D Major",
+  "D Minor",
+  "D# Major",
+  "D# Minor",
+  "E Major",
+  "E Minor",
+  "F Major",
+  "F Minor",
+  "F# Major",
+  "F# Minor",
+  "G Major",
+  "G Minor",
+  "G# Major",
+  "G# Minor",
+  "A Major",
+  "A Minor",
+  "A# Major",
+  "A# Minor",
+  "B Major",
+  "B Minor",
 ];
 
 function normalizeShopifyResourceId(id: string) {
@@ -319,22 +319,10 @@ function getUploadValidationErrors({
 }): UploadValidationErrors {
   const errors = createEmptyUploadValidationErrors();
 
-  const parsedBpm =
-    typeof bpm === "number" ? bpm : Number.parseInt(String(bpm), 10);
   const hasSharedStems = hasSharedStemsSourceFile(uploadedFiles);
 
   errors.title = getTitleValidationError(title);
   if (errors.title) errors.bannerMessages.push(errors.title);
-
-  if (!Number.isFinite(parsedBpm) || parsedBpm <= 0) {
-    errors.bpm = "Add BPM";
-    errors.bannerMessages.push("Add BPM.");
-  }
-
-  if (!key.trim()) {
-    errors.key = "Choose a key";
-    errors.bannerMessages.push("Choose a key.");
-  }
 
   if (genreGids.length === 0) {
     errors.genreGids = "Choose at least one genre";
@@ -932,7 +920,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             id: draftRecord.id,
             title: draftRecord.title,
             bpm: draftRecord.bpm ? String(draftRecord.bpm) : "",
-            key: draftRecord.key || "C minor",
+            key: draftRecord.key || "",
             producerAlias: draftRecord.producerAlias || "",
             tags: normalizeProductTags(
               parseJsonField<string[]>(draftRecord.tagsJson, []),
@@ -1056,8 +1044,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Extract beat details
     const title = formData.get("title") as string;
-    const bpm = parseInt(formData.get("bpm") as string, 10);
-    const key = formData.get("key") as string;
+    const rawBpm = String(formData.get("bpm") || "").trim();
+    const bpm = rawBpm ? parseInt(rawBpm, 10) : null;
+    const key = String(formData.get("key") || "").trim();
     const genreGids = JSON.parse((formData.get("genreGids") as string) || "[]");
     const producerGids = JSON.parse(
       (formData.get("producerGids") as string) || "[]",
@@ -1506,7 +1495,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const draftData = {
         shop: session.shop,
         title,
-        bpm: bpm || null,
+        bpm,
         key: key || null,
         producerAlias: producerAlias || null,
         tagsJson: JSON.stringify(tags),
@@ -1749,7 +1738,7 @@ export default function NewBeatPage() {
 
   const initialTitle = draft?.title || "";
   const initialBpm = draft?.bpm || "";
-  const initialKey = draft?.key || "C minor";
+  const initialKey = draft?.key || "";
   const initialGenreGids = useMemo(
     () =>
       draft?.genreGids?.length
@@ -3043,15 +3032,19 @@ export default function NewBeatPage() {
                             }))
                           }
                           autoComplete="off"
+                          placeholder="e.g. 140"
                           error={visibleBpmError}
                         />
 
                         <Select
                           label="Key"
-                          options={keyOptions.map((k) => ({
-                            label: k,
-                            value: k,
-                          }))}
+                          options={[
+                            { label: "Select key (e.g. C# Minor)", value: "" },
+                            ...keyOptions.map((k) => ({
+                              label: k,
+                              value: k,
+                            })),
+                          ]}
                           value={key}
                           onChange={setKey}
                           onBlur={() =>

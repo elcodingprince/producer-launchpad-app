@@ -4,6 +4,8 @@ export const keySchema = z
   .string()
   .regex(/^[A-G](#)? (major|minor)$/i, "Key must be in the format 'C major' or 'C# minor'");
 
+export const optionalKeySchema = z.union([keySchema, z.literal("")]);
+
 export const licensePriceSchema = z.object({
   templateId: z.string().min(1, "License template is required"),
   licenseGid: z.string().min(1, "License reference is required"),
@@ -12,8 +14,14 @@ export const licensePriceSchema = z.object({
 
 export const beatUploadSchema = z.object({
   title: z.string().min(1, "Title is required"),
-  bpm: z.number().int().min(60, "BPM must be at least 60").max(200, "BPM must be 200 or less"),
-  key: keySchema,
+  bpm: z
+    .number()
+    .int()
+    .min(60, "BPM must be at least 60")
+    .max(200, "BPM must be 200 or less")
+    .nullable()
+    .optional(),
+  key: optionalKeySchema,
   genreGids: z.array(z.string().min(1)).min(1, "At least one genre is required"),
   producerGids: z.array(z.string().min(1)).min(1, "At least one producer is required"),
   licensePrices: z.array(licensePriceSchema).min(1, "At least one license price is required"),

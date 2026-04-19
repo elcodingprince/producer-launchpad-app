@@ -36,8 +36,8 @@ export interface LicensePricing {
 export interface BeatProductData {
   title: string;
   descriptionHtml?: string;
-  bpm: number;
-  key: string;
+  bpm: number | null;
+  key: string | null;
   status: "ACTIVE" | "DRAFT";
   genreGids: string[];
   producerGids: string[];
@@ -82,18 +82,6 @@ export class ProductCreatorService {
     }> = [
       {
         namespace: "custom",
-        key: "bpm",
-        value: String(data.bpm),
-        type: "number_integer",
-      },
-      {
-        namespace: "custom",
-        key: "key",
-        value: data.key,
-        type: "single_line_text_field",
-      },
-      {
-        namespace: "custom",
         key: "genre",
         value: JSON.stringify(data.genreGids),
         type: "list.metaobject_reference",
@@ -111,6 +99,24 @@ export class ProductCreatorService {
         type: "list.metaobject_reference",
       },
     ];
+
+    if (typeof data.bpm === "number" && Number.isFinite(data.bpm)) {
+      productMetafields.push({
+        namespace: "custom",
+        key: "bpm",
+        value: String(data.bpm),
+        type: "number_integer",
+      });
+    }
+
+    if (data.key) {
+      productMetafields.push({
+        namespace: "custom",
+        key: "key",
+        value: data.key,
+        type: "single_line_text_field",
+      });
+    }
 
     // Add optional metafields
     if (data.producerAlias) {
@@ -132,12 +138,20 @@ export class ProductCreatorService {
       inventoryPolicy: "CONTINUE",
     }));
 
+    const metadataParts = [data.title];
+    if (typeof data.bpm === "number" && Number.isFinite(data.bpm)) {
+      metadataParts.push(`${data.bpm} BPM`);
+    }
+    if (data.key) {
+      metadataParts.push(data.key);
+    }
+
     // Create the product
     const product = await this.client.createProduct({
       title: data.title,
       descriptionHtml:
         data.descriptionHtml ||
-        `<p>${data.title} - ${data.bpm} BPM ${data.key}</p>`,
+        `<p>${metadataParts.join(" - ")}</p>`,
       status: data.status,
       vendor: data.producerNames[0] || "Unknown Producer",
       productType: "Beat",
