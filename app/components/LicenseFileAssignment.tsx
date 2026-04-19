@@ -771,11 +771,6 @@ export function LicenseFileAssignment({
               <Text variant="bodySm" as="p" tone="subdued">
                 Cover Art
               </Text>
-              <Text variant="bodyXs" as="p" tone="subdued">
-                Upload at least 1024 x 1024 px for best quality. Ideal size is
-                1400 x 1400 px for sharper retina and zoomed-in views. Square is
-                best, but near-square art like 4:5 or 5:4 is okay.
-              </Text>
               {!coverArtFile ? (
                 <div style={{ height: "160px" }}>
                   <DropZone
@@ -804,6 +799,14 @@ export function LicenseFileAssignment({
                         alignment="center"
                       >
                         Add image
+                      </Text>
+                      <Text
+                        as="span"
+                        variant="bodyXs"
+                        tone="subdued"
+                        alignment="center"
+                      >
+                        1400 x 1400 px recommended
                       </Text>
                     </div>
                   </DropZone>
