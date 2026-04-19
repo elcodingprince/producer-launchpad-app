@@ -14,12 +14,12 @@ import {
   Box,
   Popover,
   Scrollable,
-  Tag,
   TextField,
   InlineError,
 } from "@shopify/polaris";
 import {
   XIcon,
+  DeleteIcon,
   AlertDiamondIcon,
   StarFilledIcon,
   CheckCircleIcon,
@@ -1122,195 +1122,224 @@ export function LicenseFileAssignment({
                       }
                       borderColor="border"
                     >
-                      {group.isEditing && group.kind === "bundle" ? (
-                        <BlockStack gap="300">
-                          <BlockStack gap="150">
-                            <Text as="p" variant="bodyMd" fontWeight="medium">
-                              {group.title}
-                            </Text>
+                      {(() => {
+                        const selectedGroupLicenses = (
+                          group.availableLicenses || []
+                        ).filter((license) => license.selected);
 
-                            {group.warning ? (
-                              <Text as="p" variant="bodySm" tone="critical">
-                                {group.warning}
+                        return group.isEditing && group.kind === "bundle" ? (
+                          <BlockStack gap="300">
+                            <BlockStack gap="150">
+                              <Text as="p" variant="bodyMd" fontWeight="medium">
+                                {group.title}
                               </Text>
-                            ) : null}
-                          </BlockStack>
 
-                          <Popover
-                            active={activeGroupPopoverId === group.id}
-                            autofocusTarget="first-node"
-                            preferredAlignment="left"
-                            onClose={() => setActiveGroupPopoverId(null)}
-                            activator={
-                              <Box
-                                borderWidth="025"
-                                borderColor="border"
-                                borderRadius="200"
-                                padding="200"
-                              >
-                                <BlockStack gap="200">
-                                  {group.licenseNames.length > 0 ? (
-                                    <InlineStack gap="150" wrap>
-                                      {group.licenseNames.map((licenseName) => {
-                                        const matchedLicense = (
-                                          group.availableLicenses || []
-                                        ).find(
-                                          (license) =>
-                                            license.name === licenseName &&
-                                            license.selected,
-                                        );
+                              {group.warning ? (
+                                <Text as="p" variant="bodySm" tone="critical">
+                                  {group.warning}
+                                </Text>
+                              ) : null}
+                            </BlockStack>
 
-                                        return (
-                                          <Tag
-                                            key={`${group.id}-${licenseName}`}
-                                            onRemove={() => {
-                                              if (matchedLicense) {
+                            <Popover
+                              active={activeGroupPopoverId === group.id}
+                              autofocusTarget="first-node"
+                              preferredAlignment="left"
+                              onClose={() => setActiveGroupPopoverId(null)}
+                              activator={
+                                <Box
+                                  borderWidth="025"
+                                  borderColor="border"
+                                  borderRadius="200"
+                                  padding="200"
+                                >
+                                  <BlockStack gap="150">
+                                    {selectedGroupLicenses.length > 0 ? (
+                                      selectedGroupLicenses.map((license) => (
+                                        <Box
+                                          key={`${group.id}-${license.id}`}
+                                          borderWidth="025"
+                                          borderColor="border"
+                                          borderRadius="200"
+                                          paddingInline="200"
+                                          paddingBlock="150"
+                                        >
+                                          <InlineStack
+                                            align="space-between"
+                                            blockAlign="center"
+                                            wrap={false}
+                                          >
+                                            <Text as="span" variant="bodyMd">
+                                              {license.name}
+                                            </Text>
+                                            <Button
+                                              icon={DeleteIcon}
+                                              variant="plain"
+                                              tone="critical"
+                                              accessibilityLabel={`Remove ${license.name}`}
+                                              onClick={() =>
                                                 onToggleGroupLicense?.(
                                                   group.id,
-                                                  matchedLicense.id,
-                                                );
+                                                  license.id,
+                                                )
                                               }
-                                            }}
-                                          >
-                                            {licenseName}
-                                          </Tag>
-                                        );
-                                      })}
-                                    </InlineStack>
-                                  ) : (
-                                    <Text as="p" variant="bodySm" tone="subdued">
-                                      No active licenses are selected in this
-                                      bundle.
-                                    </Text>
-                                  )}
+                                            />
+                                          </InlineStack>
+                                        </Box>
+                                      ))
+                                    ) : null}
 
-                                  <input
-                                    value={groupSearchValues[group.id] || ""}
-                                    onFocus={() => setActiveGroupPopoverId(group.id)}
-                                    onChange={(event) => {
-                                      setGroupSearchValues((current) => ({
-                                        ...current,
-                                        [group.id]: event.currentTarget.value,
-                                      }));
-                                      setActiveGroupPopoverId(group.id);
-                                    }}
-                                    placeholder="Search licenses"
-                                    style={{
-                                      border: "none",
-                                      outline: "none",
-                                      padding: 0,
-                                      background: "transparent",
-                                      fontSize: "16px",
-                                      lineHeight: "24px",
-                                      width: "100%",
-                                      color: "var(--p-color-text)",
-                                    }}
-                                  />
-                                </BlockStack>
-                              </Box>
-                            }
-                          >
-                            <Box minWidth="320px">
-                              <Scrollable shadow style={{ maxHeight: "240px" }}>
-                                <BlockStack gap="0">
-                                  {(group.availableLicenses || [])
-                                    .filter((license) => {
-                                      const normalizedQuery = (
-                                        groupSearchValues[group.id] || ""
-                                      )
-                                        .trim()
-                                        .toLowerCase();
-                                      if (!normalizedQuery) return true;
-                                      return license.name
-                                        .toLowerCase()
-                                        .includes(normalizedQuery);
-                                    })
-                                    .map((license) => (
-                                      <Box
-                                        key={`${group.id}-${license.id}`}
-                                        paddingInline="200"
-                                        paddingBlock="050"
-                                        background={
-                                          license.selected
-                                            ? "bg-surface-secondary"
-                                            : "bg-surface"
+                                    <Box
+                                      borderWidth="025"
+                                      borderColor="border"
+                                      borderRadius="200"
+                                      paddingInline="200"
+                                      paddingBlock="150"
+                                    >
+                                      <input
+                                        value={groupSearchValues[group.id] || ""}
+                                        onFocus={() =>
+                                          setActiveGroupPopoverId(group.id)
                                         }
-                                      >
-                                        <Checkbox
-                                          label={license.name}
-                                          checked={license.selected}
-                                          onChange={() =>
-                                            onToggleGroupLicense?.(
-                                              group.id,
-                                              license.id,
-                                            )
+                                        onClick={() =>
+                                          setActiveGroupPopoverId(group.id)
+                                        }
+                                        onChange={(event) => {
+                                          setGroupSearchValues((current) => ({
+                                            ...current,
+                                            [group.id]:
+                                              event.currentTarget.value,
+                                          }));
+                                          setActiveGroupPopoverId(group.id);
+                                        }}
+                                        placeholder={
+                                          selectedGroupLicenses.length > 0
+                                            ? "Add another license"
+                                            : "Add licenses"
+                                        }
+                                        style={{
+                                          border: "none",
+                                          outline: "none",
+                                          padding: 0,
+                                          background: "transparent",
+                                          fontSize: "14px",
+                                          lineHeight: "20px",
+                                          fontWeight: 400,
+                                          width: "100%",
+                                          color: (
+                                            groupSearchValues[group.id] || ""
+                                          ).trim()
+                                            ? "var(--p-color-text)"
+                                            : "var(--p-color-text-subdued)",
+                                        }}
+                                      />
+                                    </Box>
+                                  </BlockStack>
+                                </Box>
+                              }
+                            >
+                              <Box minWidth="320px">
+                                <Scrollable shadow style={{ maxHeight: "240px" }}>
+                                  <BlockStack gap="0">
+                                    {(group.availableLicenses || [])
+                                      .filter((license) => {
+                                        const normalizedQuery = (
+                                          groupSearchValues[group.id] || ""
+                                        )
+                                          .trim()
+                                          .toLowerCase();
+                                        if (!normalizedQuery) return true;
+                                        return license.name
+                                          .toLowerCase()
+                                          .includes(normalizedQuery);
+                                      })
+                                      .map((license) => (
+                                        <Box
+                                          key={`${group.id}-${license.id}`}
+                                          paddingInline="200"
+                                          paddingBlock="050"
+                                          background={
+                                            license.selected
+                                              ? "bg-surface-secondary"
+                                              : "bg-surface"
                                           }
-                                        />
-                                      </Box>
-                                    ))}
-                                </BlockStack>
-                              </Scrollable>
-                            </Box>
-                          </Popover>
+                                        >
+                                          <Checkbox
+                                            label={license.name}
+                                            checked={license.selected}
+                                            onChange={() =>
+                                              onToggleGroupLicense?.(
+                                                group.id,
+                                                license.id,
+                                              )
+                                            }
+                                          />
+                                        </Box>
+                                      ))}
+                                  </BlockStack>
+                                </Scrollable>
+                              </Box>
+                            </Popover>
 
-                          <InlineStack align="space-between" blockAlign="center">
-                            <Button
-                              tone="critical"
-                              variant="secondary"
-                              onClick={() => onDeleteGroup?.(group.id)}
-                            >
-                              Delete
-                            </Button>
-                            <Button
-                              variant="primary"
-                              onClick={() => onDoneEditingGroup?.(group.id)}
-                            >
-                              Done
-                            </Button>
-                          </InlineStack>
-                        </BlockStack>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => onEditGroup?.(group.id)}
-                          style={{
-                            appearance: "none",
-                            border: "none",
-                            background: "transparent",
-                            padding: 0,
-                            margin: 0,
-                            width: "100%",
-                            textAlign: "left",
-                            cursor: onEditGroup ? "pointer" : "default",
-                          }}
-                        >
-                          <BlockStack gap="150">
-                            <Text as="p" variant="bodyMd" fontWeight="medium">
-                              {group.title}
-                            </Text>
-
-                            {group.licenseNames.length > 0 ? (
-                              <InlineStack gap="150" wrap>
-                                {group.licenseNames.map((licenseName) => (
-                                  <Badge key={`${group.id}-${licenseName}`}>
-                                    {licenseName}
-                                  </Badge>
-                                ))}
-                              </InlineStack>
-                            ) : (
-                              <Text as="p" variant="bodySm" tone="subdued">
-                                No active licenses are included right now.
-                              </Text>
-                            )}
-
-                            {group.warning ? (
-                              <Text as="p" variant="bodySm" tone="critical">
-                                {group.warning}
-                              </Text>
-                            ) : null}
+                            <InlineStack align="space-between" blockAlign="center">
+                              <Button
+                                tone="critical"
+                                variant="secondary"
+                                onClick={() => onDeleteGroup?.(group.id)}
+                              >
+                                Delete
+                              </Button>
+                              <Button
+                                variant="primary"
+                                onClick={() => onDoneEditingGroup?.(group.id)}
+                              >
+                                Done
+                              </Button>
+                            </InlineStack>
                           </BlockStack>
-                        </button>
-                      )}
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => onEditGroup?.(group.id)}
+                            style={{
+                              appearance: "none",
+                              border: "none",
+                              background: "transparent",
+                              padding: 0,
+                              margin: 0,
+                              width: "100%",
+                              textAlign: "left",
+                              cursor: onEditGroup ? "pointer" : "default",
+                            }}
+                          >
+                            <BlockStack gap="150">
+                              <Text as="p" variant="bodyMd" fontWeight="medium">
+                                {group.title}
+                              </Text>
+
+                              {group.licenseNames.length > 0 ? (
+                                <InlineStack gap="150" wrap>
+                                  {group.licenseNames.map((licenseName) => (
+                                    <Badge key={`${group.id}-${licenseName}`}>
+                                      {licenseName}
+                                    </Badge>
+                                  ))}
+                                </InlineStack>
+                              ) : (
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  No active licenses are included right now.
+                                </Text>
+                              )}
+
+                              {group.warning ? (
+                                <Text as="p" variant="bodySm" tone="critical">
+                                  {group.warning}
+                                </Text>
+                              ) : null}
+                            </BlockStack>
+                          </button>
+                        );
+                      })()}
                     </Box>
                   ))}
 
