@@ -3,6 +3,7 @@ import prisma from "~/db.server";
 import { createShopifyClient } from "./shopify";
 
 export const LICENSE_COUNT_WEBHOOK_TOPIC = "orders/paid";
+export const LICENSE_COUNT_METAFIELD_WINDOW_DAYS = 7;
 
 const LICENSE_COUNT_METAFIELD = {
   namespace: "custom",
@@ -19,6 +20,11 @@ export type LicenseCountLineItem = {
   shopifyProductId: string;
   shopifyVariantId: string;
   quantity: number;
+};
+
+export type PaidOrderLicenseLineItemsResult = {
+  lineItems: LicenseCountLineItem[];
+  soldAt: Date;
 };
 
 type LicenseCountRecordState =
@@ -48,6 +54,17 @@ function parseQuantity(value: unknown) {
   const quantity = Number(value || 0);
   if (!Number.isFinite(quantity) || quantity <= 0) return 0;
   return Math.floor(quantity);
+}
+
+function parseShopifyDate(value: unknown) {
+  const date = new Date(String(value || ""));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getLicenseCountWindowStart(now = new Date()) {
+  const start = new Date(now);
+  start.setUTCDate(start.getUTCDate() - LICENSE_COUNT_METAFIELD_WINDOW_DAYS);
+  return start;
 }
 
 function parseProductIdsJson(value: string | null | undefined) {
@@ -101,15 +118,18 @@ export async function fetchPaidOrderLicenseLineItems({
 }: {
   shopifyOrderId: string;
   admin: AdminClient;
-}): Promise<LicenseCountLineItem[]> {
+}): Promise<PaidOrderLicenseLineItemsResult> {
   const lineItems: LicenseCountLineItem[] = [];
   let cursor: string | null = null;
+  let soldAt: Date | null = null;
 
   do {
     const response = await admin.graphql(
       `#graphql
         query PaidOrderLicenseLineItems($id: ID!, $cursor: String) {
           order(id: $id) {
+            processedAt
+            createdAt
             lineItems(first: 250, after: $cursor) {
               nodes {
                 id
@@ -144,6 +164,8 @@ export async function fetchPaidOrderLicenseLineItems({
     const payload = (await response.json()) as {
       data?: {
         order?: {
+          processedAt?: string | null;
+          createdAt?: string | null;
           lineItems?: {
             nodes: Array<{
               id?: string | null;
@@ -175,6 +197,12 @@ export async function fetchPaidOrderLicenseLineItems({
           .map((error) => error.message)
           .join("; ")}`,
       );
+    }
+
+    if (!soldAt) {
+      soldAt =
+        parseShopifyDate(payload.data?.order?.processedAt) ||
+        parseShopifyDate(payload.data?.order?.createdAt);
     }
 
     const nodes = payload.data?.order?.lineItems?.nodes || [];
@@ -210,22 +238,60 @@ export async function fetchPaidOrderLicenseLineItems({
     cursor = pageInfo?.hasNextPage ? pageInfo.endCursor || null : null;
   } while (cursor);
 
-  return lineItems;
+  return {
+    lineItems,
+    soldAt: soldAt || new Date(),
+  };
 }
 
 export async function recordPaidOrderLicenseCounts({
   shop,
   shopifyOrderId,
   lineItems,
+  soldAt,
 }: {
   shop: string;
   shopifyOrderId: string;
   lineItems: LicenseCountLineItem[];
+  soldAt: Date;
 }): Promise<LicenseCountRecordResult> {
   const normalizedOrderId = normalizeShopifyResourceId(shopifyOrderId);
+  const normalizedLineItems = lineItems
+    .map((item) => ({
+      ...item,
+      shopifyLineItemId: normalizeShopifyResourceId(item.shopifyLineItemId),
+      shopifyProductId: normalizeShopifyResourceId(item.shopifyProductId),
+      shopifyVariantId: normalizeShopifyResourceId(item.shopifyVariantId),
+      quantity: parseQuantity(item.quantity),
+    }))
+    .filter(
+      (item) =>
+        item.shopifyLineItemId &&
+        item.shopifyProductId &&
+        item.shopifyVariantId &&
+        item.quantity > 0,
+    );
   const affectedProductIds = Array.from(
-    new Set(lineItems.map((item) => item.shopifyProductId)),
+    new Set(normalizedLineItems.map((item) => item.shopifyProductId)),
   );
+
+  if (normalizedLineItems.length === 0) {
+    return {
+      state: "processed",
+      affectedProductIds,
+    };
+  }
+
+  const saleEventData = normalizedLineItems.map((item) => ({
+    shop,
+    topic: LICENSE_COUNT_WEBHOOK_TOPIC,
+    shopifyOrderId: normalizedOrderId,
+    shopifyLineItemId: item.shopifyLineItemId,
+    shopifyProductId: item.shopifyProductId,
+    shopifyVariantId: item.shopifyVariantId,
+    quantity: item.quantity,
+    soldAt,
+  }));
 
   try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -239,7 +305,12 @@ export async function recordPaidOrderLicenseCounts({
       });
 
       const { productQuantityById, variantQuantityById } =
-        groupLineItems(lineItems);
+        groupLineItems(normalizedLineItems);
+
+      await tx.licenseSaleEvent.createMany({
+        data: saleEventData,
+        skipDuplicates: true,
+      });
 
       for (const [shopifyProductId, quantity] of productQuantityById) {
         await tx.productLicenseCount.upsert({
@@ -303,6 +374,13 @@ export async function recordPaidOrderLicenseCounts({
       },
     });
 
+    if (existing) {
+      await prisma.licenseSaleEvent.createMany({
+        data: saleEventData,
+        skipDuplicates: true,
+      });
+    }
+
     return {
       state: existing?.metafieldsSyncedAt
         ? "already_synced"
@@ -327,17 +405,27 @@ export async function syncProductLicenseCountMetafields({
 
   if (normalizedProductIds.length === 0) return;
 
-  const counts: Array<{ shopifyProductId: string; count: number }> =
-    await prisma.productLicenseCount.findMany({
-      where: {
-        shop,
-        shopifyProductId: {
-          in: normalizedProductIds,
-        },
+  const windowStart = getLicenseCountWindowStart();
+  const counts = await prisma.licenseSaleEvent.groupBy({
+    by: ["shopifyProductId"],
+    where: {
+      shop,
+      shopifyProductId: {
+        in: normalizedProductIds,
       },
-    });
+      soldAt: {
+        gte: windowStart,
+      },
+    },
+    _sum: {
+      quantity: true,
+    },
+  });
   const countByProductId = new Map(
-    counts.map((count) => [count.shopifyProductId, count.count]),
+    counts.map((count) => [
+      count.shopifyProductId,
+      count._sum.quantity || 0,
+    ]),
   );
   const client = createShopifyClient({ shop }, admin);
   const metafields = normalizedProductIds.map((productId) => ({

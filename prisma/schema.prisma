@@ -198,6 +198,24 @@ model ProductLicenseCount {
   @@index([shop])
 }
 
+model LicenseSaleEvent {
+  id                String   @id @default(cuid())
+  shop              String
+  topic             String   @default("orders/paid")
+  shopifyOrderId    String
+  shopifyLineItemId String
+  shopifyProductId  String
+  shopifyVariantId  String
+  quantity          Int
+  soldAt            DateTime
+  createdAt         DateTime @default(now())
+
+  @@unique([shop, shopifyOrderId, shopifyLineItemId, topic])
+  @@index([shop, soldAt])
+  @@index([shop, shopifyProductId, soldAt])
+  @@index([shop, shopifyVariantId, soldAt])
+}
+
 model VariantLicenseCount {
   id               String   @id @default(cuid())
   shop             String

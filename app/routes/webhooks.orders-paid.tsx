@@ -24,7 +24,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   try {
     const { admin } = await unauthenticated.admin(shop);
-    const lineItems = await fetchPaidOrderLicenseLineItems({
+    const { lineItems, soldAt } = await fetchPaidOrderLicenseLineItems({
       shopifyOrderId,
       admin,
     });
@@ -37,6 +37,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       shop,
       shopifyOrderId,
       lineItems,
+      soldAt,
     });
 
     if (

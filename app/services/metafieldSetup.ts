@@ -58,7 +58,8 @@ export const REQUIRED_PRODUCT_METAFIELDS = [
     namespace: "custom",
     key: "license_count",
     type: "number_integer",
-    description: "App-managed count of paid licenses sold for this beat.",
+    description:
+      "App-managed count of paid licenses sold for this beat in the current CRO window.",
   },
   {
     name: "Untagged MP3",
