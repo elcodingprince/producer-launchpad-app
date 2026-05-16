@@ -297,7 +297,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Double check if we already processed it
   const existingOrder = await prisma.order.findUnique({
-    where: { shopifyOrderId: orderId },
+    where: {
+      shop_shopifyOrderId: {
+        shop,
+        shopifyOrderId: orderId,
+      },
+    },
   });
 
   if (existingOrder) {

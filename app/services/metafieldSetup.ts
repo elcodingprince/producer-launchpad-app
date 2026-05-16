@@ -54,6 +54,13 @@ export const REQUIRED_PRODUCT_METAFIELDS = [
     description: "List of available license tiers",
   },
   {
+    name: "License Count",
+    namespace: "custom",
+    key: "license_count",
+    type: "number_integer",
+    description: "App-managed count of paid licenses sold for this beat.",
+  },
+  {
     name: "Untagged MP3",
     namespace: "custom",
     key: "untagged_mp3",

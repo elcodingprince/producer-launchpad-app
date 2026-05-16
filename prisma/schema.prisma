@@ -133,7 +133,7 @@ model LicenseFileMapping {
 model Order {
   id                String   @id @default(cuid())
   shop              String
-  shopifyOrderId    String   @unique
+  shopifyOrderId    String
   shopifyCustomerId String?
   orderNumber       String
   browserIp         String?
@@ -147,7 +147,7 @@ model Order {
   deliveryAccess     DeliveryAccess?
   executedAgreements ExecutedAgreement[]
 
-  @@index([shop, shopifyOrderId])
+  @@unique([shop, shopifyOrderId])
   @@index([shop, shopifyCustomerId])
 }
 
@@ -169,6 +169,47 @@ model OrderItem {
 
   @@index([orderId])
   @@index([variantId])
+}
+
+model ProcessedOrder {
+  id                 String    @id @default(cuid())
+  shop               String
+  shopifyOrderId     String
+  topic              String    @default("orders/paid")
+  productIdsJson     String    @default("[]")
+  processedAt        DateTime  @default(now())
+  metafieldsSyncedAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([shop, shopifyOrderId, topic])
+  @@index([shop, processedAt])
+}
+
+model ProductLicenseCount {
+  id               String   @id @default(cuid())
+  shop             String
+  shopifyProductId String
+  count            Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([shop, shopifyProductId])
+  @@index([shop])
+}
+
+model VariantLicenseCount {
+  id               String   @id @default(cuid())
+  shop             String
+  shopifyProductId String
+  shopifyVariantId String
+  count            Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([shop, shopifyVariantId])
+  @@index([shop])
+  @@index([shop, shopifyProductId])
 }
 
 model ExecutedAgreement {

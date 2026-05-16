@@ -98,6 +98,12 @@ export class ProductCreatorService {
         value: JSON.stringify(data.licenses.map((l) => l.licenseGid)),
         type: "list.metaobject_reference",
       },
+      {
+        namespace: "custom",
+        key: "license_count",
+        value: "0",
+        type: "number_integer",
+      },
     ];
 
     if (typeof data.bpm === "number" && Number.isFinite(data.bpm)) {

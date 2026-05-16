@@ -1172,9 +1172,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ...submittedDeliveryFiles,
       ...existingUploadedFiles,
     ]);
+    const submittedPreviewFile =
+      previewFileId && fileMetadata[previewFileId]
+        ? ({
+            id: previewFileId,
+            name: fileMetadata[previewFileId].name || "preview.mp3",
+            type: fileMetadata[previewFileId].type || "preview",
+            purpose: fileMetadata[previewFileId].purpose || "preview",
+            size: fileMetadata[previewFileId].size || "",
+          } satisfies UploadedFile)
+        : null;
     const validationPreviewFile =
       (previewFileId
         ? uploadedFilesState.find((file) => file.id === previewFileId) ||
+          submittedPreviewFile ||
           existingPreviewFile
         : null) || null;
 
