@@ -16,6 +16,7 @@ public/build/
 .DS_Store
 .vscode/
 .idea/
+.claude/
 
 # logs
 npm-debug.log*

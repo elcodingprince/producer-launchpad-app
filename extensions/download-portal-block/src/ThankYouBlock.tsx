@@ -2,7 +2,6 @@ import {
   Banner,
   BlockStack,
   Button,
-  Link,
   Spinner,
   Text,
   reactExtension,
@@ -13,6 +12,24 @@ import {
 } from '@shopify/ui-extensions-react/checkout';
 import { useEffect, useState } from 'react';
 
+const POLL_INTERVAL_MS = 2500;
+const MAX_ATTEMPTS = 24;
+
+const STAGING_APP_URL = 'https://producer-launchpad-staging.fly.dev';
+const PRODUCTION_APP_URL = 'https://producer-launchpad-app.fly.dev';
+const STAGING_SHOP_DOMAINS = new Set(['pl-staging.myshopify.com']);
+
+function resolveAppUrl(shopDomain: string): string {
+  return STAGING_SHOP_DOMAINS.has(shopDomain)
+    ? STAGING_APP_URL
+    : PRODUCTION_APP_URL;
+}
+
+type DeliveryState =
+  | { status: 'loading' }
+  | { status: 'ready'; downloadUrl: string }
+  | { status: 'delayed' };
+
 export default reactExtension('purchase.thank-you.block.render', () => (
   <ThankYouBlock />
 ));
@@ -22,151 +39,107 @@ function ThankYouBlock() {
   const api = useApi<'purchase.thank-you.block.render'>();
   const sessionToken = useSessionToken();
   const orderConfirmation = useSubscription(api.orderConfirmation);
+  const shopDomain = api.shop.myshopifyDomain;
 
-  const [status, setStatus] = useState<'loading' | 'ready' | 'delayed'>('loading');
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  const orderId = orderConfirmation?.order?.id;
-  const orderNumber = orderConfirmation?.number;
-  const appUrl = 'https://producer-launchpad-staging.fly.dev';
+  const orderId = orderConfirmation?.order?.id ?? null;
+  const orderNumber = orderConfirmation?.number ?? null;
+
+  const [state, setState] = useState<DeliveryState>({ status: 'loading' });
 
   useEffect(() => {
-    if (editor || !appUrl || !orderId || !orderNumber) return;
+    if (editor || !orderId || !orderNumber) return;
 
     let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
-    const maxAttempts = 24;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const appUrl = resolveAppUrl(shopDomain);
 
-    async function pollDeliveryStatus() {
-      if (!appUrl || !orderId || !orderNumber) return;
+    async function poll() {
       try {
         const token = await sessionToken.get();
-        const requestUrl = new URL('/api/checkout/delivery-status', appUrl);
-        requestUrl.searchParams.set('orderId', orderId);
-        requestUrl.searchParams.set('orderNumber', orderNumber);
-
-        const response = await fetch(
-          requestUrl.toString(),
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              orderId,
-              orderNumber,
-            }),
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`Delivery status request failed with ${response.status}`);
-        }
-
-        const data = await response.json();
+        const res = await fetch(`${appUrl}/api/checkout/delivery-status`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ orderId, orderNumber }),
+        });
 
         if (cancelled) return;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
+        const data = (await res.json()) as
+          | { status: 'loading' }
+          | { status: 'ready'; downloadUrl: string };
+
+        if (cancelled) return;
         if (data.status === 'ready' && typeof data.downloadUrl === 'string') {
-          setDownloadUrl(data.downloadUrl);
-          setStatus('ready');
+          setState({ status: 'ready', downloadUrl: data.downloadUrl });
           return;
         }
-
-        attempts += 1;
-        if (attempts >= maxAttempts) {
-          setStatus('delayed');
-          return;
-        }
-
-        setStatus('loading');
-        timeoutId = setTimeout(pollDeliveryStatus, 2500);
-      } catch (_error) {
-        if (cancelled) return;
-        attempts += 1;
-        if (attempts >= maxAttempts) {
-          setStatus('delayed');
-          return;
-        }
-        timeoutId = setTimeout(pollDeliveryStatus, 2500);
+      } catch (error) {
+        console.error('[Producer Launchpad] delivery status poll failed', error);
       }
+
+      attempts += 1;
+      if (cancelled) return;
+      if (attempts >= MAX_ATTEMPTS) {
+        setState({ status: 'delayed' });
+        return;
+      }
+      timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
     }
 
-    pollDeliveryStatus();
+    poll();
 
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [appUrl, editor, orderId, orderNumber, sessionToken]);
+  }, [editor, orderId, orderNumber, sessionToken, shopDomain]);
 
-  // Download URL is ready — show the real download button
-  if (status === 'ready' && typeof downloadUrl === 'string' && downloadUrl.length > 0) {
-    return (
-      <Banner status="success" title="Your download portal is ready">
-        <BlockStack spacing="base">
-          <Text>
-            Your files are ready. You can open your download portal below or use the
-            delivery email we just sent.
-          </Text>
-          <Link to={downloadUrl} external>
-            Open download portal
-          </Link>
-        </BlockStack>
-      </Banner>
-    );
-  }
-
-  // Editor/customizer preview — show a preview with disabled button
   if (editor) {
     return (
-      <Banner status="info" title="Your files will be delivered shortly">
+      <Banner status="info" title="Producer Launchpad delivery block">
+        <Text>
+          Your secure download link will appear here on the real thank-you page.
+        </Text>
+      </Banner>
+    );
+  }
+
+  if (state.status === 'ready') {
+    return (
+      <Banner status="success" title="Your downloads are ready">
         <BlockStack spacing="base">
           <Text>
-            After purchase, customers will see a delivery message here and can open
-            the download portal as soon as it is ready.
+            Click below to open your secure download portal and grab your files.
           </Text>
-          <Button kind="primary" disabled>
+          <Button kind="primary" to={state.downloadUrl}>
             Open download portal
           </Button>
-          <Text size="small" appearance="subdued">
-            Preview mode: this block starts with an email-delivery message and upgrades
-            to the portal when it becomes available.
-          </Text>
         </BlockStack>
       </Banner>
     );
   }
 
-  // Real order but metafield not ready yet — show a loading/preparing state
-  if (status === 'loading') {
+  if (state.status === 'delayed') {
     return (
-      <Banner status="info" title="Your files are being prepared">
-        <BlockStack spacing="base">
-          <Text>
-            Your files are being prepared and will be delivered to your email shortly.
-          </Text>
-          <Text size="small" appearance="subdued">
-            If your download portal is ready in time, it will appear here automatically.
-          </Text>
-          <Spinner />
-        </BlockStack>
+      <Banner status="info" title="Your files are still being prepared">
+        <Text>
+          We'll email your secure download link shortly. If you don't see it within
+          a few minutes, please contact support and share your order number.
+        </Text>
       </Banner>
     );
   }
 
   return (
-    <Banner status="info" title="Your order is confirmed">
-      <BlockStack spacing="base">
-        <Text>
-          Your files are still being prepared and will be delivered to your email
-          shortly.
-        </Text>
-        <Text size="small" appearance="subdued">
-          If you do not see the email soon, check spam or promotions, then contact
-          support with your order number.
-        </Text>
+    <Banner status="info" title="Preparing your downloads">
+      <BlockStack spacing="base" inlineAlignment="center">
+        <Spinner accessibilityLabel="Preparing your downloads" />
+        <Text>One moment while we set up your secure download link.</Text>
       </BlockStack>
     </Banner>
   );
