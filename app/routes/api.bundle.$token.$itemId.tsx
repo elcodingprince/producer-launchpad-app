@@ -121,6 +121,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     item.stemsIncludedInOrder;
   const fileMappings = await prisma.licenseFileMapping.findMany({
     where: {
+      shop: deliveryAccess.shop,
       variantId: {
         in: [
           item.variantId,
@@ -218,7 +219,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   });
   const output = new PassThrough();
 
-  archive.on("error", (error) => {
+  archive.on("error", (error: Error) => {
     console.error("Failed to build audio package:", error);
     output.destroy(error);
   });

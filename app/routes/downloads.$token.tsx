@@ -111,6 +111,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
         // Resolve files directly from the purchased Shopify variant ID.
         const fileMappings = await prisma.licenseFileMapping.findMany({
           where: {
+            shop: order.shop,
             variantId: {
               in: [
                 item.variantId,

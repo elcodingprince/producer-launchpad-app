@@ -1,4 +1,5 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { BeatFile, LicenseFileMapping, OrderItem } from "@prisma/client";
 import prisma from "~/db.server";
 import { downloadR2Object } from "~/services/r2.server";
 import { getManagedR2Credentials } from "~/services/storageConfig.server";
@@ -52,34 +53,42 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   }
 
   const { order } = deliveryAccess;
+  const orderItems = order.items as OrderItem[];
 
-  const file = await prisma.beatFile.findUnique({
-    where: { id: fileId },
-    include: {
-      licenseMappings: true,
+  const file = await prisma.beatFile.findFirst({
+    where: {
+      id: fileId,
+      shop: order.shop,
     },
-  });
+    include: {
+      licenseMappings: {
+        where: {
+          shop: order.shop,
+        },
+      },
+    },
+  }) as (BeatFile & { licenseMappings: LicenseFileMapping[] }) | null;
 
   if (!file) {
     return new Response("This file is no longer available from this link.", { status: 404 });
   }
 
   const authorizedVariantIds = new Set(
-    order.items.flatMap((item) => {
+    orderItems.flatMap((item: OrderItem) => {
       const normalized = normalizeShopifyResourceId(item.variantId);
       return [item.variantId, normalized, `gid://shopify/ProductVariant/${normalized}`];
     })
   );
-  const authorizedProductIds = new Set(order.items.map((item) => item.productId));
+  const authorizedProductIds = new Set(orderItems.map((item: OrderItem) => item.productId));
   const normalizedBeatId = file.beatId.match(/\/(\d+)$/)?.[1] || file.beatId;
-  const hasMappedAccess = file.licenseMappings.some((mapping) => authorizedVariantIds.has(mapping.variantId));
+  const hasMappedAccess = file.licenseMappings.some((mapping: LicenseFileMapping) => authorizedVariantIds.has(mapping.variantId));
   const hasPreviewAccess =
     file.filePurpose === "preview" && authorizedProductIds.has(normalizedBeatId);
   const hasAccess = hasMappedAccess || hasPreviewAccess;
-  const matchedOrderItems = order.items.filter((item) => {
+  const matchedOrderItems = orderItems.filter((item: OrderItem) => {
     const normalizedVariantId = normalizeShopifyResourceId(item.variantId);
 
-    return file.licenseMappings.some((mapping) => {
+    return file.licenseMappings.some((mapping: LicenseFileMapping) => {
       const normalizedMappingVariantId = normalizeShopifyResourceId(mapping.variantId);
       return normalizedMappingVariantId === normalizedVariantId;
     });
@@ -111,7 +120,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
       await prisma.orderItem.updateMany({
         where: {
           id: {
-            in: matchedOrderItems.map((item) => item.id),
+            in: matchedOrderItems.map((item: OrderItem) => item.id),
           },
         },
         data: {

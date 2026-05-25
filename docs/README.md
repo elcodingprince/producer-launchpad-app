@@ -19,6 +19,7 @@ before editing privacy, terms, retention, or in-app legal copy.
 - `privacy-compliance-audit-2026-04-05.md`
 - `PRE_SUBMISSION_CHECKLIST.md`
 - `FLY_DEPLOYMENT.md`
+- `multi-merchant-workflow.html`
 - `RENDER_DEPLOYMENT.md`
 - `access-control-policy.md`
 - `data-loss-prevention.md`

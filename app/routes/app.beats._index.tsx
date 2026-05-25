@@ -406,6 +406,7 @@ async function getActiveBeats(
   const licenseMappings = variantLookupIds.length
     ? await prisma.licenseFileMapping.findMany({
         where: {
+          shop,
           variantId: { in: variantLookupIds },
         },
         include: {
@@ -628,7 +629,7 @@ export default function BeatsList() {
   const { beats, uploadSuccess: loaderUploadSuccess, uploadStatus: loaderUploadStatus, intendedActive: loaderIntendedActive, missingItems: loaderMissingItems } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [uploadSuccess, setUploadSuccess] = useState(loaderUploadSuccess);
-  const [uploadStatus, setUploadStatus] = useState(loaderUploadStatus);
+  const [uploadStatus] = useState(loaderUploadStatus);
   const [intendedActive, setIntendedActive] = useState(loaderIntendedActive);
   const [missingItems] = useState(loaderMissingItems);
   const shopify = useAppBridge();

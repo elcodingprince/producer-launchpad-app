@@ -254,6 +254,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const licenseMappings = variantIds.length
     ? await prisma.licenseFileMapping.findMany({
         where: {
+          shop: session.shop,
           variantId: { in: variantIds },
         },
         include: {

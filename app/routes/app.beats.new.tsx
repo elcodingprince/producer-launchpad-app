@@ -1671,6 +1671,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (dbFileId) {
           await prisma.licenseFileMapping.create({
             data: {
+              shop: session.shop,
               variantId: normalizedVariantId,
               fileId: dbFileId,
               sortOrder,
