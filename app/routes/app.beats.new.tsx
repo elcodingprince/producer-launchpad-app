@@ -1001,7 +1001,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       : null;
 
   if (shouldHardBlockUpload(storageConfig)) {
-    return redirect("/app/settings");
+    return redirect("/app/settings?reason=storage");
   }
 
   try {

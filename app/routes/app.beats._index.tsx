@@ -1352,36 +1352,18 @@ export default function BeatsList() {
                                             : "Missing files"}
                                         </Badge>
                                       </InlineStack>
-                                      {offer.requiredFormats.length > 0 ? (
+                                      {offer.isReady ? (
                                         <Text as="p" tone="subdued">
-                                          Needs{" "}
-                                          {offer.requiredFormats
+                                          Package:{" "}
+                                          {offer.mappedFormats
                                             .map((format) =>
                                               formatDeliveryFormatLabel(format),
                                             )
                                             .join(", ")}
                                         </Text>
-                                      ) : (
-                                        <Text as="p" tone="subdued">
-                                          No required package formats found on
-                                          the template
-                                        </Text>
-                                      )}
-                                      <Text as="p" tone="subdued">
-                                        Mapped{" "}
-                                        {offer.mappedFormats.length > 0
-                                          ? offer.mappedFormats
-                                              .map((format) =>
-                                                formatDeliveryFormatLabel(
-                                                  format,
-                                                ),
-                                              )
-                                              .join(", ")
-                                          : "no files yet"}
-                                      </Text>
-                                      {offer.missingFormats.length > 0 ? (
+                                      ) : offer.missingFormats.length > 0 ? (
                                         <Text as="p" tone="critical">
-                                          Missing{" "}
+                                          Add{" "}
                                           {offer.missingFormats
                                             .map((format) =>
                                               formatDeliveryFormatLabel(format),
@@ -1389,6 +1371,38 @@ export default function BeatsList() {
                                             .join(", ")}
                                         </Text>
                                       ) : null}
+                                      {!offer.isReady &&
+                                        (offer.requiredFormats.length > 0 ? (
+                                          <Text as="p" tone="subdued">
+                                            Required:{" "}
+                                            {offer.requiredFormats
+                                              .map((format) =>
+                                                formatDeliveryFormatLabel(
+                                                  format,
+                                                ),
+                                              )
+                                              .join(", ")}
+                                          </Text>
+                                        ) : (
+                                          <Text as="p" tone="subdued">
+                                            No required package formats found on
+                                            the template.
+                                          </Text>
+                                        ))}
+                                      {!offer.isReady && (
+                                        <Text as="p" tone="subdued">
+                                          Mapped:{" "}
+                                          {offer.mappedFormats.length > 0
+                                            ? offer.mappedFormats
+                                                .map((format) =>
+                                                  formatDeliveryFormatLabel(
+                                                    format,
+                                                  ),
+                                                )
+                                                .join(", ")
+                                            : "none yet"}
+                                        </Text>
+                                      )}
                                       {offer.supportNote ? (
                                         <Text
                                           as="p"

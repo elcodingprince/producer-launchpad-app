@@ -6,6 +6,7 @@ import {
   useFetcher,
   useLoaderData,
   useNavigation,
+  useSearchParams,
 } from "@remix-run/react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -130,6 +131,8 @@ function SettingsClickableRow({
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin, billing } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const reason = url.searchParams.get("reason");
   const setupService = createMetafieldSetupService(session, admin);
   const deliveryEmail = getDeliveryEmailConfigSummary();
   const [readiness, licensor, stemsAddonProduct, billingSummary] =
@@ -146,6 +149,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     deliveryEmail,
     licensor,
     stemsAddonProduct,
+    reason: reason === "storage" ? "storage" : null,
   });
 };
 
@@ -241,8 +245,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { readiness, billingSummary, deliveryEmail, licensor, stemsAddonProduct } =
+  const { readiness, billingSummary, deliveryEmail, licensor, stemsAddonProduct, reason } =
     useLoaderData<typeof loader>();
+  const [, setSearchParams] = useSearchParams();
   const actionData = useActionData<ActionData>();
   const shopify = useAppBridge();
   const navigation = useNavigation();
@@ -324,8 +329,13 @@ export default function SettingsPage() {
       storageFetcher.data.success
     ) {
       shopify.toast.show("Storage connection verified");
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("reason");
+        return next;
+      }, { replace: true, preventScrollReset: true });
     }
-  }, [storageFetcher.state, storageFetcher.data, shopify]);
+  }, [storageFetcher.state, storageFetcher.data, shopify, setSearchParams]);
 
   const handleLegalModalClose = useCallback(() => {
     setLegalIdentityModalOpen(false);
@@ -433,6 +443,16 @@ export default function SettingsPage() {
             <p>
               Your producer profile or legal identity needs attention before
               you can start selling.
+            </p>
+          </Banner>
+        )}
+
+        {reason === "storage" && storageConfig?.status !== "connected" && (
+          <Banner title="Connect file storage before uploading beats" tone="warning">
+            <p>
+              Uploads need file storage before the app can save beat files.
+              Use Test connection below, then return to Beats and try the upload
+              again.
             </p>
           </Banner>
         )}
