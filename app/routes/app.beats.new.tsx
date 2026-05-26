@@ -4,6 +4,7 @@ import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
+import { requireMerchantBillingAccess } from "~/services/billing.server";
 import {
   Page,
   Layout,
@@ -991,6 +992,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
+  await requireMerchantBillingAccess(session.shop);
   const storageConfig = await getStorageConfigForDisplay(session.shop);
   const sessionUserId = normalizeSessionUserId(
     (session as { userId?: unknown }).userId,

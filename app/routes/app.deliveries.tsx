@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
+import { requireMerchantBillingAccess } from "~/services/billing.server";
 import type {
   BeatFile,
   DeliveryAccess,
@@ -354,6 +355,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  await requireMerchantBillingAccess(session.shop);
 
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");

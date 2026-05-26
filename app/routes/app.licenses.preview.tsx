@@ -10,6 +10,7 @@ import {
 } from "~/services/licenses/archetypes";
 import { renderAgreementPreview } from "~/services/licenses/agreementRenderer.server";
 import { authenticate } from "~/shopify.server";
+import { requireMerchantBillingAccess } from "~/services/billing.server";
 
 function getFieldValue(
   metaobject:
@@ -25,6 +26,7 @@ function getFieldValue(
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
+  await requireMerchantBillingAccess(session.shop);
   const formData = await request.formData();
   const setupService = createMetafieldSetupService(session, admin);
 

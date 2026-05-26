@@ -60,6 +60,36 @@ model ShopCatalogConfig {
   updatedAt           DateTime @updatedAt
 }
 
+model ShopStripeBilling {
+  id                   String    @id @default(cuid())
+  shop                 String    @unique
+  stripeCustomerId     String?
+  stripeSubscriptionId String?   @unique
+  subscriptionStatus   String    @default("missing")
+  currentPeriodEnd     DateTime?
+  trialEnd             DateTime?
+  cancelAtPeriodEnd    Boolean   @default(false)
+  manualOverride       Boolean   @default(false)
+  accessOverride       String?
+  lastStripeEventId    String?
+  lastSyncedAt         DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([shop, subscriptionStatus])
+  @@index([stripeCustomerId])
+}
+
+model StripeWebhookEvent {
+  id                   String   @id
+  type                 String
+  shop                 String?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  processedAt          DateTime @default(now())
+  createdAt            DateTime @default(now())
+}
+
 model BeatFile {
   id          String   @id @default(cuid())
   shop        String   @default("")

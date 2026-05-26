@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Producer Launchpad Stripe billing workflow</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #1f2933;
+        --muted: #616e7c;
+        --line: #d9e2ec;
+        --surface: #ffffff;
+        --soft: #f5f7fa;
+        --done: #0f766e;
+        --working: #b45309;
+        --blocked: #b91c1c;
+      }
+
+      body {
+        margin: 0;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        color: var(--ink);
+        background: var(--soft);
+        line-height: 1.55;
+      }
+
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 40px 20px 64px;
+      }
+
+      header,
+      section {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 24px;
+        margin-bottom: 18px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0 0 10px;
+        line-height: 1.2;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 5vw, 3.25rem);
+      }
+
+      h2 {
+        font-size: 1.35rem;
+      }
+
+      p {
+        margin: 0 0 12px;
+      }
+
+      ul,
+      ol {
+        margin: 0;
+        padding-left: 22px;
+      }
+
+      li {
+        margin: 8px 0;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+        overflow: hidden;
+      }
+
+      th,
+      td {
+        border: 1px solid var(--line);
+        padding: 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: #eef2f7;
+      }
+
+      .grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+        background: #fbfcfe;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .status {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 3px 10px;
+        font-size: 0.8rem;
+        font-weight: 700;
+      }
+
+      .done {
+        color: var(--done);
+        background: #ccfbf1;
+      }
+
+      .working {
+        color: var(--working);
+        background: #fef3c7;
+      }
+
+      .not-started {
+        color: var(--muted);
+        background: #e5e7eb;
+      }
+
+      .blocked {
+        color: var(--blocked);
+        background: #fee2e2;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="muted">Producer Launchpad v1 billing</p>
+        <h1>Stripe recurring subscription tracking</h1>
+        <p>
+          The goal is to let the app know whether each Shopify store has an
+          active recurring Stripe subscription. This controls merchant access to
+          app tools like uploads, catalog setup, licenses, and delivery
+          management.
+        </p>
+        <p>
+          This is not the full money system. The upfront setup fee remains a
+          manual Stripe Invoice or Payment Link step before onboarding.
+        </p>
+      </header>
+
+      <section>
+        <h2>Scope</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>In scope</h3>
+            <ul>
+              <li>Store Stripe customer and subscription IDs by Shopify shop.</li>
+              <li>Read Stripe subscription status from webhooks.</li>
+              <li>Allow active and trialing stores into merchant app tools.</li>
+              <li>Keep past-due stores working while showing a warning.</li>
+              <li>Block inactive, canceled, unpaid, incomplete, or missing subscriptions.</li>
+              <li>Show billing status on Settings.</li>
+              <li>Open Stripe Customer Portal when a Stripe customer exists and portal is enabled in Stripe.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Out of scope</h3>
+            <ul>
+              <li>No Shopify Billing API.</li>
+              <li>No setup-fee checkout, invoice, or payment-link automation.</li>
+              <li>No CRM or pipeline automation.</li>
+              <li>No automatic file, storage, delivery, or customer portal cleanup.</li>
+              <li>No changes to licenses, downloads, checkout delivery, or theme code.</li>
+              <li>No broad self-serve onboarding.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Implementation progress</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Status</th>
+              <th>Plain-language note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Add shop-scoped Stripe billing records</td>
+              <td><span class="status done">Done</span></td>
+              <td>Each store has its own billing record keyed by shop domain.</td>
+            </tr>
+            <tr>
+              <td>Add Stripe server helpers</td>
+              <td><span class="status done">Done</span></td>
+              <td>Stripe secret keys stay server-side and are not sent to the browser.</td>
+            </tr>
+            <tr>
+              <td>Add Stripe webhook endpoint</td>
+              <td><span class="status done">Done</span></td>
+              <td>Stripe events are signature-verified and stored idempotently.</td>
+            </tr>
+            <tr>
+              <td>Replace Shopify managed-pricing gate</td>
+              <td><span class="status done">Done</span></td>
+              <td>Merchant access now comes from Stripe subscription state.</td>
+            </tr>
+            <tr>
+              <td>Update Settings billing card</td>
+              <td><span class="status done">Done</span></td>
+              <td>Settings shows Stripe status, trial dates, payment warnings, and portal access.</td>
+            </tr>
+            <tr>
+              <td>Document environment variables</td>
+              <td><span class="status done">Done</span></td>
+              <td>Example env files list Stripe keys without real secrets.</td>
+            </tr>
+            <tr>
+              <td>Run build and lint</td>
+              <td><span class="status done">Done</span></td>
+              <td>Lint and production build pass. Build still reports existing Remix/Vite future warnings.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Billing status policy</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Stripe status</th>
+              <th>Merchant access</th>
+              <th>What the app says</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>active</td>
+              <td>Full access</td>
+              <td>The subscription is active.</td>
+            </tr>
+            <tr>
+              <td>trialing</td>
+              <td>Full access</td>
+              <td>The store is in a Stripe trial and sees the trial end date when available.</td>
+            </tr>
+            <tr>
+              <td>past_due</td>
+              <td>Access stays on</td>
+              <td>Payment needs attention while Stripe retries payment.</td>
+            </tr>
+            <tr>
+              <td>unpaid</td>
+              <td>Blocked</td>
+              <td>Paid merchant tools are paused until billing is fixed.</td>
+            </tr>
+            <tr>
+              <td>canceled</td>
+              <td>Blocked</td>
+              <td>The recurring subscription is canceled.</td>
+            </tr>
+            <tr>
+              <td>incomplete</td>
+              <td>Blocked</td>
+              <td>Checkout or payment setup still needs to be completed.</td>
+            </tr>
+            <tr>
+              <td>incomplete_expired</td>
+              <td>Blocked</td>
+              <td>The subscription setup expired before payment was completed.</td>
+            </tr>
+            <tr>
+              <td>missing</td>
+              <td>Blocked</td>
+              <td>No recurring Stripe subscription is connected to the shop.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Trials</h2>
+        <p>
+          Shopify install does not automatically start a trial. For founding
+          members, a trial exists only when Stripe has a subscription with
+          status <strong>trialing</strong>. When Stripe sends a trial end date,
+          Settings shows that date.
+        </p>
+      </section>
+
+      <section>
+        <h2>Payment failure</h2>
+        <p>
+          When payment fails, Stripe usually moves the subscription to
+          <strong>past_due</strong> first. Producer Launchpad keeps merchant
+          access enabled during that state and shows a payment warning.
+        </p>
+        <p>
+          The app does not calculate its own grace period. Stripe dunning and
+          retry settings decide when a subscription becomes unpaid or canceled.
+        </p>
+      </section>
+
+      <section>
+        <h2>Cancellation</h2>
+        <p>
+          If a subscription is set to cancel at period end, the store stays
+          active until Stripe reports that the subscription is canceled. Once
+          canceled, paid merchant app tools are blocked.
+        </p>
+        <p>
+          Existing customer download links stay available in v1. This task does
+          not delete files, storage objects, delivery records, or prior customer
+          access.
+        </p>
+      </section>
+
+      <section>
+        <h2>Deferred on purpose</h2>
+        <ul>
+          <li>Setup-fee automation stays manual through Stripe Invoice or Payment Link.</li>
+          <li>Storage cleanup and cancellation lifecycle rules are separate business-policy work.</li>
+          <li>Customer download portal routes remain available even if merchant billing becomes inactive.</li>
+          <li>Stripe Customer Portal setup is handled inside Stripe, not inside Producer Launchpad.</li>
+          <li>Plan upgrades, self-serve onboarding, and internal billing dashboards are not part of this v1 task.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

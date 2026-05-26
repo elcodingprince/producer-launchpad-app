@@ -41,6 +41,7 @@ import {
   MERCHANT_ACKNOWLEDGMENT_KEYS,
   normalizeSessionUserId,
 } from "~/services/merchantAcknowledgments.server";
+import { requireMerchantBillingAccess } from "~/services/billing.server";
 import { setStorageMode } from "~/services/storageConfig.server";
 
 type ActionData = {
@@ -334,6 +335,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
+  await requireMerchantBillingAccess(session.shop);
   const shop = session.shop;
   const setupService = createMetafieldSetupService(session, admin);
   const formData = await request.formData();

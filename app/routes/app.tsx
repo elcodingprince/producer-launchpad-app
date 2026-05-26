@@ -3,12 +3,10 @@ import { json } from "@remix-run/node";
 import { useEffect } from "react";
 import {
   Outlet,
-  useLoaderData,
   useLocation,
   useRouteLoaderData,
 } from "@remix-run/react";
 import { NavMenu, useAppBridge } from "@shopify/app-bridge-react";
-import { Banner, Box } from "@shopify/polaris";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import enTranslations from "@shopify/polaris/locales/en.json";
 import { authenticate } from "~/shopify.server";
@@ -16,37 +14,38 @@ import { getBillingSummary } from "~/services/billing.server";
 import { runPrivacyMaintenanceForShop } from "~/services/privacyCompliance.server";
 import { triggerQueuedShopDeletionProcessing } from "~/services/shopDeletionJobs.server";
 
+const BILLING_OPEN_PATHS = new Set([
+  "/app/settings",
+  "/app/billing-portal",
+  "/app/billing-checkout",
+]);
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { billing, redirect, session } = await authenticate.admin(request);
+  const { redirect, session } = await authenticate.admin(request);
   await runPrivacyMaintenanceForShop(session.shop);
   void triggerQueuedShopDeletionProcessing();
 
-  const billingSummary = await getBillingSummary({
-    billing,
-    shopDomain: session.shop,
-  });
+  const url = new URL(request.url);
+  const billingSummary = await getBillingSummary({ shopDomain: session.shop });
 
-  if (!billingSummary.gateEnabled) {
-    return json({ billingRequired: false, billingGateError: null });
-  }
-
-  if (billingSummary.status === "inactive" && billingSummary.pricingUrl) {
-    return redirect(
-      billingSummary.pricingUrl,
-      { target: "_top" },
-    );
+  if (
+    !billingSummary.hasMerchantAccess &&
+    !BILLING_OPEN_PATHS.has(url.pathname)
+  ) {
+    return redirect("/app/settings?billing=required");
   }
 
   return json({
-    billingRequired: billingSummary.status === "active",
-    billingGateError:
-      billingSummary.status === "error" ? billingSummary.message : null,
+    billing: {
+      status: billingSummary.status,
+      access: billingSummary.access,
+      hasMerchantAccess: billingSummary.hasMerchantAccess,
+    },
   });
 };
 
 export default function AppLayout() {
   const rootData = useRouteLoaderData<{ apiKey: string }>("root");
-  const { billingGateError } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider
@@ -54,13 +53,6 @@ export default function AppLayout() {
       i18n={enTranslations}
       isEmbeddedApp
     >
-      {billingGateError ? (
-        <Box padding="400">
-          <Banner title="Billing gate needs attention" tone="critical">
-            <p>{billingGateError}</p>
-          </Banner>
-        </Box>
-      ) : null}
       <AppChrome />
       <Outlet />
     </AppProvider>

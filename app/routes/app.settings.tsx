@@ -60,6 +60,92 @@ function getMetaobjectFieldValue(
   return metaobject?.fields?.find((field) => field.key === key)?.value || "";
 }
 
+function formatBillingDate(value: string | null) {
+  if (!value) return null;
+
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function getBillingStatusLabel(status: string) {
+  if (status === "active") return "Active";
+  if (status === "trialing") return "Trial";
+  if (status === "past_due") return "Payment due";
+  if (status === "unpaid") return "Unpaid";
+  if (status === "canceled") return "Canceled";
+  if (status === "incomplete") return "Incomplete";
+  if (status === "incomplete_expired") return "Expired setup";
+  if (status === "manual_override") return "Manual override";
+  if (status === "paused") return "Paused";
+
+  return "Needs subscription";
+}
+
+function getBillingDisplayLabel(billingSummary: {
+  status: string;
+  cancelAtPeriodEnd: boolean;
+}) {
+  if (
+    billingSummary.cancelAtPeriodEnd &&
+    (billingSummary.status === "active" || billingSummary.status === "trialing")
+  ) {
+    return "Canceling";
+  }
+
+  return getBillingStatusLabel(billingSummary.status);
+}
+
+function getBillingBadgeTone(
+  access: string,
+): "success" | "attention" | "critical" | "info" {
+  if (access === "full") return "success";
+  if (access === "warning") return "attention";
+  return "critical";
+}
+
+function StartSubscriptionButton() {
+  const fetcher = useFetcher<{ checkoutUrl?: string; error?: string }>();
+  const loading = fetcher.state !== "idle";
+
+  useEffect(() => {
+    const url = fetcher.data?.checkoutUrl;
+    if (url && typeof window !== "undefined") {
+      window.open(url, "_top");
+    }
+  }, [fetcher.data]);
+
+  return (
+    <fetcher.Form method="post" action="/app/billing-checkout">
+      <Button submit variant="primary" loading={loading}>
+        Start subscription
+      </Button>
+    </fetcher.Form>
+  );
+}
+
+function ManageBillingButton() {
+  const fetcher = useFetcher<{ portalUrl?: string; error?: string }>();
+  const loading = fetcher.state !== "idle";
+
+  useEffect(() => {
+    const url = fetcher.data?.portalUrl;
+    if (url && typeof window !== "undefined") {
+      window.open(url, "_top");
+    }
+  }, [fetcher.data]);
+
+  return (
+    <fetcher.Form method="post" action="/app/billing-portal">
+      <Button submit loading={loading}>
+        Manage billing
+      </Button>
+    </fetcher.Form>
+  );
+}
+
 function SettingsClickableRow({
   title,
   description,
@@ -130,7 +216,7 @@ function SettingsClickableRow({
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, admin, billing } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const url = new URL(request.url);
   const reason = url.searchParams.get("reason");
   const setupService = createMetafieldSetupService(session, admin);
@@ -140,12 +226,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       getAppReadiness(session, admin),
       setupService.getDefaultLicensor(),
       setupService.getStemsAddonProductConfig(),
-      getBillingSummary({ billing, shopDomain: session.shop }),
+      getBillingSummary({
+        shopDomain: session.shop,
+        portalUrl: "/app/billing-portal",
+      }),
     ]);
 
   return json({
     readiness,
     billingSummary,
+    billingPortalUnavailable:
+      url.searchParams.get("billing_portal") === "unavailable",
+    billingCheckoutUnavailable:
+      url.searchParams.get("billing_checkout") === "unavailable",
+    billingCheckoutSuccess: url.searchParams.get("billing") === "success",
+    billingCheckoutCanceled: url.searchParams.get("billing") === "canceled",
     deliveryEmail,
     licensor,
     stemsAddonProduct,
@@ -160,6 +255,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
 
   const intent = String(formData.get("intent") || "");
+  const billingSummary = await getBillingSummary({ shopDomain: shop });
+
+  if (!billingSummary.hasMerchantAccess) {
+    return json<ActionData>(
+      {
+        error:
+          "Billing must be active before changing app setup for this store.",
+      },
+      { status: 402 },
+    );
+  }
 
   if (intent === "repair") {
     try {
@@ -245,8 +351,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { readiness, billingSummary, deliveryEmail, licensor, stemsAddonProduct, reason } =
-    useLoaderData<typeof loader>();
+  const {
+    readiness,
+    billingSummary,
+    billingPortalUnavailable,
+    billingCheckoutUnavailable,
+    billingCheckoutSuccess,
+    billingCheckoutCanceled,
+    deliveryEmail,
+    licensor,
+    stemsAddonProduct,
+    reason,
+  } = useLoaderData<typeof loader>();
   const [, setSearchParams] = useSearchParams();
   const actionData = useActionData<ActionData>();
   const shopify = useAppBridge();
@@ -457,6 +573,40 @@ export default function SettingsPage() {
           </Banner>
         )}
 
+        {billingPortalUnavailable && (
+          <Banner title="Billing portal is not ready" tone="warning">
+            <p>
+              Stripe could not open Customer Portal for this store. Confirm
+              Customer Portal is enabled in Stripe and that this shop has a
+              connected Stripe customer.
+            </p>
+          </Banner>
+        )}
+
+        {billingCheckoutUnavailable && (
+          <Banner title="Subscription checkout is not ready" tone="warning">
+            <p>
+              Stripe Checkout could not start. Confirm STRIPE_SECRET_KEY and
+              STRIPE_RECURRING_PRICE_ID are set, then try again.
+            </p>
+          </Banner>
+        )}
+
+        {billingCheckoutSuccess && (
+          <Banner title="Subscription started" tone="success">
+            <p>
+              Stripe is confirming the subscription. Access updates as soon as
+              Stripe sends the confirmation webhook (usually a few seconds).
+            </p>
+          </Banner>
+        )}
+
+        {billingCheckoutCanceled && (
+          <Banner title="Checkout canceled" tone="info">
+            <p>The Stripe Checkout was canceled. You can start it again below.</p>
+          </Banner>
+        )}
+
         {actionData?.success &&
           actionData.completedIntent !== "ensure_stems_addon_product" &&
           actionData.completedIntent !== "check_storage" && (
@@ -496,39 +646,88 @@ export default function SettingsPage() {
 
         <Card>
           <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">
-              Subscription
-            </Text>
-            <InlineStack align="space-between" blockAlign="center" wrap={false}>
+            <InlineStack align="space-between" blockAlign="center">
               <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">
+                  Billing
+                </Text>
                 <Text as="p" tone="subdued">
-                  {billingSummary.message}
+                  Your NRS subscription powers beat uploads, license
+                  generation, and automated customer delivery for this store.
                 </Text>
               </BlockStack>
-              <InlineStack gap="200" blockAlign="center">
-                {billingSummary.status !== "active" && (
-                  <Badge
-                    tone={
-                      billingSummary.status === "error"
-                        ? "critical"
-                        : billingSummary.status === "inactive"
-                          ? "attention"
-                          : "info"
-                    }
-                  >
-                    {billingSummary.status === "inactive"
-                      ? "Needs subscription"
-                      : billingSummary.status === "error"
-                        ? "Needs attention"
-                        : "Pre-launch"}
-                  </Badge>
-                )}
-                {billingSummary.pricingUrl && (
-                  <Button url={billingSummary.pricingUrl} target="_top">
-                    View plan
-                  </Button>
-                )}
-              </InlineStack>
+              <Badge tone={getBillingBadgeTone(billingSummary.access)}>
+                {getBillingDisplayLabel(billingSummary)}
+              </Badge>
+            </InlineStack>
+
+            {billingSummary.access === "warning" && (
+              <Banner title="Payment needs attention" tone="warning">
+                <p>{billingSummary.warning || billingSummary.message}</p>
+              </Banner>
+            )}
+
+            {billingSummary.access === "blocked" && (
+              <Banner
+                title={
+                  billingSummary.status === "missing"
+                    ? "Start your subscription to activate NRS"
+                    : "Merchant tools are paused"
+                }
+                tone={
+                  billingSummary.status === "missing" ? "info" : "critical"
+                }
+              >
+                <p>{billingSummary.message}</p>
+              </Banner>
+            )}
+
+            {billingSummary.access !== "blocked" && (
+              <Text as="p" tone="subdued">
+                {billingSummary.message}
+              </Text>
+            )}
+
+            <BlockStack gap="200">
+              {billingSummary.trialEnd ? (
+                <InlineStack align="space-between">
+                  <Text as="span">Trial ends</Text>
+                  <Text as="span">
+                    {formatBillingDate(billingSummary.trialEnd)}
+                  </Text>
+                </InlineStack>
+              ) : null}
+              {billingSummary.currentPeriodEnd ? (
+                <InlineStack align="space-between">
+                  <Text as="span">
+                    {billingSummary.cancelAtPeriodEnd
+                      ? "Access through"
+                      : "Current period ends"}
+                  </Text>
+                  <Text as="span">
+                    {formatBillingDate(billingSummary.currentPeriodEnd)}
+                  </Text>
+                </InlineStack>
+              ) : null}
+              {billingSummary.cancelAtPeriodEnd ? (
+                <Text as="p" tone="subdued">
+                  The subscription is set to cancel at the end of the current
+                  billing period. Customer download links remain available.
+                </Text>
+              ) : null}
+            </BlockStack>
+
+            <InlineStack gap="300">
+              {billingSummary.access === "blocked" &&
+                !billingSummary.manualOverride && <StartSubscriptionButton />}
+              {billingSummary.portalAvailable ? (
+                <ManageBillingButton />
+              ) : billingSummary.access !== "blocked" ? (
+                <Text as="p" tone="subdued">
+                  {billingSummary.portalDisabledReason ||
+                    "Stripe Customer Portal is not available yet."}
+                </Text>
+              ) : null}
             </InlineStack>
           </BlockStack>
         </Card>

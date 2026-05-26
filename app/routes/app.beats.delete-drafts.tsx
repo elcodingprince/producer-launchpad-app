@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import prisma from "~/db.server";
 import { authenticate } from "~/shopify.server";
+import { requireMerchantBillingAccess } from "~/services/billing.server";
 
 type ActionData =
   | {
@@ -17,6 +18,7 @@ type ActionData =
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  await requireMerchantBillingAccess(session.shop);
   const formData = await request.formData();
   const intent = formData.get("intent");
 

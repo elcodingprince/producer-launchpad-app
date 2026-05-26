@@ -64,6 +64,7 @@ import {
 import { createProductCreatorService } from "~/services/productCreator";
 import { createShopifyClient } from "~/services/shopify";
 import { authenticate } from "~/shopify.server";
+import { requireMerchantBillingAccess } from "~/services/billing.server";
 
 type LicenseTemplate = {
   id: string;
@@ -500,10 +501,6 @@ function formatTermLength(value: string) {
   return `${value} year term`;
 }
 
-function formatTemplateFamilyLabel(value: string) {
-  return getOfferArchetypeConfig(value).label;
-}
-
 function formatPresetValue(field: LimitPresetFieldKey, value: string): string {
   if (field === "termYears") {
     return formatTermLength(value);
@@ -936,6 +933,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
+  await requireMerchantBillingAccess(session.shop);
   const formData = await request.formData();
   const intent = String(formData.get("intent") || "");
   const client = createShopifyClient(session, admin);
