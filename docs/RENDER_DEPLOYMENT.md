@@ -25,7 +25,7 @@ The Docker image installs Chromium and starts the app with:
 
 - `npm run start`
 
-Run `npm run db:migrate:deploy` as part of your deployment process before the new app revision handles traffic.
+Run `npm run db:migrate:shared` as part of your deployment process before the new app revision handles traffic.
 
 ## Render Service Setup
 
@@ -120,7 +120,7 @@ Later improvements can include:
 1. Push this branch.
 2. Create the Render web service from the repo.
 3. Add the environment variables.
-4. Ensure `npm run db:migrate:deploy` runs before the release is promoted.
+4. Ensure `npm run db:migrate:shared` runs before the release is promoted.
 5. Configure the recurring internal `POST /api/internal/shop-deletion-jobs`
    trigger with `INTERNAL_JOB_SECRET`.
 6. Deploy.

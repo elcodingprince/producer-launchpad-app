@@ -12,6 +12,10 @@ public/build/
 !.env.example
 !.env.local.example
 
+# private ops config
+ops/merchants.*.json
+!ops/merchants.example.json
+
 # OS/editor
 .DS_Store
 .vscode/

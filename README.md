@@ -102,7 +102,7 @@ If you want local dev to share the staging database, use the Neon `staging` bran
 ### Database Workflow
 
 - Development uses `npm run db:migrate:dev`
-- Production uses `npm run db:migrate:deploy`
+- Production/shared database releases use `npm run db:migrate:shared` once before merchant Fly app deploys
 - Do not point local `.env` at the production database
 - Do not use `prisma db push` against production
 

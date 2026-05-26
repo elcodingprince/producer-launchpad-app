@@ -527,12 +527,12 @@
             </header>
             <ul>
               <li>
-                <span class="mark todo">&#215;</span>
-                <span><span class="item-title">Remove per-app migration release command</span><span class="item-note">Do not let every Fly app run <code>npm run db:migrate:deploy</code> against the shared database.</span></span>
+                <span class="mark done">&#10003;</span>
+                <span><span class="item-title">Remove per-app migration release command</span><span class="item-note">Fly deploys no longer run migrations; use <code>npm run db:migrate:shared</code> once against the shared database before merchant app deploys.</span></span>
               </li>
               <li>
-                <span class="mark todo">&#215;</span>
-                <span><span class="item-title">Create merchant registry</span><span class="item-note">Track each merchant slug, shop domain, Fly app, app URL, and Shopify app client ID.</span></span>
+                <span class="mark done">&#10003;</span>
+                <span><span class="item-title">Create merchant registry</span><span class="item-note"><code>ops/merchants.example.json</code> maps internal IDs, Fly apps, Shopify app names/client IDs, shop domains, and private merchant entries.</span></span>
               </li>
               <li>
                 <span class="mark todo">&#215;</span>
@@ -596,7 +596,7 @@
           <article class="step">
             <span class="step-number">3</span>
             <h3>Migrate once</h3>
-            <p>Run <code>npm run db:migrate:deploy</code> once against the shared Neon production database.</p>
+            <p>Run <code>npm run db:migrate:shared</code> once against the shared Neon production database.</p>
           </article>
           <article class="step">
             <span class="step-number">4</span>
@@ -678,13 +678,13 @@
           </div>
           <div class="row">
             <div>Split migrations from Fly app deploys</div>
-            <div><span class="status todo">Not implemented</span></div>
-            <div>Remove or neutralize <code>release_command</code> before fleet rollout; run Prisma migrations once from CI or a release script.</div>
+            <div><span class="status done">Implemented</span></div>
+            <div><code>fly.toml</code> no longer has a migration <code>release_command</code>; run <code>npm run db:migrate:shared</code> once from a trusted release environment before merchant app deploys.</div>
           </div>
           <div class="row">
             <div>Merchant registry</div>
-            <div><span class="status todo">Not implemented</span></div>
-            <div>Create a private YAML or JSON registry of merchant app names, shop domains, custom domains, and Shopify client IDs.</div>
+            <div><span class="status done">Implemented</span></div>
+            <div><code>ops/merchants.example.json</code> documents one Shopify custom app per merchant, mapped to <code>merchantId</code>, <code>flyApp</code>, <code>shopifyAppName</code>, <code>shopifyClientId</code>, and <code>shopDomain</code>.</div>
           </div>
           <div class="row">
             <div>Fleet deploy automation</div>
@@ -745,13 +745,13 @@
           </div>
           <div class="row">
             <div>Merchant registry file</div>
-            <div><span class="status todo">After pilot</span></div>
-            <div>Create before merchant #2 so deploy scripts never rely on memory or scattered notes.</div>
+            <div><span class="status done">Implemented</span></div>
+            <div>Registry scaffold exists now; add real merchant entries as each Shopify custom app and Fly app are created.</div>
           </div>
           <div class="row">
             <div>Migration-once release script</div>
-            <div><span class="status todo">Before merchant #2</span></div>
-            <div>Required before multiple Fly apps share the same production Neon database.</div>
+            <div><span class="status done">Implemented</span></div>
+            <div><code>npm run db:migrate:shared</code> runs migrations once before merchant app deploys.</div>
           </div>
           <div class="row">
             <div>Deploy-all script or CI workflow</div>

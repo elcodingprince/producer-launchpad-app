@@ -7,7 +7,7 @@ This is the production-safe Fly.io setup for Producer Launchpad.
 - the app runs from the checked-in `Dockerfile`
 - agreement PDFs are generated with Chromium
 - production data lives in PostgreSQL, not on a Fly volume
-- database migrations run as a Fly release command before each deploy
+- database migrations run once against the shared production database before merchant app deploys
 
 ## Files Used
 
@@ -27,7 +27,7 @@ For an embedded Shopify app that is meant to support hundreds of stores, product
 
 Use a managed PostgreSQL database and store the connection string as a Fly secret.
 
-`fly.toml` now uses a Fly `release_command` to run `npm run db:migrate:deploy` before the new release is promoted.
+`fly.toml` does not run database migrations during app deploy. In the multi-merchant setup, each merchant has a separate Fly app pointed at the same shared database, so migrations must run once from a controlled release step before deploying merchant apps.
 
 ## First-Time Commands
 
@@ -57,7 +57,14 @@ fly secrets set \
   -a producer-launchpad-app
 ```
 
-Then deploy:
+Before deploying a new app version, run shared database migrations once from a trusted release environment:
+
+```bash
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/producer_launchpad_prod?sslmode=require \
+  npm run db:migrate:shared
+```
+
+Then deploy the merchant app:
 
 ```bash
 fly deploy -a producer-launchpad-app
@@ -95,7 +102,7 @@ This endpoint is internal-only and should never be exposed to the browser.
 
 ### Database choice
 
-Fly supports release commands in `fly.toml`, and Fly documents `release_command` as the place to run one-off tasks like database migrations before a deploy is promoted.
+Do not use a Fly `release_command` for Prisma migrations once multiple merchant Fly apps share the same database. A per-app release command would let every merchant deploy attempt to migrate the same database.
 
 You can use Fly Managed Postgres or any other managed PostgreSQL provider that gives the app a stable connection string.
 
@@ -121,7 +128,7 @@ Use that first. You can attach a custom domain later.
 
 1. Verify the app responds at `https://producer-launchpad-app.fly.dev`
 2. Update Shopify App URL and redirect URLs
-3. Confirm the Fly release command applied Prisma migrations successfully
+3. Confirm `npm run db:migrate:shared` applied Prisma migrations once before deploy
 4. Confirm the recurring deletion-job trigger is configured with
    `INTERNAL_JOB_SECRET`
 5. Test:

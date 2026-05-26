@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "merchants": [
+    {
+      "merchantId": "m001",
+      "slug": "new-radio-sound",
+      "shopDomain": "new-radio-sound.myshopify.com",
+      "flyApp": "pl-m001",
+      "appUrl": "https://pl-m001.fly.dev",
+      "customDomain": "new-radio-sound.apps.producerlaunchpad.com",
+      "shopifyAppName": "Producer Launchpad - New Radio Sound",
+      "shopifyClientId": "replace-with-shopify-client-id",
+      "status": "active"
+    }
+  ]
+}
